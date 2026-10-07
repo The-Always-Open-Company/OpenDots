@@ -1,5 +1,8 @@
 import { expect, it } from 'vitest';
-import { shouldSubmitComposerOnKeyDown } from '../src/client/chat-composer';
+import {
+  attachedDocuments,
+  shouldSubmitComposerOnKeyDown,
+} from '../src/client/chat-composer';
 
 function keyEvent({
   key = 'Enter',
@@ -39,5 +42,17 @@ it('submits Enter after composition completes', () => {
 it('keeps Shift+Enter available for multiline drafts', () => {
   expect(shouldSubmitComposerOnKeyDown(keyEvent({ shiftKey: true }))).toBe(
     false,
+  );
+});
+
+it('names attached documents by title and ID on one line', () => {
+  expect(attachedDocuments('Summarize this', [])).toBe('Summarize this');
+  expect(
+    attachedDocuments('Summarize this', [
+      { id: 'doc-1', title: 'Q3\nReport' },
+      { id: 'doc-2', title: 'Notes' },
+    ]),
+  ).toBe(
+    'Summarize this\n\nAttached documents: “Q3 Report” (id doc-1), “Notes” (id doc-2). Use search_documents or read_document with these IDs.',
   );
 });

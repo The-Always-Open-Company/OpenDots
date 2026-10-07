@@ -47,6 +47,8 @@ function fixture() {
         voice: true,
         model: true,
         browser: false,
+        memory: false,
+        documents: false,
         slack: 'not_configured',
         missing: [],
       }),

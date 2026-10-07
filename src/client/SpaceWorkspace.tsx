@@ -4,6 +4,8 @@ import type { Page } from '../server/pages';
 import type { Space, WorkspaceState } from '../shared/types';
 import { api } from './api';
 import { SpaceLibrary } from './SpaceLibrary';
+import { SpaceDocuments } from './SpaceDocuments';
+import { openPageLink } from './page-navigation';
 import { PageDocument } from './PageDocument';
 import { PageOutline } from './PageOutline';
 export function SpaceWorkspace({
@@ -96,6 +98,13 @@ export function SpaceWorkspace({
           pages={pages}
           onPage={onPage}
           onNew={() => void create(null)}
+          documents={
+            <SpaceDocuments
+              space={space}
+              workspace={workspace}
+              onOpen={(id) => openPageLink(`#/documents/${id}`)}
+            />
+          }
         />
       ) : page ? (
         <div className="space-writing-layout">

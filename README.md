@@ -62,6 +62,12 @@ _Open a Space, navigate to its launch brief, ask Scout about the saved page, and
 
 Give each Dot a name, role, instructions, and permitted tools. A researcher can investigate a topic; a writer can turn findings into a draft. Inspect their work and control what they can do.
 
+Each Dot learns durable facts from its own conversations and recalls the relevant ones before answering. You can review, edit and delete what each Dot has learned on the Memory screen, next to the **About me** preferences every Dot shares. Dots can ask each other questions with `ask_dot`; each Dot can opt out of being consulted.
+
+### Documents
+
+Upload files to a document library that Dots can search and cite. Share each document with every Dot, specific Dots, or the Dots working in a linked Space; Spaces show their linked documents beside their pages. Files attached in chat are saved to the library and shared with that Dot. Conversion runs locally with [docling-serve](https://github.com/docling-project/docling-serve), and search combines keyword and semantic matching over passages with page numbers.
+
 ### Dot computers
 
 Each Dot can have its own computer, using [OpenBot](https://github.com/CopilotKit/OpenBot)'s container supervisor and computer service. Its browser profile and workspace files persist across stop/start. The Computer panel exposes browser control, human takeover, files, terminal output, and activity, with browser, file, and shell permissions set per Dot. The application keeps service credentials on the server and derives a different computer credential for each Dot.
@@ -121,7 +127,10 @@ flowchart TB
   Web["Web app: pages, Spaces, Dots, chat"] -->|AG-UI over SSE| Runtime[CopilotKit runtime]
   Runtime --> ThreadRunner[Local thread runner]
   ThreadRunner --> Agents[Specialist compute agents]
-  ThreadRunner <--> DB[(SQLite: conversations, pages, Spaces, Dots, work metadata)]
+  ThreadRunner <--> DB[(SQLite: conversations, pages, Spaces, Dots, documents, access)]
+  Agents --> Search[(Postgres + pgvector: learned memories, document passages)]
+  Web -->|uploads| Docling[docling-serve conversion]
+  Docling --> Search
   Agents --> Compaction[Context compaction]
   Compaction --> AI[TanStack AI]
   AI --> Provider[OpenAI-compatible model provider]
@@ -149,7 +158,7 @@ cp .env.example .env
 npm run dev
 ```
 
-Open **http://127.0.0.1:5173**. You can create Spaces, write pages, and configure Dots before connecting services. To start chatting, add `OPENAI_API_KEY` and `OPENAI_MODEL` to `.env` and restart `npm run dev`.
+Open **http://127.0.0.1:5173**. You can create Spaces, write pages, and configure Dots before connecting services. To start chatting, add `OPENAI_API_KEY` and `OPENAI_MODEL` to `.env` and restart `npm run dev`. Learned memory and documents also need Postgres and docling-serve; `docker compose -f compose.dev.yml up -d` runs both locally (see [Setup](docs/SETUP.md#memory-and-documents)).
 
 Do not run `copilotkit onboard` in this folder. OpenDots already contains its CopilotKit integration, and onboarding adds a second, generic one.
 
@@ -157,11 +166,11 @@ See [Setup](docs/SETUP.md) for configuration, calls, the browser service, and Do
 
 ## Data and privacy
 
-Conversation messages, tool calls, run events, and cached conversation summaries are stored in the SQLite database at `DATABASE_PATH`, together with pages and workspace metadata. Back up that one file (with its `-wal` companion) to back up everything.
+Conversation messages, tool calls, run events, and cached conversation summaries are stored in the SQLite database at `DATABASE_PATH`, together with pages, workspace metadata, documents and their access rules. Uploaded files and their converted text live in `DOCUMENTS_DIR`. Learned memories and searchable document passages live in Postgres. Back up all three.
 
-The configured model provider receives conversation context, including authorized page content, tool results, and the older turns it summarizes. Public-web research sends queries and selected URLs to Parallel by default; set `WEB_SEARCH_PROVIDER=disabled` to disable those tools. Speech integrations send data to their configured providers when used.
+The configured model provider receives conversation context, including authorized page content, tool results, recalled memories, document passages, and the older turns it summarizes. Memory extraction sends each chat turn's user messages and reply to the memory model; document passages and search queries are sent to the embedding model. Documents are converted locally by docling-serve. Public-web research sends queries and selected URLs to Parallel by default; set `WEB_SEARCH_PROVIDER=disabled` to disable those tools. Speech integrations send data to their configured providers when used.
 
-CopilotKit's runtime telemetry is switched off in code at startup (`src/server/disable-telemetry.ts`), regardless of environment settings, and the upstream browser setup telemetry has been removed. Review the policies and retention settings of each service you configure.
+CopilotKit and mem0 telemetry are switched off in code at startup (`src/server/disable-telemetry.ts`), regardless of environment settings, and the upstream browser setup telemetry has been removed. Review the policies and retention settings of each service you configure.
 
 ## Features
 
@@ -174,19 +183,21 @@ CopilotKit's runtime telemetry is switched off in code at startup (`src/server/d
 | Background work            | Scheduled server-side turns in their original conversation, with pause and retry controls                     |
 | Browser                    | Separate read-only public-page service with page capture and navigation limits                                |
 | Dot computers              | Per-Dot browser profiles, files, shell, takeover, permissions, and action records through OpenBot             |
-| Memory                     | User-managed preferences that permitted Dots can use                                                          |
-| Deployment                 | Local Node setup and separate application/browser containers                                                  |
+| Memory                     | Shared About me preferences, plus per-Dot learned memories you can review, edit and delete                    |
+| Documents                  | Library with per-Dot and per-Space access, local conversion, hybrid search, versions and chat attachments     |
+| Dot consultations          | Dots ask each other questions in separate, restricted consultation threads                                    |
+| Deployment                 | Local Node setup and separate application, browser, Postgres and docling-serve containers                     |
 
 Scheduled tasks run in their original conversation. If a worker stops or its lease expires during a run, OpenDots marks that run **Interrupted** and waits for an explicit retry. Review its pages and computer actions, then use **Retry after review** when appropriate. Completed effects may already be present even when a run has no final result.
 
 Local checks cover setup, persistence, permissions, SDK failure handling, and browser isolation. Automated tests use service fixtures, including runs through the real CopilotKit request handler against the local thread runner. The upstream live verification and [recording notes](docs/demos/README.md) predate this fork's switch from CopilotKit Intelligence to local storage; live model verification of the local storage path is still to be repeated.
 
-This is a single-owner starting point. Shared editing, invitations, file uploads, and interactive page embeds are not included. Schedules are recurring instructions, not a complete goal or event-trigger system. Specialist Dots have separate roles and conversations; multi-Dot group conversations and automatic delegation are further work.
+This is a single-owner starting point. Shared editing, invitations, and interactive page embeds are not included. Schedules are recurring instructions, not a complete goal or event-trigger system. Specialist Dots have separate roles and conversations and can consult each other one level deep; multi-Dot group conversations are further work.
 
 ### Extending the template
 
 - Add identity, Space membership, and shared page editing for multi-user deployments.
-- Add file attachments and richer page content.
+- Add richer page content and document previews.
 - Add event triggers and a persistent responsibility lifecycle.
 - Extend tools and approval flows for your own workflows.
 - Add richer artifacts, connected-app context, and specialist coordination.

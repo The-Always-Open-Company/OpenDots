@@ -84,6 +84,8 @@ export interface Dot {
   instructions: string;
   researchAllowed: boolean;
   memoryAllowed: boolean;
+  /** Other Dots may ask this Dot questions with ask_dot. */
+  consultable: boolean;
   createdAt: number;
 }
 export interface Conversation {
@@ -107,8 +109,45 @@ export interface SetupStatus {
   model: boolean;
   browser: boolean;
   voice: boolean;
+  /** Learned per-Dot memory: needs DATABASE_URL. */
+  memory: boolean;
+  /** Document library: needs DATABASE_URL and DOCLING_URL. */
+  documents: boolean;
   slack: string;
   missing: string[];
+}
+export type DocumentStatus = 'queued' | 'processing' | 'ready' | 'failed';
+export interface DocumentSummary {
+  id: string;
+  title: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  /** Latest uploaded version; `indexedVersion` is the one Dots can search. */
+  version: number;
+  indexedVersion: number | null;
+  status: DocumentStatus;
+  error: string | null;
+  allDots: boolean;
+  sourceThreadId: string | null;
+  sourceDotId: string | null;
+  pageCount: number | null;
+  convertedChars: number | null;
+  chunkCount: number | null;
+  spaceIds: string[];
+  dotIds: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+export type DocumentAccessReason = 'all' | 'granted' | 'space';
+export interface DocumentReader {
+  dotId: string;
+  reasons: DocumentAccessReason[];
+  /** Linked Spaces that grant this Dot access. */
+  viaSpaceIds: string[];
+}
+export interface DocumentDetail extends DocumentSummary {
+  readers: DocumentReader[];
 }
 export interface WorkspaceState {
   spaces: Space[];

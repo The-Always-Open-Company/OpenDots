@@ -56,7 +56,57 @@ Edit `.env` on the server and restart after changes:
 | `OWNER_TOKEN`                    | Application access token; required for external bindings           |
 | `APP_ORIGIN`                     | Comma-separated exact browser origins for a proxy or custom domain |
 
-Provider credentials belong in `.env`, not client-side variables or source code. CopilotKit's runtime telemetry is disabled in code; no telemetry setting is needed.
+Provider credentials belong in `.env`, not client-side variables or source code. CopilotKit and mem0 telemetry are disabled in code; no telemetry setting is needed.
+
+## Memory and documents
+
+Learned memory and the document library need two extra services: Postgres with pgvector, and docling-serve for converting files. Both are optional. Without them, chat and pages work as before; the Memory screen and Documents explorer say what is missing.
+
+| Variable                       | Purpose                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`            | Password for the bundled Postgres service. Generate with `openssl rand -hex 24` |
+| `DATABASE_URL`                 | Postgres with pgvector. Enables learned memory and document search              |
+| `DOCLING_URL`                  | docling-serve endpoint. With `DATABASE_URL`, enables document uploads           |
+| `EMBEDDING_MODEL`              | Embedding model; defaults to `text-embedding-3-small` (1536 dimensions)         |
+| `MEMORY_MODEL`                 | Model that extracts memories from turns; defaults to `OPENAI_MODEL`             |
+| `DOCUMENTS_DIR`                | Where original and converted files are kept; defaults next to the database      |
+| `MAX_UPLOAD_MB`                | Largest accepted file, 1–2000 MB; default 50                                    |
+| `DOCLING_MAX_DOCUMENT_TIMEOUT` | Seconds docling-serve may spend on one file (compose only); default 900         |
+
+Embeddings and memory extraction use `OPENAI_API_KEY` and `OPENAI_BASE_URL`, so a custom endpoint must also serve `/embeddings` with a 1536-dimension model. SQLite remains the source of truth for documents, grants and Space links; Postgres holds only searchable data (memory vectors and document passages). Changing who can read a document takes effect immediately without re-indexing.
+
+For `npm run dev`, run the two services on loopback with the development compose file, then set the URLs in `.env`:
+
+```sh
+docker compose -f compose.dev.yml up -d
+# .env
+# DATABASE_URL=postgres://opendots:<POSTGRES_PASSWORD>@127.0.0.1:5433/opendots
+# DOCLING_URL=http://127.0.0.1:5001
+```
+
+Both compose files build a small layer on the docling-serve image that downloads the tokenizer its chunker needs, so docling-serve never fetches models at runtime. The base image is several gigabytes, so the first build takes a while and needs internet access; later starts do not. Run `docker compose build --pull docling` to pick up a newer docling-serve release.
+
+### Memory
+
+The Memory screen has two parts. **About me** holds preferences you write yourself; every Dot with memory enabled sees them. **Learned by each Dot** lists facts each Dot picked up from its own conversations, which you can edit or delete. After a turn finishes, the Dot's memory model reads what you said and its reply (never tool output, web pages or documents) and stores durable facts for that Dot only. Before each turn, the Dot recalls the learned memories most relevant to your latest message. Dots can also save a fact when you ask them to remember something.
+
+Turn memory off per Dot or for the whole workspace in Settings. Turning it off stops both recall and learning.
+
+### Asking another Dot
+
+A Dot can ask another Dot a question with its `ask_dot` tool. The answer comes from the other Dot's own memories, documents and Spaces. Consultations run in a separate conversation per pair of Dots, are limited to one level (a consulted Dot cannot consult further) and to 45 seconds, and the consulted Dot cannot edit pages, save memories or use its computer. Clear **Other Dots can consult this Dot** in a Dot's settings to opt it out.
+
+### Documents
+
+Open **Documents** in the sidebar to browse, search and upload. When uploading, choose which Dots can read the file: none directly, specific Dots, or all Dots (including ones you add later). Linking a document to a Space also lets every Dot that works in that Space read it. Spaces show their linked documents below the page list, with **Upload** and **Link existing**.
+
+Supported files are PDF, Word, PowerPoint, Excel, HTML, Markdown, text, CSV, PNG and JPEG; the server checks the content matches the extension. Uploads are converted in the background, one at a time. A document becomes searchable once it shows **Ready**. Uploading a new version keeps the previous one searchable until the new one finishes. Uploading identical content again shares the existing document instead of indexing it twice.
+
+Attach files in chat with the paperclip. Attachments are saved to the library, shared with the Dot you are talking to, and linked to the page's Space when the chat is about a page. The message waits until each attachment is ready.
+
+Dots get `list_documents`, `search_documents` (hybrid keyword and semantic search that returns passages with page numbers) and `read_document`. Each call checks the Dot's current access.
+
+Back up `DOCUMENTS_DIR` together with the SQLite database. The Postgres data can be rebuilt by reprocessing documents, but learned memories live only in Postgres, so back up its volume too.
 
 ## Pages and page conversations
 
@@ -68,7 +118,7 @@ Open a page's chat and choose a specialist with access to that Space. Grant acce
 
 Use the conversation's save-to-page action to create a document from its saved text history. Pages retain a link to the source conversation, and page links in chat open the document workspace.
 
-Back up the SQLite database (and its `-wal` file, or stop the server first) to back up pages and conversations together. The template does not include multi-user page sharing, realtime collaboration, file uploads, or arbitrary interactive embeds.
+Back up the SQLite database (and its `-wal` file, or stop the server first) to back up pages and conversations together. A document can be copied into a page from its detail view. The template does not include multi-user page sharing, realtime collaboration, or arbitrary interactive embeds.
 
 ## Browser tool
 
@@ -99,13 +149,15 @@ A configured key is not evidence of a successful call. Verify microphone access,
 
 ## Containers
 
-Set `OWNER_TOKEN` and `BROWSER_SECRET` to different random secrets of at least 24 characters in `.env`, then run:
+Set `OWNER_TOKEN` and `BROWSER_SECRET` to different random secrets of at least 24 characters in `.env`, and set `POSTGRES_PASSWORD` (`openssl rand -hex 24`), then run:
 
 ```sh
 docker compose up --build -d
 ```
 
-Open http://localhost:4310. The app port binds to loopback. The browser service is optional: set a 24+ character `BROWSER_SECRET` and run `docker compose --profile browser up --build` to enable it; it has no published port. Conversations, pages, and metadata live in the `opendots-data` volume.
+Open http://localhost:4310. The app port binds to loopback. The browser service is optional: set a 24+ character `BROWSER_SECRET` and run `docker compose --profile browser up --build` to enable it; it has no published port. Conversations, pages, metadata and uploaded documents live in the `opendots-data` volume; learned memories and search passages live in `opendots-pg`.
+
+Compose also runs Postgres (pgvector) and docling-serve and sets `DATABASE_URL` and `DOCLING_URL` for the app. Neither publishes a port: they share an internal network with the app only, and docling-serve has no route to the internet once its image is built. Setting `DATABASE_URL` or `DOCLING_URL` in `.env` has no effect under compose.
 
 ```sh
 # Stop services while retaining saved data.
@@ -125,3 +177,9 @@ npm run build
 ```
 
 Automated tests use service fixtures. Live model and voice verification requires your own configured services.
+
+The Postgres search tests are skipped unless `TEST_DATABASE_URL` points at a disposable pgvector database, for example the one from `compose.dev.yml`:
+
+```sh
+TEST_DATABASE_URL=postgres://opendots:<POSTGRES_PASSWORD>@127.0.0.1:5433/opendots npm test
+```

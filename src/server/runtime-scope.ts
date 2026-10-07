@@ -76,6 +76,8 @@ export function validateRuntimeScope(
     if (candidate) {
       if (threadId && candidate !== threadId) return deny();
       workspace.requireThread(candidate, agentId);
+      // Consultations run server-side only; the browser cannot post into them.
+      if (workspace.threadKind(candidate) !== 'chat') return deny();
     }
   }
 }

@@ -12,8 +12,17 @@ import { WorkspaceStore } from './workspace.js';
 import { Platform } from './platform.js';
 import {
   contextMaxTokensFromEnv,
+  DEFAULT_EMBEDDING_MODEL,
+  maxUploadBytesFromEnv,
   type PlatformConfig,
 } from './platform-config.js';
+import { dirname, join } from 'node:path';
+import { Postgres } from './postgres.js';
+import { Mem0Provider } from './memory.js';
+import { PgChunkIndex } from './chunk-index.js';
+import { openAiEmbeddings } from './embeddings.js';
+import { DocumentLibrary } from './document-library.js';
+import { DocumentIngestor } from './document-ingestor.js';
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 4310);
 const ownerToken = process.env.OWNER_TOKEN;
@@ -25,6 +34,8 @@ if (
     'External binding requires an OWNER_TOKEN of at least 24 characters.',
   );
 const database = process.env.DATABASE_PATH ?? 'data/opendots.sqlite';
+// mem0 keeps a small local config file; keep it with the rest of the data.
+process.env.MEM0_DIR ??= join(dirname(database), 'mem0');
 const store = new Store(database);
 const workspace = new WorkspaceStore(
   database,
@@ -36,6 +47,13 @@ const config: PlatformConfig = {
   baseUrl: process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
   contextMaxTokens: contextMaxTokensFromEnv(process.env.CONTEXT_MAX_TOKENS),
   summaryModel: process.env.SUMMARY_MODEL || undefined,
+  databaseUrl: process.env.DATABASE_URL || undefined,
+  doclingUrl: process.env.DOCLING_URL || undefined,
+  embeddingModel: process.env.EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL,
+  memoryModel: process.env.MEMORY_MODEL || undefined,
+  documentsDir:
+    process.env.DOCUMENTS_DIR || join(dirname(database), 'documents'),
+  maxUploadBytes: maxUploadBytesFromEnv(process.env.MAX_UPLOAD_MB),
   webSearchProvider: webSearchProvider(process.env.WEB_SEARCH_PROVIDER),
   parallelApiKey: process.env.PARALLEL_API_KEY,
   browserUrl: process.env.BROWSER_URL,
@@ -56,7 +74,40 @@ const config: PlatformConfig = {
   slackDotId: process.env.SLACK_DOT_ID || undefined,
   ownerToken,
 };
-const platform = new Platform(store, workspace, config);
+const postgres = config.databaseUrl
+  ? new Postgres(config.databaseUrl)
+  : undefined;
+const memory =
+  postgres && config.apiKey && config.model
+    ? new Mem0Provider(postgres, {
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl,
+        model: config.memoryModel ?? config.model,
+        embeddingModel: config.embeddingModel ?? DEFAULT_EMBEDDING_MODEL,
+      })
+    : undefined;
+let ingestor: DocumentIngestor | undefined;
+const documents =
+  postgres && config.doclingUrl && config.apiKey
+    ? new DocumentLibrary(
+        workspace,
+        new PgChunkIndex(postgres),
+        openAiEmbeddings({
+          apiKey: config.apiKey,
+          baseUrl: config.baseUrl,
+          model: config.embeddingModel ?? DEFAULT_EMBEDDING_MODEL,
+        }),
+        config.documentsDir ?? join(dirname(database), 'documents'),
+        () => ingestor?.wake(),
+      )
+    : undefined;
+if (documents && config.doclingUrl)
+  ingestor = new DocumentIngestor(
+    workspace.documents,
+    documents,
+    config.doclingUrl,
+  );
+const platform = new Platform(store, workspace, config, { memory, documents });
 const researchConfig = {
   mode: 'live' as const,
   apiKey: config.apiKey,
@@ -108,11 +159,16 @@ app.get('*', serveStatic({ path: './dist/client/index.html' }));
 const server = serve({ fetch: app.fetch, hostname: host, port }, (info) => {
   console.log(`OpenDots template listening on http://${host}:${info.port}`);
   runner.start();
+  ingestor?.start();
   void platform.start();
 });
 const shutdown = createShutdown({
   stopRunner: () => runner.stop(),
-  stopPlatform: () => platform.stop(),
+  stopPlatform: async () => {
+    ingestor?.stop();
+    await platform.stop();
+    await postgres?.close();
+  },
   closeServer: () =>
     new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),

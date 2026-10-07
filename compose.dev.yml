@@ -1,0 +1,28 @@
+# Postgres and docling-serve for `npm run dev` on the host. Ports bind to
+# loopback only. Start with: docker compose -f compose.dev.yml up -d
+# Then set in .env:
+#   DATABASE_URL=postgres://opendots:<POSTGRES_PASSWORD>@127.0.0.1:5433/opendots
+#   DOCLING_URL=http://127.0.0.1:5001
+name: opendots-dev
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: opendots
+      POSTGRES_DB: opendots
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - '127.0.0.1:5433:5432'
+    volumes:
+      - opendots-dev-pg:/var/lib/postgresql/data
+  docling:
+    build:
+      context: .
+      target: docling
+    environment:
+      DOCLING_SERVE_ENABLE_UI: 'false'
+      DOCLING_SERVE_MAX_DOCUMENT_TIMEOUT: ${DOCLING_MAX_DOCUMENT_TIMEOUT:-900}
+    ports:
+      - '127.0.0.1:5001:5001'
+volumes:
+  opendots-dev-pg:

@@ -11,6 +11,17 @@ export function contextMaxTokensFromEnv(value: string | undefined): number {
   return tokens;
 }
 
+export const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
+export const DEFAULT_MAX_UPLOAD_MB = 50;
+
+export function maxUploadBytesFromEnv(value: string | undefined): number {
+  if (!value?.trim()) return DEFAULT_MAX_UPLOAD_MB * 1_000_000;
+  const megabytes = Number(value);
+  if (!Number.isFinite(megabytes) || megabytes < 1 || megabytes > 2_000)
+    throw new Error('MAX_UPLOAD_MB must be a number from 1 to 2000.');
+  return Math.round(megabytes * 1_000_000);
+}
+
 export interface PlatformConfig extends WebConfig {
   model?: string;
   apiKey?: string;
@@ -19,6 +30,15 @@ export interface PlatformConfig extends WebConfig {
   contextMaxTokens?: number;
   /** Model that summarizes older history; defaults to `model`. */
   summaryModel?: string;
+  /** Postgres with pgvector, for learned memories and document search. */
+  databaseUrl?: string;
+  doclingUrl?: string;
+  /** Must produce 1536-dimension vectors; defaults to `text-embedding-3-small`. */
+  embeddingModel?: string;
+  /** Model that extracts learned memories; defaults to `model`. */
+  memoryModel?: string;
+  documentsDir?: string;
+  maxUploadBytes?: number;
   computerSupervisorUrl?: string;
   computerSupervisorToken?: string;
   computerToken?: string;
@@ -59,6 +79,8 @@ export function setupStatus(
     model: !!(config.apiKey && config.model),
     browser: !!(config.browserUrl && config.browserSecret),
     voice: !!(config.voiceKey && config.voiceModel && !missing.length),
+    memory: !!(config.databaseUrl && !missing.length),
+    documents: !!(config.databaseUrl && config.doclingUrl && !missing.length),
     slack,
     missing,
   };

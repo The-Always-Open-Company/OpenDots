@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import {
   FileText,
   Plus,
@@ -27,11 +27,13 @@ export function SpaceLibrary({
   pages,
   onPage,
   onNew,
+  documents,
 }: {
   space: Space;
   pages: Page[];
   onPage: (id: string) => void;
   onNew: () => void;
+  documents?: ReactNode;
 }) {
   const [query, setQuery] = useState('');
   const [layout, setLayout] = useState<'grid' | 'list'>('grid');
@@ -169,6 +171,7 @@ export function SpaceLibrary({
           )}
         </div>
       )}
+      {documents}
     </section>
   );
 }

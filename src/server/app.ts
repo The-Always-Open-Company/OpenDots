@@ -9,6 +9,7 @@ import { configured, type Config } from './research.js';
 import type { Platform } from './platform.js';
 import { VoiceService } from './voice.js';
 import { workspaceRoutes } from './workspace-routes.js';
+import { DEFAULT_MAX_UPLOAD_MB } from './platform-config.js';
 const interval = z.number().int().min(60).max(31_536_000).nullable();
 export interface AppOptions {
   store: Store;
@@ -36,10 +37,27 @@ export function createApp({
     maxSize: 10_000_000,
     onError: (c) => c.json({ error: 'Conversation is too large.' }, 413),
   });
+  const maxUpload =
+    platform?.config.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_MB * 1_000_000;
+  const uploadTooLarge = bodyLimit({
+    // Multipart framing and the other form fields need a little room.
+    maxSize: maxUpload + 100_000,
+    onError: (c) =>
+      c.json(
+        {
+          error: `Files can be up to ${Math.round(maxUpload / 1_000_000)} MB.`,
+        },
+        413,
+      ),
+  });
+  const isUpload = (method: string, path: string) =>
+    method === 'POST' && /^\/api\/documents(?:\/[^/]+\/versions)?$/.test(path);
   app.use('/api/*', (c, next) =>
     c.req.path.startsWith('/api/copilotkit/')
       ? runtimeTooLarge(c, next)
-      : tooLarge(c, next),
+      : isUpload(c.req.method, c.req.path)
+        ? uploadTooLarge(c, next)
+        : tooLarge(c, next),
   );
   app.use('/api/*', async (c, next) => {
     c.header('Cache-Control', 'no-store');
@@ -89,9 +107,14 @@ export function createApp({
           401,
         );
     }
+    const contentType = c.req.header('content-type') ?? '';
     if (
       !['GET', 'HEAD'].includes(c.req.method) &&
-      !c.req.header('content-type')?.includes('application/json')
+      !contentType.includes('application/json') &&
+      !(
+        isUpload(c.req.method, c.req.path) &&
+        contentType.startsWith('multipart/form-data')
+      )
     )
       return c.json({ error: 'Use application/json.' }, 415);
     await next();

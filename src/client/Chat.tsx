@@ -1,7 +1,7 @@
 import { PageReviewCard } from './PageReviewCard';
 import { pageReviewSchema, pageReviewTool } from '../shared/page-review';
 import { contextualMessage, type PageContext } from './page-context';
-import { api } from './api';
+import { api, upload } from './api';
 import type { Page } from '../server/pages';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -16,6 +16,7 @@ import {
   ArrowUp,
   Clock3,
   Link2,
+  Paperclip,
   Phone,
   PhoneOff,
   Square,
@@ -26,11 +27,27 @@ import {
   type ComputerToolRenderProps,
 } from './ComputerToolCard';
 import { ChatTranscript, isInternalVoiceReceipt } from './ChatTranscript';
-import type { CallReceipt, Conversation, Dot } from '../shared/types';
+import type {
+  CallReceipt,
+  Conversation,
+  DocumentSummary,
+  Dot,
+} from '../shared/types';
 import { Mascot } from './Mascot';
 import { useVoice } from './useVoice';
 import { CallView } from './CallView';
-import { shouldSubmitComposerOnKeyDown } from './chat-composer';
+import {
+  attachedDocuments,
+  shouldSubmitComposerOnKeyDown,
+} from './chat-composer';
+import { DOCUMENT_ACCEPT } from './DocumentUploadDialog';
+
+interface Attachment {
+  key: string;
+  name: string;
+  document?: DocumentSummary;
+  error?: string;
+}
 
 export function Chat({
   thread,
@@ -38,6 +55,7 @@ export function Chat({
   initialPrompt,
   onConsumed,
   voiceReady,
+  documentsReady = false,
   calls,
   paused,
   onSaved,
@@ -49,6 +67,7 @@ export function Chat({
   initialPrompt?: string;
   onConsumed: () => void;
   voiceReady: boolean;
+  documentsReady?: boolean;
   calls: CallReceipt[];
   paused: boolean;
   onSaved: () => void;
@@ -89,6 +108,78 @@ export function Chat({
     };
   }, [thread.id, contextAttempt]);
   const [draft, setDraft] = useState('');
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const attachmentsReady = attachments.every(
+    (item) => item.document?.indexedVersion != null,
+  );
+  const waiting = attachments.some(
+    (item) =>
+      !item.error &&
+      (!item.document ||
+        ['queued', 'processing'].includes(item.document.status)),
+  );
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setInterval(() => {
+      for (const item of attachments)
+        if (item.document && item.document.indexedVersion == null)
+          void api<DocumentSummary>(`/documents/${item.document.id}`)
+            .then((document) =>
+              setAttachments((current) =>
+                current.map((entry) =>
+                  entry.key === item.key
+                    ? {
+                        ...entry,
+                        document,
+                        error:
+                          document.status === 'failed'
+                            ? (document.error ?? 'Processing failed.')
+                            : undefined,
+                      }
+                    : entry,
+                ),
+              ),
+            )
+            .catch(() => undefined);
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [waiting, attachments]);
+  const attach = (files: File[]) => {
+    for (const file of files) {
+      const key = crypto.randomUUID();
+      setAttachments((current) => [...current, { key, name: file.name }]);
+      void upload<DocumentSummary>('/documents', file, { threadId: thread.id })
+        .then((document) =>
+          setAttachments((current) =>
+            current.map((entry) =>
+              entry.key === key
+                ? {
+                    ...entry,
+                    document,
+                    error:
+                      document.status === 'failed'
+                        ? (document.error ?? 'Processing failed.')
+                        : undefined,
+                  }
+                : entry,
+            ),
+          ),
+        )
+        .catch((e) =>
+          setAttachments((current) =>
+            current.map((entry) =>
+              entry.key === key
+                ? {
+                    ...entry,
+                    error: e instanceof Error ? e.message : 'Upload failed.',
+                  }
+                : entry,
+            ),
+          ),
+        );
+    }
+  };
   const [source, setSource] = useState('');
   const [sourceOpen, setSourceOpen] = useState(false);
   const [error, setError] = useState('');
@@ -128,15 +219,33 @@ export function Chat({
     };
   }, [agent, copilotkit, isReady]);
   const send = async (text: string) => {
-    if (!text.trim() || running || !loaded || !contextReady || paused) return;
+    const documents = attachments.flatMap((item) =>
+      item.document ? [item.document] : [],
+    );
+    if (
+      (!text.trim() && !documents.length) ||
+      !attachmentsReady ||
+      running ||
+      !loaded ||
+      !contextReady ||
+      paused
+    )
+      return;
     setError('');
     setRunning(true);
     agent.addMessage({
       id: crypto.randomUUID(),
       role: 'user',
-      content: contextualMessage(text, pageContext),
+      content: contextualMessage(
+        attachedDocuments(
+          text.trim() ? text : 'Please look at the attached document.',
+          documents,
+        ),
+        pageContext,
+      ),
     });
     setDraft('');
+    setAttachments([]);
     setSource('');
     setSourceOpen(false);
     try {
@@ -373,6 +482,15 @@ export function Chat({
       />
       <form
         className="chat-composer"
+        onDragOver={(e) => {
+          if (documentsReady && e.dataTransfer.types.includes('Files'))
+            e.preventDefault();
+        }}
+        onDrop={(e) => {
+          if (!documentsReady || !e.dataTransfer.files.length) return;
+          e.preventDefault();
+          attach([...e.dataTransfer.files]);
+        }}
         onSubmit={(e) => {
           e.preventDefault();
           void send(`${source ? `From ${source}:\n\n` : ''}${draft}`);
@@ -401,6 +519,46 @@ export function Chat({
             </button>
           </div>
         )}
+        {!!attachments.length && (
+          <ul className="attachment-chips" aria-label="Attached files">
+            {attachments.map((item) => (
+              <li
+                key={item.key}
+                className={
+                  item.error
+                    ? 'failed'
+                    : item.document?.indexedVersion != null
+                      ? 'ready'
+                      : 'pending'
+                }
+              >
+                <Paperclip size={12} />
+                <span>{item.document?.title ?? item.name}</span>
+                <small>
+                  {item.error
+                    ? item.error
+                    : !item.document
+                      ? 'Uploading…'
+                      : item.document.indexedVersion != null
+                        ? 'Ready'
+                        : 'Processing…'}
+                </small>
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label={`Remove ${item.document?.title ?? item.name}`}
+                  onClick={() =>
+                    setAttachments((current) =>
+                      current.filter((entry) => entry.key !== item.key),
+                    )
+                  }
+                >
+                  <X size={12} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <div className="chat-compose-row">
           <button
             type="button"
@@ -410,6 +568,31 @@ export function Chat({
           >
             <Link2 size={19} />
           </button>
+          {documentsReady && (
+            <>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Attach files"
+                title="Attach files. They are saved to Documents and shared with this Dot."
+                disabled={paused}
+                onClick={() => fileInput.current?.click()}
+              >
+                <Paperclip size={18} />
+              </button>
+              <input
+                ref={fileInput}
+                type="file"
+                multiple
+                hidden
+                accept={DOCUMENT_ACCEPT}
+                onChange={(e) => {
+                  attach([...(e.target.files ?? [])]);
+                  e.target.value = '';
+                }}
+              />
+            </>
+          )}
           <textarea
             aria-label="Message your Dot"
             placeholder={`Message ${dot.name}…`}
@@ -437,7 +620,18 @@ export function Chat({
             <button
               className="send-button"
               aria-label="Send message"
-              disabled={!draft.trim() || !loaded || !contextReady || paused}
+              disabled={
+                (!draft.trim() && !attachments.length) ||
+                !attachmentsReady ||
+                !loaded ||
+                !contextReady ||
+                paused
+              }
+              title={
+                attachmentsReady
+                  ? undefined
+                  : 'Wait for attachments to finish processing, or remove them.'
+              }
             >
               <ArrowUp size={19} />
             </button>

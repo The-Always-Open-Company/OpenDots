@@ -13,6 +13,14 @@ OpenDots is an application template under development, not a hosted service. The
 - Voice sessions must use scoped, short-lived credentials and route compute actions through the same permissions as text and Slack.
 - Research browsing is read-only. Page tools can edit local documents in the executing Dot’s Space; those writes use revision checks. Adding external writes requires a separate authorization and review design.
 
+## Memory, consultations and documents
+
+- **Learned memories are per Dot.** Each memory is stored with the owner and Dot it belongs to, and every read, edit and delete checks both. Extraction reads only the user's messages and the Dot's reply in chat threads, never tool output, web pages, documents or consultation threads, to limit prompt-injection into long-term memory. Memories are sent to the model provider with each turn and to the memory model when extracting; do not tell Dots secrets.
+- **Consultations are server-side only.** A consulted Dot answers in its own consultation thread with its own permissions, minus page edits, memory writes, computer tools and page review. Questions and answers are marked as untrusted. Depth is limited to one and each consultation to 45 seconds. The browser runtime refuses consultation threads; review them through `/api/consultations`. A consulted Dot can still reveal what it can read, so opt sensitive Dots out with **Other Dots can consult this Dot**.
+- **Document access is resolved in SQLite on every call.** Search passes only the IDs a Dot may read to Postgres and re-checks the results; reading checks again. Revoking a grant, unlinking a Space or removing a Dot from a Space takes effect on the next tool call. Document text is untrusted content and is presented to the model as data.
+- **Uploads are checked and never rendered.** The server accepts a fixed list of extensions, checks the content against the extension, enforces `MAX_UPLOAD_MB`, and stores files under random IDs. Downloads are sent as `application/octet-stream` attachments with a sandboxing Content-Security-Policy, so an uploaded HTML file cannot run on the app's origin. Converted text is shown as plain text.
+- **Postgres and docling-serve are internal.** Under compose they share an internal network with the app, publish no ports, and docling-serve has no route to the internet. Uploaded files are parsed by docling-serve; rebuild it regularly (`docker compose build --pull docling`), since document parsers are a common attack surface.
+
 Recurring work requires an available server. A sample run is not evidence that a live provider or deployment is safe or configured correctly. Review results before using them for important decisions.
 
 ## Reporting

@@ -151,7 +151,7 @@ export class ThreadHistory {
       .prepare(
         `SELECT b.id, b.title, b.dotId, b.createdAt,
           COALESCE((SELECT MAX(createdAt) FROM runner_runs r WHERE r.threadId=b.id), b.createdAt) AS updatedAt
-        FROM thread_bindings b WHERE b.ownerId=? ORDER BY updatedAt DESC`,
+        FROM thread_bindings b WHERE b.ownerId=? AND b.kind='chat' ORDER BY updatedAt DESC`,
       )
       .all(this.ownerId)
       .map((row) => ({

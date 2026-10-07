@@ -46,6 +46,9 @@ import { ResultPane } from './ResultPane';
 import { TaskRow } from './TaskPresentation';
 import { TaskActions } from './TaskActions';
 import { WorkspaceDialog, type Dialog } from './WorkspaceDialog';
+import { LearnedMemories } from './LearnedMemories';
+import { DocumentLibrary } from './DocumentLibrary';
+import { DocumentDetail } from './DocumentDetail';
 
 function describeFailure(error: unknown, fallback: string) {
   return {
@@ -60,12 +63,13 @@ export function App() {
   const [workspace, setWorkspace] = useState<WorkspaceState>();
   const [selectedDot, setSelectedDot] = useState('');
   const [selectedThread, setSelectedThread] = useState<string>();
-  const [view, rawSetView] = useState<'chat' | 'tasks' | 'memories' | 'space'>(
-    'chat',
-  );
+  const [view, rawSetView] = useState<
+    'chat' | 'tasks' | 'memories' | 'space' | 'documents'
+  >('chat');
   const dirtyPage = useRef(false);
   const [spaceId, setSpaceId] = useState('');
   const [pageId, setPageId] = useState<string>();
+  const [documentId, setDocumentId] = useState<string>();
   const setDirtyPage = useCallback((value: boolean) => {
     dirtyPage.current = value;
   }, []);
@@ -73,7 +77,7 @@ export function App() {
     if (dirtyPage.current && !window.confirm('Leave your unsaved page draft?'))
       return;
     dirtyPage.current = false;
-    if (next !== 'space')
+    if (next !== 'space' && next !== 'documents')
       history.replaceState(null, '', location.pathname + location.search);
     rawSetView(next);
   };
@@ -83,7 +87,8 @@ export function App() {
       const match = location.hash.match(
         /^#\/spaces\/([^/]+)(?:\/pages\/([^/]+))?$/,
       );
-      if (!match) return;
+      const documents = location.hash.match(/^#\/documents(?:\/([^/]+))?$/);
+      if (!match && !documents) return;
       if (dirtyPage.current && location.hash === acceptedHash) return;
       if (
         dirtyPage.current &&
@@ -94,9 +99,14 @@ export function App() {
       }
       acceptedHash = location.hash;
       dirtyPage.current = false;
-      setSpaceId(match[1]);
-      setPageId(match[2]);
-      rawSetView('space');
+      if (match) {
+        setSpaceId(match[1]);
+        setPageId(match[2]);
+        rawSetView('space');
+      } else {
+        setDocumentId(documents![1]);
+        rawSetView('documents');
+      }
       setMobile(false);
     };
     navigate();
@@ -460,6 +470,13 @@ export function App() {
         )}
         <div className="sidebar-bottom">
           <button
+            className={`nav-item ${view === 'documents' ? 'active' : ''}`}
+            onClick={() => openPageLink('#/documents')}
+          >
+            <Folder size={17} />
+            <span>Documents</span>
+          </button>
+          <button
             className={`nav-item ${view === 'tasks' ? 'active' : ''}`}
             onClick={() => {
               setView('tasks');
@@ -516,7 +533,9 @@ export function App() {
             <span>
               {view === 'space'
                 ? workspace.spaces.find((space) => space.id === spaceId)?.name
-                : 'Dots'}
+                : view === 'documents'
+                  ? 'Library'
+                  : 'Dots'}
             </span>
             <span>/</span>
             <strong>
@@ -526,7 +545,9 @@ export function App() {
                   ? 'Activity'
                   : view === 'space'
                     ? 'Pages'
-                    : 'Memories'}
+                    : view === 'documents'
+                      ? 'Documents'
+                      : 'Memories'}
             </strong>
           </div>
           <div className="top-actions">
@@ -599,6 +620,29 @@ export function App() {
               }
             }}
           />
+        ) : view === 'documents' ? (
+          documentId ? (
+            <DocumentDetail
+              key={documentId}
+              id={documentId}
+              workspace={workspace}
+              onBack={() => openPageLink('#/documents')}
+              onPage={openPage}
+              onThread={(id) => {
+                const target = workspace.conversations.find((t) => t.id === id);
+                if (target) {
+                  setView('chat');
+                  setSelectedDot(target.dotId);
+                  setSelectedThread(id);
+                }
+              }}
+            />
+          ) : (
+            <DocumentLibrary
+              workspace={workspace}
+              onOpen={(id) => openPageLink(`#/documents/${id}`)}
+            />
+          )
         ) : view === 'chat' ? (
           <div className={`chat-workspace ${pane ? 'split' : ''}`}>
             <div className="chat-column">
@@ -610,6 +654,7 @@ export function App() {
                   initialPrompt={pendingPrompt}
                   onConsumed={() => setPendingPrompt(undefined)}
                   voiceReady={workspace.setup.voice}
+                  documentsReady={workspace.setup.documents}
                   calls={workspace.calls.filter(
                     (call) => call.threadId === thread.id,
                   )}
@@ -650,16 +695,6 @@ export function App() {
                           Connect your model and conversation service in
                           Settings to start chatting. Your Spaces and Dot
                           preferences are ready to use.
-                        </p>
-                        <p>
-                          Setup and usage metadata is collected by default.{' '}
-                          <a
-                            href="https://github.com/CopilotKit/OpenDots/blob/main/docs/SETUP-TELEMETRY.md"
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            Tracking and opt-out details
-                          </a>
                         </p>
                         <a
                           href="https://github.com/CopilotKit/OpenDots/blob/main/docs/SETUP.md"
@@ -758,7 +793,7 @@ export function App() {
                 </h1>
                 <p>
                   {view === 'memories'
-                    ? 'Preferences you choose to share with your Dots.'
+                    ? 'What your Dots know about you: what you share with all of them, and what each one has learned.'
                     : 'Scheduled turns run on the server in their original conversation.'}
                 </p>
               </div>
@@ -768,12 +803,20 @@ export function App() {
                   onClick={() => setDialog({ type: 'memory' })}
                 >
                   <Plus size={15} />
-                  Add memory
+                  Add to About me
                 </button>
               )}
             </div>
             {view === 'memories' ? (
               <>
+                <div className="memory-section-heading">
+                  <div>
+                    <h2>About me, shared with every Dot</h2>
+                    <p className="muted">
+                      Preferences and context you write yourself.
+                    </p>
+                  </div>
+                </div>
                 <div className="memory-grid">
                   {state.memories.map((memory) => (
                     <article className="memory-card" key={memory.id}>
@@ -806,15 +849,16 @@ export function App() {
                   ))}
                 </div>
                 {!state.memories.length && (
-                  <div className="large-empty">
-                    <Mascot />
-                    <h2>A little context goes a long way.</h2>
-                    <p>
-                      Add a preference like “Keep my research briefs short.” You
-                      can change or remove it anytime.
-                    </p>
-                  </div>
+                  <p className="muted">
+                    Add a preference like “Keep my research briefs short.” You
+                    can change or remove it anytime.
+                  </p>
                 )}
+                <LearnedMemories
+                  dots={workspace.dots}
+                  available={workspace.setup.memory}
+                  defaultDotId={dot.id}
+                />
               </>
             ) : (
               <>

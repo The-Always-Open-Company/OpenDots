@@ -1,4 +1,6 @@
 import { pageRoutes } from './page-routes.js';
+import { memoryRoutes } from './memory-routes.js';
+import { documentRoutes } from './document-routes.js';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { Platform } from './platform.js';
@@ -11,11 +13,14 @@ const dotSchema = z
     memoryAllowed: z.boolean(),
     spaceIds: z.array(z.string().min(1)).min(1).max(100).optional(),
     spaceId: z.string().min(1).optional(),
+    consultable: z.boolean().optional(),
   })
   .strict();
 export function workspaceRoutes(platform: Platform, voice: VoiceService) {
   const app = new Hono();
   app.route('/', pageRoutes(platform));
+  app.route('/', memoryRoutes(platform));
+  app.route('/', documentRoutes(platform));
   app.get('/workspace', (c) =>
     c.json({
       spaces: platform.workspace.spaces(),
@@ -63,6 +68,7 @@ export function workspaceRoutes(platform: Platform, voice: VoiceService) {
         data.data.researchAllowed,
         data.data.memoryAllowed,
         data.data.spaceIds,
+        data.data.consultable ?? true,
       ),
       201,
     );

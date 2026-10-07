@@ -21,10 +21,20 @@ services:
       PARALLEL_API_KEY: ${PARALLEL_API_KEY:-}
       BROWSER_URL: http://browser:4311
       BROWSER_SECRET: ${BROWSER_SECRET:-}
+      DATABASE_URL: postgres://opendots:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/opendots
+      DOCLING_URL: http://docling:5001
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      MEMORY_MODEL: ${MEMORY_MODEL:-}
+      DOCUMENTS_DIR: /data/documents
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-}
     volumes:
       - opendots-data:/data
+    depends_on:
+      - postgres
+      - docling
     networks:
       - browser-link
+      - data-link
       - app-egress
     init: true
     restart: unless-stopped
@@ -52,10 +62,39 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: opendots
+      POSTGRES_DB: opendots
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - opendots-pg:/var/lib/postgresql/data
+    networks:
+      - data-link
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+  docling:
+    build:
+      context: .
+      target: docling
+    environment:
+      DOCLING_SERVE_ENABLE_UI: 'false'
+      # Seconds; one document that takes longer is marked failed.
+      DOCLING_SERVE_MAX_DOCUMENT_TIMEOUT: ${DOCLING_MAX_DOCUMENT_TIMEOUT:-900}
+    networks:
+      - data-link
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
 networks:
   browser-link:
+    internal: true
+  data-link:
     internal: true
   app-egress:
   browser-egress:
 volumes:
   opendots-data:
+  opendots-pg:

@@ -40,6 +40,9 @@ export function WorkspaceDialog({
       ? (dialog.dot?.memoryAllowed ?? true)
       : state.settings.memoryAllowed,
   );
+  const [consultable, setConsultable] = useState(
+    dialog.type === 'dot' ? (dialog.dot?.consultable ?? true) : true,
+  );
   const [spaceIds, setSpaceIds] = useState(
     dialog.type === 'dot' ? (dialog.dot?.spaceIds ?? [dialog.spaceId]) : [],
   );
@@ -134,6 +137,7 @@ export function WorkspaceDialog({
                 instructions: text,
                 researchAllowed: research,
                 memoryAllowed: memory,
+                consultable,
               };
             }
             if (dialog.type === 'settings') {
@@ -270,13 +274,31 @@ export function WorkspaceDialog({
                   onChange={(e) => setMemory(e.target.checked)}
                 />
                 <span>
-                  <strong>Use saved memories</strong>
+                  <strong>Use and learn memories</strong>
                   <small>
-                    Include your preferences in new turns. Changing permission
-                    stops active work.
+                    Include About me and learned memories in new turns, and
+                    learn new facts from chat. Changing permission stops active
+                    work.
                   </small>
                 </span>
               </label>
+              {dialog.type === 'dot' && (
+                <label className="permission-row">
+                  <input
+                    type="checkbox"
+                    checked={consultable}
+                    onChange={(e) => setConsultable(e.target.checked)}
+                  />
+                  <span>
+                    <strong>Other Dots can consult this Dot</strong>
+                    <small>
+                      Lets other Dots ask it questions. It answers from its own
+                      memories, documents, and Spaces, but can’t edit pages
+                      while consulted.
+                    </small>
+                  </span>
+                </label>
+              )}
             </>
           )}
           {dialog.type === 'schedule' && (
@@ -324,8 +346,8 @@ export function WorkspaceDialog({
           )}
           {dialog.type === 'memory' && (
             <p className="muted">
-              Memories are explicit preferences, not automatic learning. Avoid
-              secrets; enabled memories go to your model provider.
+              Every Dot with memory enabled sees this. Avoid secrets; memories
+              go to your model provider with each turn.
             </p>
           )}
           {error && (

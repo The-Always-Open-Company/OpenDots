@@ -1,16 +1,19 @@
 import { ComputerStore } from './computer-store.js';
 import { Pages } from './pages.js';
 import { ThreadHistory } from './thread-history.js';
+import { Documents } from './documents.js';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { CallReceipt, Conversation, Dot, Space } from '../shared/types.js';
+export type ThreadKind = 'chat' | 'consultation';
 export class WorkspaceStore {
   private db: DatabaseSync;
   readonly pages: Pages;
   readonly computers: ComputerStore;
   readonly threads: ThreadHistory;
+  readonly documents: Documents;
   constructor(
     path: string,
     readonly ownerId: string,
@@ -42,13 +45,25 @@ export class WorkspaceStore {
     this.pages = new Pages(this.db, (id) =>
       this.spaces().some((space) => space.id === id),
     );
-    if (
-      !this.db
-        .prepare('PRAGMA table_info(calls)')
-        .all()
-        .some((column) => column.name === 'anchorMessageId')
-    )
-      this.db.exec('ALTER TABLE calls ADD COLUMN anchorMessageId TEXT');
+    const addColumn = (table: string, column: string, definition: string) => {
+      if (
+        !this.db
+          .prepare(`PRAGMA table_info(${table})`)
+          .all()
+          .some((existing) => existing.name === column)
+      )
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    };
+    addColumn('calls', 'anchorMessageId', 'TEXT');
+    addColumn('dots', 'consultable', 'INTEGER NOT NULL DEFAULT 1');
+    addColumn('thread_bindings', 'kind', "TEXT NOT NULL DEFAULT 'chat'");
+    this.db.exec(
+      'CREATE TABLE IF NOT EXISTS consultations(fromDotId TEXT NOT NULL, toDotId TEXT NOT NULL, threadId TEXT NOT NULL, PRIMARY KEY(fromDotId, toDotId))',
+    );
+    this.documents = new Documents(this.db, {
+      dot: (id) => !!this.dot(id),
+      space: (id) => this.spaces().some((space) => space.id === id),
+    });
     if (!this.spaces().length) {
       const space = this.createSpace(
         'Everyday',
@@ -86,7 +101,7 @@ export class WorkspaceStore {
   dots(): Dot[] {
     return this.db
       .prepare(
-        'SELECT id, spaceId, name, instructions, researchAllowed, memoryAllowed, createdAt FROM dots ORDER BY createdAt',
+        'SELECT id, spaceId, name, instructions, researchAllowed, memoryAllowed, consultable, createdAt FROM dots ORDER BY createdAt',
       )
       .all()
       .map((row) => ({
@@ -99,6 +114,7 @@ export class WorkspaceStore {
           .map((grant) => String(grant.spaceId)),
         researchAllowed: !!row.researchAllowed,
         memoryAllowed: !!row.memoryAllowed,
+        consultable: !!row.consultable,
       })) as unknown as Dot[];
   }
   dot(id: string) {
@@ -111,6 +127,7 @@ export class WorkspaceStore {
     researchAllowed: boolean,
     memoryAllowed: boolean,
     spaceIds: string[] = [spaceId],
+    consultable = true,
   ): Dot {
     this.validateSpaceAccess(spaceId, spaceIds);
     const dot: Dot = {
@@ -121,13 +138,14 @@ export class WorkspaceStore {
       instructions,
       researchAllowed,
       memoryAllowed,
+      consultable,
       createdAt: Date.now(),
     };
     this.db.exec('BEGIN');
     try {
       this.db
         .prepare(
-          'INSERT INTO dots (id, spaceId, name, instructions, researchAllowed, memoryAllowed, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          'INSERT INTO dots (id, spaceId, name, instructions, researchAllowed, memoryAllowed, consultable, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         )
         .run(
           dot.id,
@@ -136,6 +154,7 @@ export class WorkspaceStore {
           instructions,
           +researchAllowed,
           +memoryAllowed,
+          +consultable,
           dot.createdAt,
         );
       for (const id of dot.spaceIds)
@@ -167,6 +186,7 @@ export class WorkspaceStore {
     > & {
       spaceId?: string;
       spaceIds?: string[];
+      consultable?: boolean;
     },
   ): Dot {
     const current = this.dot(id);
@@ -178,13 +198,14 @@ export class WorkspaceStore {
     try {
       this.db
         .prepare(
-          'UPDATE dots SET name=?, instructions=?, researchAllowed=?, memoryAllowed=? WHERE id=?',
+          'UPDATE dots SET name=?, instructions=?, researchAllowed=?, memoryAllowed=?, consultable=? WHERE id=?',
         )
         .run(
           patch.name,
           patch.instructions,
           +patch.researchAllowed,
           +patch.memoryAllowed,
+          +(patch.consultable ?? current.consultable),
           id,
         );
       this.db
@@ -200,14 +221,20 @@ export class WorkspaceStore {
     }
     return this.dot(id)!;
   }
+  /** Chat conversations only; consultations between Dots are kept separately. */
   conversations(): Conversation[] {
     return this.db
       .prepare(
-        'SELECT id, dotId, ownerId, title, createdAt FROM thread_bindings WHERE ownerId=? ORDER BY createdAt DESC',
+        "SELECT id, dotId, ownerId, title, createdAt FROM thread_bindings WHERE ownerId=? AND kind='chat' ORDER BY createdAt DESC",
       )
       .all(this.ownerId) as unknown as Conversation[];
   }
-  bindThread(id: string, dotId: string, title: string): Conversation {
+  bindThread(
+    id: string,
+    dotId: string,
+    title: string,
+    kind: ThreadKind = 'chat',
+  ): Conversation {
     if (!this.dot(dotId)) throw new Error('Dot not found.');
     const value: Conversation = {
       id,
@@ -218,16 +245,70 @@ export class WorkspaceStore {
     };
     this.db
       .prepare(
-        'INSERT INTO thread_bindings (id, dotId, ownerId, title, createdAt) VALUES (?, ?, ?, ?, ?)',
+        'INSERT INTO thread_bindings (id, dotId, ownerId, title, createdAt, kind) VALUES (?, ?, ?, ?, ?, ?)',
       )
-      .run(id, dotId, this.ownerId, title, value.createdAt);
+      .run(id, dotId, this.ownerId, title, value.createdAt, kind);
     return value;
   }
+  /** Any thread this owner holds, including consultations. */
   requireThread(id: string, dotId?: string): Conversation {
-    const thread = this.conversations().find((thread) => thread.id === id);
+    const thread = this.db
+      .prepare(
+        'SELECT id, dotId, ownerId, title, createdAt FROM thread_bindings WHERE id=? AND ownerId=?',
+      )
+      .get(id, this.ownerId) as unknown as Conversation | undefined;
     if (!thread || (dotId && thread.dotId !== dotId))
       throw new Error('Conversation does not belong to this Dot and owner.');
     return thread;
+  }
+  threadKind(id: string): ThreadKind {
+    const row = this.db
+      .prepare('SELECT kind FROM thread_bindings WHERE id=? AND ownerId=?')
+      .get(id, this.ownerId);
+    if (!row) throw new Error('Conversation does not belong to this owner.');
+    return row.kind === 'consultation' ? 'consultation' : 'chat';
+  }
+  consultations(): {
+    fromDotId: string;
+    toDotId: string;
+    threadId: string;
+    createdAt: number;
+  }[] {
+    return this.db
+      .prepare(
+        'SELECT c.fromDotId, c.toDotId, c.threadId, b.createdAt FROM consultations c JOIN thread_bindings b ON b.id=c.threadId WHERE b.ownerId=? ORDER BY b.createdAt DESC',
+      )
+      .all(this.ownerId)
+      .map((row) => ({
+        fromDotId: String(row.fromDotId),
+        toDotId: String(row.toDotId),
+        threadId: String(row.threadId),
+        createdAt: Number(row.createdAt),
+      }));
+  }
+  /** The thread where `toDotId` answers `fromDotId`, created on first use. */
+  consultationThread(fromDotId: string, toDotId: string): string {
+    const existing = this.db
+      .prepare(
+        'SELECT threadId FROM consultations WHERE fromDotId=? AND toDotId=?',
+      )
+      .get(fromDotId, toDotId);
+    if (typeof existing?.threadId === 'string') return existing.threadId;
+    const from = this.dot(fromDotId);
+    if (!from) throw new Error('Dot not found.');
+    const id = randomUUID();
+    this.db.exec('BEGIN');
+    try {
+      this.bindThread(id, toDotId, `Consulted by ${from.name}`, 'consultation');
+      this.db
+        .prepare('INSERT INTO consultations VALUES (?, ?, ?)')
+        .run(fromDotId, toDotId, id);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    return id;
   }
   bindTask(taskId: string, threadId: string) {
     this.requireThread(threadId);
