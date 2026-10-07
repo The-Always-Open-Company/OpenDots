@@ -104,7 +104,7 @@ Supported files are PDF, Word, PowerPoint, Excel, HTML, Markdown, text, CSV, PNG
 
 Attach files in chat with the paperclip. Attachments are saved to the library, shared with the Dot you are talking to, and linked to the page's Space when the chat is about a page. The message waits until each attachment is ready.
 
-Dots get `list_documents`, `search_documents` (hybrid keyword and semantic search that returns passages with page numbers) and `read_document`. Each call checks the Dot's current access.
+Each turn searches the ready documents shared with that Dot and includes the matching passages. Dots can also call `list_documents`, `search_documents` (hybrid keyword and semantic search that returns passages with page numbers) and `read_document`. Each call checks the Dot's current access.
 
 Back up `DOCUMENTS_DIR` together with the SQLite database. The Postgres data can be rebuilt by reprocessing documents, but learned memories live only in Postgres, so back up its volume too.
 

@@ -1,4 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import type { RunAgentInput } from '@ag-ui/core';
+import { lastValueFrom, toArray } from 'rxjs';
+import { DotAgent } from '../src/server/dot-agent.js';
+import { completion } from './fixtures/model-stream.js';
 import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +12,7 @@ import { Platform } from '../src/server/platform.js';
 import { Runner } from '../src/server/runner.js';
 import { createApp } from '../src/server/app.js';
 import {
+  describeDocuments,
   DocumentLibrary,
   fileType,
   type StoredChunk,
@@ -594,4 +599,77 @@ it('reports the library as unavailable without Postgres and docling', async () =
     form({ name: 'a.md', bytes: markdown('a') }),
   );
   expect(response.status).toBe(503);
+});
+
+it('describes shared documents and retrieved passages for the prompt', () => {
+  const note = describeDocuments(
+    [{ id: 'doc-1', title: 'Refund policy', status: 'ready' }],
+    [
+      {
+        documentId: 'doc-1',
+        version: 1,
+        ordinal: 0,
+        title: 'Refund policy',
+        text: 'Refunds are available for 30 days.',
+        headings: [],
+        pageFrom: 2,
+        pageTo: 2,
+        score: 1,
+      },
+    ],
+  );
+  expect(note).toContain('Refund policy');
+  expect(note).toContain('Refunds are available for 30 days.');
+  expect(note).toContain('"pages":"2"');
+  expect(describeDocuments([], [])).toContain('No documents are shared');
+});
+
+it('retrieves a shared document for the Dot before answering', async () => {
+  const f = fixture();
+  await indexed(
+    f,
+    'policy',
+    { dotIds: [f.first.id] },
+    'Refunds within 30 days',
+  );
+  f.workspace.bindThread('thread', f.first.id, 'Docs');
+  const agent = new DotAgent(
+    f.store,
+    f.workspace,
+    {
+      apiKey: 'fixture',
+      model: 'custom-model',
+      baseUrl: 'https://unused.invalid/v1',
+      voiceName: 'marin',
+      slackUsers: [],
+    },
+    f.first.id,
+    false,
+    { documents: f.library },
+  );
+  const input: RunAgentInput = {
+    threadId: 'thread',
+    runId: 'run',
+    state: {},
+    context: [],
+    messages: [
+      { id: 'user', role: 'user', content: 'What is the refund window?' },
+    ],
+    tools: [],
+    forwardedProps: {},
+  };
+  vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+    completion({ role: 'assistant', content: 'Thirty days.' }),
+  );
+  await lastValueFrom(agent.run(input).pipe(toArray()));
+  const request = JSON.parse(
+    String(vi.mocked(fetch).mock.calls[0][1]?.body),
+  ) as {
+    messages: { role: string; content: string }[];
+  };
+  const system = request.messages.find(
+    (message) => message.role === 'system',
+  )!.content;
+  expect(system).toContain('Refunds within 30 days');
+  expect(system).toContain('policy');
 });
