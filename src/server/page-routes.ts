@@ -137,7 +137,7 @@ export function pageRoutes(platform: Platform) {
           : c.json(
               {
                 error:
-                  'Page operation could not complete. Check Intelligence setup or retry; your draft has not been discarded.',
+                  'Page operation could not complete. Check the server setup or retry; your draft has not been discarded.',
               },
               503,
             ),

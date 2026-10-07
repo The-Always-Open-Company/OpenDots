@@ -32,7 +32,6 @@ import type {
   WorkspaceState,
 } from '../shared/types';
 import { api, ApiError, authHeaders, setToken } from './api';
-import { trackSetupStep } from './setup-telemetry';
 import {
   applyCaptureResult,
   applyRefreshResult,
@@ -203,17 +202,6 @@ export function App() {
     (item) => item.id === selectedThread && item.dotId === dot?.id,
   );
   const configured = !!workspace && workspace.setup.missing.length === 0;
-  const setupStep = workspace
-    ? dialog?.type === 'settings'
-      ? 'settings'
-      : configured
-        ? 'ready'
-        : 'setup_required'
-    : undefined;
-  useEffect(() => {
-    if (!setupStep) return;
-    return trackSetupStep(setupStep);
-  }, [setupStep]);
   const chooseDot = (next: Dot) => {
     setSelectedDot(next.id);
     setSelectedThread(

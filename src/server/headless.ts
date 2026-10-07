@@ -1,7 +1,7 @@
-import { IntelligenceAgent } from '@copilotkit/core';
-import type { Message } from '@ag-ui/core';
+import type { AbstractAgent } from '@ag-ui/client';
+import { EventType, type Message, type RunAgentInput } from '@ag-ui/core';
+import type { AgentRunner } from '@copilotkit/runtime/v2';
 import { randomUUID } from 'node:crypto';
-import { z } from 'zod';
 import { voiceReceiptMessagePrefix } from '../shared/voice-receipt.js';
 
 export function currentTurnText(messages: Message[], error?: Error): string {
@@ -14,64 +14,62 @@ export function currentTurnText(messages: Message[], error?: Error): string {
   return content;
 }
 
-const runtimeInfoSchema = z.object({
-  mode: z.literal('intelligence'),
-  intelligence: z.object({ wsUrl: z.url() }),
-  agents: z.record(z.string(), z.unknown()),
-});
-
+/**
+ * Runs one turn in a stored conversation through the same runner the browser
+ * uses, so open chat windows see the turn live and history stays in one place.
+ */
 export async function runThreadTurn(
-  runtimeUrl: string,
-  headers: Record<string, string>,
-  dotId: string,
+  runner: AgentRunner,
+  agent: AbstractAgent,
   threadId: string,
   prompt: string,
   signal: AbortSignal,
   metadata?: Record<string, unknown>,
 ): Promise<string> {
   signal.throwIfAborted();
-  const response = await fetch(`${runtimeUrl}/info`, { headers, signal });
-  if (!response.ok)
-    throw new Error(`Intelligence runtime returned HTTP ${response.status}.`);
-  const info = runtimeInfoSchema.parse(await response.json());
-  if (!Object.hasOwn(info.agents, dotId))
-    throw new Error('The selected Dot is unavailable in the runtime.');
-  // Core's runtime discovery is browser-only. Use the SDK's Node-compatible
-  // Intelligence agent for voice compute and scheduled server turns.
-  const agent = new IntelligenceAgent({
-    url: info.intelligence.wsUrl,
-    runtimeUrl,
-    agentId: dotId,
-    headers,
-    fetch: (input, init) =>
-      fetch(input, {
-        ...init,
-        signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
-      }),
-  });
+  const message = {
+    id: `${metadata?.opendotsSource === 'voice_receipt' ? voiceReceiptMessagePrefix : ''}${randomUUID()}`,
+    role: 'user',
+    content: prompt,
+    ...(metadata ? { metadata } : {}),
+  } as Message;
+  const input: RunAgentInput = {
+    threadId,
+    runId: randomUUID(),
+    messages: [message],
+    tools: [],
+    context: [],
+    state: {},
+    forwardedProps: {},
+  };
   agent.threadId = threadId;
-  let runError: Error | undefined;
-  const subscription = agent.subscribe({
-    onRunErrorEvent: ({ event }) => {
-      runError = new Error(event.message);
-    },
-  });
-  const stop = () => agent.abortRun();
+  agent.setMessages([message]);
+  if (await runner.isRunning({ threadId }))
+    throw new Error(
+      'This conversation is already answering. Try again when the current reply finishes.',
+    );
+  const stop = () => void runner.stop({ threadId, runId: input.runId });
   signal.addEventListener('abort', stop, { once: true });
   try {
+    let runError: Error | undefined;
+    await new Promise<void>((resolve, reject) =>
+      runner.run({ threadId, agent, input }).subscribe({
+        next: (event) => {
+          if (event.type === EventType.RUN_ERROR)
+            runError ??= new Error(
+              String((event as { message?: unknown }).message ?? 'Run failed.'),
+            );
+        },
+        error: reject,
+        complete: resolve,
+      }),
+    );
     signal.throwIfAborted();
-    agent.addMessage({
-      id: `${metadata?.opendotsSource === 'voice_receipt' ? voiceReceiptMessagePrefix : ''}${randomUUID()}`,
-      role: 'user',
-      content: prompt,
-      ...(metadata ? { metadata } : {}),
-    });
-    const result = await agent.runAgent();
-    signal.throwIfAborted();
-    return currentTurnText(result.newMessages, runError);
+    return currentTurnText(
+      agent.messages.filter((item) => item.id !== message.id),
+      runError,
+    );
   } finally {
     signal.removeEventListener('abort', stop);
-    subscription.unsubscribe();
-    await agent.detachActiveRun();
   }
 }

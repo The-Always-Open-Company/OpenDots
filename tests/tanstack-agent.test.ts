@@ -23,11 +23,9 @@ function fixture() {
     store,
     workspace,
     {
-      intelligenceKey: 'fixture',
       apiKey: 'fixture',
       model: 'custom-model',
       baseUrl: 'https://unused.invalid/v1',
-      runtimeUrl: '',
       voiceName: 'marin',
       slackUsers: [],
     },

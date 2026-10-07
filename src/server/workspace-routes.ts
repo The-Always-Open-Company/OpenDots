@@ -1,21 +1,14 @@
-import { setupInputSchema } from './setup-telemetry.js';
 import { pageRoutes } from './page-routes.js';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { Platform } from './platform.js';
 import { VoiceService } from './voice.js';
-import {
-  learningContainerIdSchema,
-  validateLearningSettings,
-} from '../shared/learning.js';
 const dotSchema = z
   .object({
     name: z.string().trim().min(1).max(40),
     instructions: z.string().trim().min(3).max(2000),
     researchAllowed: z.boolean(),
     memoryAllowed: z.boolean(),
-    learningContainerId: learningContainerIdSchema.optional(),
-    skillDeliveryEnabled: z.boolean().optional(),
     spaceIds: z.array(z.string().min(1)).min(1).max(100).optional(),
     spaceId: z.string().min(1).optional(),
   })
@@ -23,22 +16,6 @@ const dotSchema = z
 export function workspaceRoutes(platform: Platform, voice: VoiceService) {
   const app = new Hono();
   app.route('/', pageRoutes(platform));
-  app.post('/setup-telemetry', async (c) => {
-    const parsed = setupInputSchema.safeParse(
-      await c.req.json().catch(() => null),
-    );
-    if (!parsed.success) return c.json({ error: 'Invalid setup event.' }, 400);
-    const event = parsed.data;
-    if (
-      event.kind === 'step_viewed' &&
-      event.step !== 'settings' &&
-      event.step !==
-        (platform.setup().missing.length ? 'setup_required' : 'ready')
-    )
-      return c.json({ error: 'Setup step does not match server state.' }, 400);
-    platform.setupTelemetry.capture(event);
-    return c.json({ ok: true });
-  });
   app.get('/workspace', (c) =>
     c.json({
       spaces: platform.workspace.spaces(),
@@ -78,22 +55,6 @@ export function workspaceRoutes(platform: Platform, voice: VoiceService) {
         },
         400,
       );
-    try {
-      validateLearningSettings(
-        data.data.learningContainerId ?? null,
-        data.data.skillDeliveryEnabled ?? false,
-      );
-    } catch (error) {
-      return c.json(
-        {
-          error:
-            error instanceof Error
-              ? error.message
-              : 'Invalid Learning settings.',
-        },
-        400,
-      );
-    }
     return c.json(
       platform.workspace.createDot(
         data.data.spaceId,
@@ -102,8 +63,6 @@ export function workspaceRoutes(platform: Platform, voice: VoiceService) {
         data.data.researchAllowed,
         data.data.memoryAllowed,
         data.data.spaceIds,
-        data.data.learningContainerId,
-        data.data.skillDeliveryEnabled,
       ),
       201,
     );
@@ -112,26 +71,8 @@ export function workspaceRoutes(platform: Platform, voice: VoiceService) {
     const data = dotSchema.safeParse(await c.req.json());
     if (!data.success)
       return c.json({ error: 'Invalid specialist settings.' }, 400);
-    const current = platform.workspace.dot(c.req.param('id'));
-    if (!current) return c.json({ error: 'Dot not found.' }, 404);
-    try {
-      validateLearningSettings(
-        data.data.learningContainerId === undefined
-          ? (current.learningContainerId ?? null)
-          : data.data.learningContainerId,
-        data.data.skillDeliveryEnabled ?? current.skillDeliveryEnabled ?? false,
-      );
-    } catch (error) {
-      return c.json(
-        {
-          error:
-            error instanceof Error
-              ? error.message
-              : 'Invalid Learning settings.',
-        },
-        400,
-      );
-    }
+    if (!platform.workspace.dot(c.req.param('id')))
+      return c.json({ error: 'Dot not found.' }, 404);
     return c.json(platform.workspace.updateDot(c.req.param('id'), data.data));
   });
   app.post('/conversations', async (c) => {
@@ -220,7 +161,7 @@ export function workspaceRoutes(platform: Platform, voice: VoiceService) {
   app.onError((error, c) => {
     const text = error.message;
     const known =
-      /^(Setup|Voice setup|Dot |Space |Specialist |Conversation |Call |This call|End the current|Voice provider|An audio|Intelligence could not)/.test(
+      /^(Setup|Voice setup|Dot |Space |Specialist |Conversation |Call |This call|End the current|Voice provider|An audio|This conversation is already)/.test(
         text,
       );
     return c.json(

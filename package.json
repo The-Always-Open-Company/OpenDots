@@ -1,7 +1,7 @@
 {
   "name": "opendots",
   "version": "0.1.0",
-  "description": "A self-hosted personal-agent template with CopilotKit Intelligence, Threads, and Channels.",
+  "description": "A self-hosted personal-agent template with locally stored conversations and any OpenAI-compatible model.",
   "main": "index.js",
   "directories": {
     "doc": "docs",
@@ -32,8 +32,9 @@
     "@copilotkit/runtime": "^1.75.0",
     "@hono/node-server": "^2.1.3",
     "@modelcontextprotocol/sdk": "^1.31.0",
-    "@tanstack/ai": "^0.63.0",
-    "@tanstack/ai-openai": "^0.25.1",
+    "@tanstack/ai": "^0.65.0",
+    "@tanstack/ai-compaction": "^0.1.13",
+    "@tanstack/ai-openai": "^0.27.0",
     "@tiptap/core": "3.31.3",
     "@tiptap/extension-placeholder": "3.31.3",
     "@tiptap/extension-table": "3.31.3",

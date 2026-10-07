@@ -85,8 +85,6 @@ export interface Dot {
   researchAllowed: boolean;
   memoryAllowed: boolean;
   createdAt: number;
-  learningContainerId?: string | null;
-  skillDeliveryEnabled?: boolean;
 }
 export interface Conversation {
   id: string;
@@ -94,8 +92,6 @@ export interface Conversation {
   ownerId: string;
   title: string;
   createdAt: number;
-  /** Frozen at creation; null means this conversation does not participate. */
-  learningContainerId?: string | null;
 }
 export interface CallReceipt {
   anchorMessageId?: string | null;
@@ -108,7 +104,6 @@ export interface CallReceipt {
   error: string | null;
 }
 export interface SetupStatus {
-  intelligence: boolean;
   model: boolean;
   browser: boolean;
   voice: boolean;

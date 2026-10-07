@@ -18,7 +18,6 @@ function fixture(ownerToken?: string) {
     baseUrl: config.baseUrl,
     voiceName: 'marin',
     slackUsers: [],
-    runtimeUrl: '',
   });
   return {
     ws,
@@ -38,37 +37,27 @@ const request = (body: unknown, method = 'POST') => ({
   body: JSON.stringify(body),
 });
 
-it('saves Learning settings through the owner API and rejects malformed container IDs', async () => {
+it('saves Dot settings through the owner API and rejects removed Learning fields', async () => {
   const { ws, app } = fixture();
   const dot = ws.dots()[0];
   const body = {
-    name: dot.name,
+    name: 'Researcher',
     instructions: dot.instructions,
-    researchAllowed: true,
+    researchAllowed: false,
     memoryAllowed: true,
-    learningContainerId: 'research',
-    skillDeliveryEnabled: true,
   };
   expect(
     (await app.request(`/api/dots/${dot.id}`, request(body, 'PUT'))).status,
   ).toBe(200);
   expect(ws.dot(dot.id)).toMatchObject({
-    learningContainerId: 'research',
-    skillDeliveryEnabled: true,
+    name: 'Researcher',
+    researchAllowed: false,
   });
   expect(
     (
       await app.request(
         `/api/dots/${dot.id}`,
-        request({ ...body, learningContainerId: 'bad--id' }, 'PUT'),
-      )
-    ).status,
-  ).toBe(400);
-  expect(
-    (
-      await app.request(
-        `/api/dots/${dot.id}`,
-        request({ ...body, learningContainerId: null }, 'PUT'),
+        request({ ...body, learningContainerId: 'research' }, 'PUT'),
       )
     ).status,
   ).toBe(400);
@@ -77,10 +66,9 @@ it('saves Learning settings through the owner API and rejects malformed containe
     request({ ...body, spaceId: dot.spaceId }),
   );
   expect(created.status).toBe(201);
-  expect(await created.json()).toMatchObject({
-    learningContainerId: 'research',
-    skillDeliveryEnabled: true,
-  });
+  expect(Object.keys(await created.json())).not.toContain(
+    'learningContainerId',
+  );
   const privateApp = fixture('owner-secret');
   expect(
     (
@@ -298,7 +286,7 @@ it.each([
   },
 );
 
-it('keeps real Intelligence failures as 503 without exposing details', async () => {
+it('keeps real service failures as 503 without exposing details', async () => {
   const { ws, app, platform } = fixture();
   ws.bindThread('valid-thread', ws.dots()[0].id, 'Conversation');
   vi.spyOn(platform.pages, 'saveConversation').mockRejectedValueOnce(
@@ -311,6 +299,6 @@ it('keeps real Intelligence failures as 503 without exposing details', async () 
   expect(response.status).toBe(503);
   expect(await response.json()).toEqual({
     error:
-      'Page operation could not complete. Check Intelligence setup or retry; your draft has not been discarded.',
+      'Page operation could not complete. Check the server setup or retry; your draft has not been discarded.',
   });
 });

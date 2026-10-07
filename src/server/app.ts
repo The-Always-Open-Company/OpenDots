@@ -27,12 +27,19 @@ export function createApp({
   platform,
 }: AppOptions) {
   const app = new Hono();
-  app.use(
-    '/api/*',
-    bodyLimit({
-      maxSize: 1_000_000,
-      onError: (c) => c.json({ error: 'Request is too large.' }, 413),
-    }),
+  const tooLarge = bodyLimit({
+    maxSize: 1_000_000,
+    onError: (c) => c.json({ error: 'Request is too large.' }, 413),
+  });
+  // Chat runs carry the whole client-side conversation in each request.
+  const runtimeTooLarge = bodyLimit({
+    maxSize: 10_000_000,
+    onError: (c) => c.json({ error: 'Conversation is too large.' }, 413),
+  });
+  app.use('/api/*', (c, next) =>
+    c.req.path.startsWith('/api/copilotkit/')
+      ? runtimeTooLarge(c, next)
+      : tooLarge(c, next),
   );
   app.use('/api/*', async (c, next) => {
     c.header('Cache-Control', 'no-store');
