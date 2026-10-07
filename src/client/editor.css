@@ -1345,6 +1345,35 @@
   justify-content: space-between;
   align-items: baseline;
 }
+.document-profile {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.document-profile p {
+  margin: 0 0 10px;
+}
+.document-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.document-tag {
+  border: 1px solid var(--document-line);
+  border-radius: 999px;
+  padding: 1px 9px;
+  font-size: 11px;
+  color: var(--document-muted);
+  white-space: nowrap;
+}
+.document-tags + p {
+  margin: 10px 0 0;
+}
+.library-card-body .document-tags {
+  margin: 6px 0 2px;
+  max-height: 22px;
+  overflow: hidden;
+}
 .document-readers {
   list-style: none;
   padding: 0;

@@ -3,144 +3,29 @@ import type { RunAgentInput } from '@ag-ui/core';
 import { lastValueFrom, toArray } from 'rxjs';
 import { DotAgent } from '../src/server/dot-agent.js';
 import { completion } from './fixtures/model-stream.js';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { Store } from '../src/server/store.js';
-import { WorkspaceStore } from '../src/server/workspace.js';
 import { Platform } from '../src/server/platform.js';
 import { Runner } from '../src/server/runner.js';
 import { createApp } from '../src/server/app.js';
-import {
-  describeDocuments,
-  DocumentLibrary,
-  fileType,
-  type StoredChunk,
-} from '../src/server/document-library.js';
+import { fileType } from '../src/server/document-library.js';
 import { DocumentIngestor } from '../src/server/document-ingestor.js';
 import { documentTools } from '../src/server/document-tools.js';
-import type {
-  ChunkHit,
-  ChunkIndex,
-  IndexedChunk,
-} from '../src/server/chunk-index.js';
+import {
+  describeDocuments,
+  DocumentRetriever,
+} from '../src/server/document-retrieval.js';
+import {
+  chunk,
+  fixture,
+  indexed,
+  markdown,
+  pdf,
+} from './fixtures/document-library.js';
 
-const cleanup: (() => void)[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
-  cleanup.splice(0).forEach((fn) => fn());
 });
-
-class FakeIndex implements ChunkIndex {
-  chunks = new Map<string, { version: number; chunks: IndexedChunk[] }>();
-  searched: string[][] = [];
-  async replace(documentId: string, version: number, chunks: IndexedChunk[]) {
-    this.chunks.set(documentId, { version, chunks });
-  }
-  async remove(documentId: string) {
-    this.chunks.delete(documentId);
-  }
-  async search(
-    _query: string,
-    _embedding: number[],
-    documentIds: string[],
-    limit: number,
-  ): Promise<ChunkHit[]> {
-    this.searched.push(documentIds);
-    return [...this.chunks.entries()]
-      .filter(([id]) => documentIds.includes(id))
-      .flatMap(([documentId, entry]) =>
-        entry.chunks.map((chunk) => ({
-          documentId,
-          version: entry.version,
-          ordinal: chunk.ordinal,
-          text: chunk.text,
-          headings: chunk.headings,
-          pageFrom: chunk.pageFrom,
-          pageTo: chunk.pageTo,
-          score: 1,
-        })),
-      )
-      .slice(0, limit);
-  }
-  async documentIds() {
-    return [...this.chunks.keys()];
-  }
-}
-
-const embed = async (texts: string[]) => texts.map(() => [0.1, 0.2]);
-const pdf = (text: string) =>
-  new TextEncoder().encode(`%PDF-1.7\n${text}\n%%EOF`);
-const markdown = (text: string) => new TextEncoder().encode(text);
-const chunk = (text: string, page: number): StoredChunk => ({
-  ordinal: 0,
-  text,
-  headings: [],
-  pageFrom: page,
-  pageTo: page,
-});
-
-function fixture(maxUploadBytes?: number) {
-  const store = new Store(':memory:');
-  const workspace = new WorkspaceStore(':memory:', 'owner');
-  const dir = mkdtempSync(join(tmpdir(), 'opendots-docs-'));
-  cleanup.push(() => {
-    store.close();
-    workspace.close();
-    rmSync(dir, { recursive: true, force: true });
-  });
-  const index = new FakeIndex();
-  const library = new DocumentLibrary(workspace, index, embed, dir);
-  const [first] = workspace.dots();
-  const research = workspace.createSpace('Research', '');
-  const second = workspace.createDot(
-    research.id,
-    'Researcher',
-    'Reads papers.',
-    true,
-    true,
-  );
-  const third = workspace.createDot(
-    first.spaceId,
-    'Writer',
-    'Writes.',
-    true,
-    true,
-  );
-  return {
-    store,
-    workspace,
-    library,
-    index,
-    dir,
-    first,
-    second,
-    third,
-    research,
-    maxUploadBytes,
-  };
-}
-
-/** Uploads and indexes a document as if the ingestor had converted it. */
-async function indexed(
-  f: ReturnType<typeof fixture>,
-  name: string,
-  access: { allDots?: boolean; dotIds?: string[]; spaceIds?: string[] },
-  text = `About ${name}`,
-) {
-  const document = await f.library.upload(
-    { name: `${name}.md`, bytes: markdown(text) },
-    {
-      allDots: access.allDots ?? false,
-      dotIds: access.dotIds ?? [],
-      spaceIds: access.spaceIds ?? [],
-    },
-  );
-  const claim = f.workspace.documents.claim()!;
-  expect(claim.id).toBe(document.id);
-  await f.library.saveConversion(claim, [chunk(text, 1)], text);
-  return document.id;
-}
 
 it('grants read access through all Dots, a direct grant, or a linked Space', async () => {
   const f = fixture();
@@ -310,6 +195,7 @@ it('searches only documents the Dot may read, including when it names others', a
   expect(await f.library.search(f.first.id, 'budget', [theirs])).toEqual([]);
   const tools = documentTools(
     f.library,
+    new DocumentRetriever(f.library),
     f.first.id,
     () => undefined,
     new AbortController().signal,
@@ -545,7 +431,7 @@ it('grants a chat attachment to the Dot and links the page’s Space', async () 
 });
 
 it('enforces the upload size limit and file type checks', async () => {
-  const f = fixture(1000);
+  const f = fixture({ maxUploadBytes: 1000 });
   const app = routes(f);
   const large = await app.request(
     '/api/documents',
@@ -603,24 +489,45 @@ it('reports the library as unavailable without Postgres and docling', async () =
 
 it('describes shared documents and retrieved passages for the prompt', () => {
   const note = describeDocuments(
-    [{ id: 'doc-1', title: 'Refund policy', status: 'ready' }],
     [
       {
+        id: 'doc-1',
+        title: 'Refund policy',
+        status: 'processing',
+        searchable: true,
+        summary: 'How refunds work.',
+        tags: ['refunds'],
+      },
+      {
+        id: 'doc-2',
+        title: 'Draft',
+        status: 'queued',
+        searchable: false,
+        summary: null,
+        tags: [],
+      },
+    ],
+    [
+      {
+        ref: 'doc-1#0',
         documentId: 'doc-1',
-        version: 1,
         ordinal: 0,
         title: 'Refund policy',
+        section: 'Refunds',
+        pages: '2',
+        context: 'The refund window.',
         text: 'Refunds are available for 30 days.',
-        headings: [],
-        pageFrom: 2,
-        pageTo: 2,
-        score: 1,
+        related: [],
       },
     ],
   );
-  expect(note).toContain('Refund policy');
   expect(note).toContain('Refunds are available for 30 days.');
   expect(note).toContain('"pages":"2"');
+  expect(note).toContain('"summary":"How refunds work."');
+  // Re-indexing documents stay searchable; never-indexed ones say so.
+  expect(note).toContain('"id":"doc-1","title":"Refund policy","status":"ready"');
+  expect(note).toContain('"status":"queued"');
+  expect(note).toContain('read_passage');
   expect(describeDocuments([], [])).toContain('No documents are shared');
 });
 
@@ -672,4 +579,82 @@ it('retrieves a shared document for the Dot before answering', async () => {
   )!.content;
   expect(system).toContain('Refunds within 30 days');
   expect(system).toContain('policy');
+});
+
+it('plans the turn search from the conversation so follow-ups find passages', async () => {
+  const f = fixture();
+  const contracts = await indexed(
+    f,
+    'contracts',
+    { dotIds: [f.first.id] },
+    'The supplier contract needs three months notice',
+  );
+  f.workspace.bindThread('thread', f.first.id, 'Docs');
+  // The earlier reply is one the server stored, the only kind of assistant
+  // turn a later request is allowed to see.
+  f.workspace.threads.appendRun(
+    {
+      runId: 'earlier',
+      threadId: 'thread',
+      agentId: f.first.id,
+      parentRunId: null,
+      events: [],
+      createdAt: 1,
+    },
+    [
+      { id: 'u1', role: 'user', content: 'Tell me about the supplier.' },
+      { id: 'a1', role: 'assistant', content: 'It supplies parts.' },
+    ],
+    new Set(),
+  );
+  const prompts: string[] = [];
+  const retriever = new DocumentRetriever(f.library, async (request) => {
+    prompts.push(request.user);
+    return {
+      needsDocuments: true,
+      standalone: 'What notice does the supplier contract need?',
+      queries: ['supplier contract notice'],
+    };
+  });
+  const agent = new DotAgent(
+    f.store,
+    f.workspace,
+    {
+      apiKey: 'fixture',
+      model: 'custom-model',
+      baseUrl: 'https://unused.invalid/v1',
+      voiceName: 'marin',
+      slackUsers: [],
+    },
+    f.first.id,
+    false,
+    { documents: f.library, retriever },
+  );
+  vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+    completion({ role: 'assistant', content: 'Three months.' }),
+  );
+  await lastValueFrom(
+    agent
+      .run({
+        threadId: 'thread',
+        runId: 'run',
+        state: {},
+        context: [],
+        messages: [{ id: 'u2', role: 'user', content: 'And its notice?' }],
+        tools: [],
+        forwardedProps: {},
+      })
+      .pipe(toArray()),
+  );
+  expect(prompts[0]).toContain('user: Tell me about the supplier.');
+  expect(prompts[0]).toContain('assistant: It supplies parts.');
+  expect(prompts[0]).toContain('<latest>\nAnd its notice?\n</latest>');
+  const request = JSON.parse(
+    String(vi.mocked(fetch).mock.calls[0][1]?.body),
+  ) as { messages: { role: string; content: string }[] };
+  const system = request.messages.find(
+    (message) => message.role === 'system',
+  )!.content;
+  expect(system).toContain(`"ref":"${contracts}#0"`);
+  expect(system).toContain('three months notice');
 });

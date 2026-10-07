@@ -25,6 +25,8 @@ services:
       DOCLING_URL: http://docling:5001
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
       MEMORY_MODEL: ${MEMORY_MODEL:-}
+      ENRICHMENT_MODEL: ${ENRICHMENT_MODEL:-}
+      RERANK_MODEL: ${RERANK_MODEL:-}
       DOCUMENTS_DIR: /data/documents
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-}
     volumes:

@@ -66,7 +66,7 @@ Each Dot learns durable facts from its own conversations and recalls the relevan
 
 ### Documents
 
-Upload files to a document library that Dots can search and cite. Share each document with every Dot, specific Dots, or the Dots working in a linked Space; Spaces show their linked documents beside their pages. Files attached in chat are saved to the library and shared with that Dot. Conversion runs locally with [docling-serve](https://github.com/docling-project/docling-serve), and search combines keyword and semantic matching over passages with page numbers.
+Upload files to a document library that Dots can search and cite. Share each document with every Dot, specific Dots, or the Dots working in a linked Space; Spaces show their linked documents beside their pages. Files attached in chat are saved to the library and shared with that Dot. Conversion runs locally with [docling-serve](https://github.com/docling-project/docling-serve). Indexing gives each document a summary and tags, gives each passage a sentence of context, keywords and names, and links related passages across documents. Before each reply, the Dot's question is expanded into several keyword and semantic searches, the results are fused and reranked by a model, and the best passages arrive with their neighbouring text, page numbers and related passages (see [How Dots search](docs/SETUP.md#how-dots-search)).
 
 ### Dot computers
 
@@ -168,7 +168,7 @@ See [Setup](docs/SETUP.md) for configuration, calls, the browser service, and Do
 
 Conversation messages, tool calls, run events, and cached conversation summaries are stored in the SQLite database at `DATABASE_PATH`, together with pages, workspace metadata, documents and their access rules. Uploaded files and their converted text live in `DOCUMENTS_DIR`. Learned memories and searchable document passages live in Postgres. Back up all three.
 
-The configured model provider receives conversation context, including authorized page content, tool results, recalled memories, document passages, and the older turns it summarizes. Memory extraction sends each chat turn's user messages and reply to the memory model; document passages and search queries are sent to the embedding model. Documents are converted locally by docling-serve. Public-web research sends queries and selected URLs to Parallel by default; set `WEB_SEARCH_PROVIDER=disabled` to disable those tools. Speech integrations send data to their configured providers when used.
+The configured model provider receives conversation context, including authorized page content, tool results, recalled memories, document passages, and the older turns it summarizes. Memory extraction sends each chat turn's user messages and reply to the memory model; document passages and search queries are sent to the embedding model. Indexing sends document text to the enrichment model, and each document search sends the recent conversation and candidate passages to the search model. Documents are converted locally by docling-serve. Public-web research sends queries and selected URLs to Parallel by default; set `WEB_SEARCH_PROVIDER=disabled` to disable those tools. Speech integrations send data to their configured providers when used.
 
 CopilotKit and mem0 telemetry are switched off in code at startup (`src/server/disable-telemetry.ts`), regardless of environment settings, and the upstream browser setup telemetry has been removed. Review the policies and retention settings of each service you configure.
 
@@ -184,7 +184,7 @@ CopilotKit and mem0 telemetry are switched off in code at startup (`src/server/d
 | Browser                    | Separate read-only public-page service with page capture and navigation limits                                |
 | Dot computers              | Per-Dot browser profiles, files, shell, takeover, permissions, and action records through OpenBot             |
 | Memory                     | Shared About me preferences, plus per-Dot learned memories you can review, edit and delete                    |
-| Documents                  | Library with per-Dot and per-Space access, local conversion, hybrid search, versions and chat attachments     |
+| Documents                  | Library with per-Dot and per-Space access, local conversion, enriched multi-query search, versions and chat attachments |
 | Dot consultations          | Dots ask each other questions in separate, restricted consultation threads                                    |
 | Deployment                 | Local Node setup and separate application, browser, Postgres and docling-serve containers                     |
 

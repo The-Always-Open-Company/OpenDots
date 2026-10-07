@@ -37,6 +37,10 @@ export interface PlatformConfig extends WebConfig {
   embeddingModel?: string;
   /** Model that extracts learned memories; defaults to `model`. */
   memoryModel?: string;
+  /** Model that writes document summaries and passage context; defaults to `model`. */
+  enrichmentModel?: string;
+  /** Model that plans document searches and reranks passages; defaults to `model`. */
+  rerankModel?: string;
   documentsDir?: string;
   maxUploadBytes?: number;
   computerSupervisorUrl?: string;

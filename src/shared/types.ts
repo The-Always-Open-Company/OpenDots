@@ -134,10 +134,17 @@ export interface DocumentSummary {
   pageCount: number | null;
   convertedChars: number | null;
   chunkCount: number | null;
+  /** Model-written overview of the indexed version. */
+  summary: string | null;
+  tags: string[];
   spaceIds: string[];
   dotIds: string[];
   createdAt: number;
   updatedAt: number;
+}
+export interface DocumentEntity {
+  name: string;
+  type: string;
 }
 export type DocumentAccessReason = 'all' | 'granted' | 'space';
 export interface DocumentReader {
@@ -147,6 +154,9 @@ export interface DocumentReader {
   viaSpaceIds: string[];
 }
 export interface DocumentDetail extends DocumentSummary {
+  entities: DocumentEntity[];
+  /** Explains a partial enrichment, when some passages kept headings only. */
+  enrichmentNote: string | null;
   readers: DocumentReader[];
 }
 export interface WorkspaceState {

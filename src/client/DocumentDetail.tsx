@@ -177,6 +177,31 @@ export function DocumentDetail({
             )}
           </p>
         )}
+        {(document.summary ||
+          document.tags.length > 0 ||
+          document.entities.length > 0) && (
+          <section className="document-profile" aria-label="About this document">
+            {document.summary && <p>{document.summary}</p>}
+            {document.tags.length > 0 && (
+              <div className="document-tags">
+                {document.tags.map((tag) => (
+                  <span className="document-tag" key={tag}>
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
+            {document.entities.length > 0 && (
+              <p className="muted">
+                Mentions:{' '}
+                {document.entities.map((entity) => entity.name).join(', ')}
+              </p>
+            )}
+          </section>
+        )}
+        {document.enrichmentNote && (
+          <p className="muted">{document.enrichmentNote}</p>
+        )}
         <div className="document-actions">
           <button
             disabled={busy || !workspace.setup.documents}

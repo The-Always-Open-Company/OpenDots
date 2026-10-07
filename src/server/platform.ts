@@ -16,12 +16,14 @@ import { validateRuntimeScope } from './runtime-scope.js';
 import { SqliteThreadRunner } from './thread-runner.js';
 import type { MemoryProvider } from './memory.js';
 import type { DocumentLibrary } from './document-library.js';
+import type { DocumentRetriever } from './document-retrieval.js';
 
 export const CONSULTATION_TIME_LIMIT_MS = 45_000;
 
 export interface PlatformServices {
   memory?: MemoryProvider;
   documents?: DocumentLibrary;
+  retriever?: DocumentRetriever;
 }
 
 export class Platform {

@@ -2,10 +2,20 @@ import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import type {
   DocumentDetail,
+  DocumentEntity,
   DocumentReader,
   DocumentStatus,
   DocumentSummary,
 } from '../shared/types.js';
+
+/** What enrichment learned about a whole document. */
+export interface DocumentProfile {
+  summary: string | null;
+  tags: string[];
+  entities: DocumentEntity[];
+  /** Set when some passages could not be enriched. */
+  note: string | null;
+}
 
 export interface NewDocument {
   title: string;
@@ -57,9 +67,23 @@ interface Row {
   pageCount: number | null;
   convertedChars: number | null;
   chunkCount: number | null;
+  summary: string | null;
+  tags: string | null;
+  entities: string | null;
+  enrichmentNote: string | null;
   createdAt: number;
   updatedAt: number;
 }
+
+const parseList = <T>(value: string | null): T[] => {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+};
 
 export const DOCUMENT_LEASE_MS = 20 * 60_000;
 const MAX_ATTEMPTS = 3;
@@ -83,6 +107,21 @@ export class Documents {
       CREATE INDEX IF NOT EXISTS space_documents_document ON space_documents(documentId);
       CREATE TABLE IF NOT EXISTS dot_documents(dotId TEXT NOT NULL, documentId TEXT NOT NULL, PRIMARY KEY(dotId, documentId));
       CREATE INDEX IF NOT EXISTS dot_documents_document ON dot_documents(documentId);`);
+    const columns = new Set(
+      db
+        .prepare('PRAGMA table_info(documents)')
+        .all()
+        .map((row) => String(row.name)),
+    );
+    for (const [column, definition] of [
+      ['summary', 'TEXT'],
+      ['tags', 'TEXT'],
+      ['entities', 'TEXT'],
+      ['enrichmentNote', 'TEXT'],
+      ['indexFormat', 'INTEGER NOT NULL DEFAULT 0'],
+    ])
+      if (!columns.has(column))
+        db.exec(`ALTER TABLE documents ADD COLUMN ${column} ${definition}`);
   }
   private transaction<T>(fn: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
@@ -123,6 +162,8 @@ export class Documents {
       convertedChars:
         row.convertedChars === null ? null : Number(row.convertedChars),
       chunkCount: row.chunkCount === null ? null : Number(row.chunkCount),
+      summary: row.summary,
+      tags: parseList<string>(row.tags),
       spaceIds: this.ids('space_documents', row.id),
       dotIds: this.ids('dot_documents', row.id),
       createdAt: Number(row.createdAt),
@@ -290,9 +331,9 @@ export class Documents {
     const where = ['deleted=0'];
     const values: string[] = [];
     if (filter.q) {
-      where.push('(title LIKE ? OR fileName LIKE ?)');
+      where.push('(title LIKE ? OR fileName LIKE ? OR tags LIKE ?)');
       const like = `%${filter.q.replace(/[%_]/g, '')}%`;
-      values.push(like, like);
+      values.push(like, like, like);
     }
     if (filter.status) {
       where.push('status=?');
@@ -359,7 +400,26 @@ export class Documents {
     id: string,
     dots: { id: string; spaceIds: string[] }[],
   ): DocumentDetail {
-    return { ...this.require(id), readers: this.readers(id, dots) };
+    const row = this.row(id);
+    return {
+      ...this.require(id),
+      entities: parseList<DocumentEntity>(row?.entities ?? null),
+      enrichmentNote: row?.enrichmentNote ?? null,
+      readers: this.readers(id, dots),
+    };
+  }
+  /**
+   * Queues indexed documents built by an older pipeline. They stay searchable
+   * at their current version until the new index replaces it.
+   */
+  requeueStale(format: number): number {
+    return Number(
+      this.db
+        .prepare(
+          "UPDATE documents SET status='queued', error=NULL, lease=NULL, leaseUntil=NULL, attempts=0 WHERE deleted=0 AND status IN ('ready', 'failed') AND indexedVersion IS NOT NULL AND indexedVersion=version AND indexFormat<?",
+        )
+        .run(format).changes,
+    );
   }
   /** Hides the document at once; the files and chunks are purged afterwards. */
   markDeleted(id: string) {
@@ -456,19 +516,26 @@ export class Documents {
       pageCount: number | null;
       convertedChars: number;
       chunkCount: number;
+      indexFormat: number;
+      profile: DocumentProfile;
     },
   ): boolean {
     return this.transaction(() => {
       if (!this.owns(claim)) return false;
       this.db
         .prepare(
-          "UPDATE documents SET status='ready', indexedVersion=?, pageCount=?, convertedChars=?, chunkCount=?, lease=NULL, leaseUntil=NULL, error=NULL, updatedAt=? WHERE id=?",
+          "UPDATE documents SET status='ready', indexedVersion=?, pageCount=?, convertedChars=?, chunkCount=?, indexFormat=?, summary=?, tags=?, entities=?, enrichmentNote=?, lease=NULL, leaseUntil=NULL, error=NULL, updatedAt=? WHERE id=?",
         )
         .run(
           claim.version,
           stats.pageCount,
           stats.convertedChars,
           stats.chunkCount,
+          stats.indexFormat,
+          stats.profile.summary,
+          JSON.stringify(stats.profile.tags),
+          JSON.stringify(stats.profile.entities),
+          stats.profile.note,
           Date.now(),
           claim.id,
         );

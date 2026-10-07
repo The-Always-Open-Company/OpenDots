@@ -297,6 +297,15 @@ export function DocumentCard({
           {document.fileName} · {formatSize(document.size)}
           {document.pageCount ? ` · ${document.pageCount} pages` : ''}
         </p>
+        {document.tags.length > 0 && (
+          <div className="document-tags" title={document.summary ?? undefined}>
+            {document.tags.slice(0, 4).map((tag) => (
+              <span className="document-tag" key={tag}>
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
         <div className="library-page-meta">
           <DocumentStatusBadge document={document} />
           <span title="Who can read it">{access}</span>

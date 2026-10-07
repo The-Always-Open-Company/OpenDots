@@ -23,6 +23,9 @@ import { PgChunkIndex } from './chunk-index.js';
 import { openAiEmbeddings } from './embeddings.js';
 import { DocumentLibrary } from './document-library.js';
 import { DocumentIngestor } from './document-ingestor.js';
+import { DocumentEnricher } from './document-enrichment.js';
+import { DocumentRetriever } from './document-retrieval.js';
+import { modelJson } from './model-json.js';
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 4310);
 const ownerToken = process.env.OWNER_TOKEN;
@@ -51,6 +54,8 @@ const config: PlatformConfig = {
   doclingUrl: process.env.DOCLING_URL || undefined,
   embeddingModel: process.env.EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL,
   memoryModel: process.env.MEMORY_MODEL || undefined,
+  enrichmentModel: process.env.ENRICHMENT_MODEL || undefined,
+  rerankModel: process.env.RERANK_MODEL || undefined,
   documentsDir:
     process.env.DOCUMENTS_DIR || join(dirname(database), 'documents'),
   maxUploadBytes: maxUploadBytesFromEnv(process.env.MAX_UPLOAD_MB),
@@ -87,6 +92,10 @@ const memory =
       })
     : undefined;
 let ingestor: DocumentIngestor | undefined;
+const json = (model: string | undefined) =>
+  config.apiKey && model
+    ? modelJson({ apiKey: config.apiKey, baseUrl: config.baseUrl, model })
+    : undefined;
 const documents =
   postgres && config.doclingUrl && config.apiKey
     ? new DocumentLibrary(
@@ -99,6 +108,7 @@ const documents =
         }),
         config.documentsDir ?? join(dirname(database), 'documents'),
         () => ingestor?.wake(),
+        new DocumentEnricher(json(config.enrichmentModel ?? config.model)),
       )
     : undefined;
 if (documents && config.doclingUrl)
@@ -107,7 +117,14 @@ if (documents && config.doclingUrl)
     documents,
     config.doclingUrl,
   );
-const platform = new Platform(store, workspace, config, { memory, documents });
+const retriever = documents
+  ? new DocumentRetriever(documents, json(config.rerankModel ?? config.model))
+  : undefined;
+const platform = new Platform(store, workspace, config, {
+  memory,
+  documents,
+  retriever,
+});
 const researchConfig = {
   mode: 'live' as const,
   apiKey: config.apiKey,

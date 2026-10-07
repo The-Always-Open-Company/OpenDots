@@ -69,6 +69,8 @@ Learned memory and the document library need two extra services: Postgres with p
 | `DOCLING_URL`                  | docling-serve endpoint. With `DATABASE_URL`, enables document uploads           |
 | `EMBEDDING_MODEL`              | Embedding model; defaults to `text-embedding-3-small` (1536 dimensions)         |
 | `MEMORY_MODEL`                 | Model that extracts memories from turns; defaults to `OPENAI_MODEL`             |
+| `ENRICHMENT_MODEL`             | Model that writes summaries, tags and passage context; defaults to the model    |
+| `RERANK_MODEL`                 | Model that plans searches and reranks passages; defaults to `OPENAI_MODEL`      |
 | `DOCUMENTS_DIR`                | Where original and converted files are kept; defaults next to the database      |
 | `MAX_UPLOAD_MB`                | Largest accepted file, 1–2000 MB; default 50                                    |
 | `DOCLING_MAX_DOCUMENT_TIMEOUT` | Seconds docling-serve may spend on one file (compose only); default 900         |
@@ -104,7 +106,24 @@ Supported files are PDF, Word, PowerPoint, Excel, HTML, Markdown, text, CSV, PNG
 
 Attach files in chat with the paperclip. Attachments are saved to the library, shared with the Dot you are talking to, and linked to the page's Space when the chat is about a page. The message waits until each attachment is ready.
 
-Each turn searches the ready documents shared with that Dot and includes the matching passages. Dots can also call `list_documents`, `search_documents` (hybrid keyword and semantic search that returns passages with page numbers) and `read_document`. Each call checks the Dot's current access.
+#### How documents are indexed
+
+docling splits each file into passages of about 512 tokens along its headings and tables. The enrichment model then reads the document and writes:
+
+- a short summary, topic tags and the main names it mentions (shown on the document page and used to filter the library);
+- for each passage, one or two sentences placing it in the document, plus keywords and names ([contextual retrieval](https://www.anthropic.com/news/contextual-retrieval)). Passages are sent in batches by section, four calls at a time.
+
+Each passage is embedded together with the document title, its section and that context, and indexed for keyword search with headings and keywords weighted highest. Passages are linked to the most similar passages and to passages that name the same things, in any document. If an enrichment call fails, those passages keep their headings only; the document still becomes **Ready** and its page notes the partial enrichment. **Reprocess** retries.
+
+When indexing changes in an update, documents indexed the old way are re-indexed automatically on start. They stay searchable while that runs, and docling is not run again.
+
+#### How Dots search
+
+Before each reply, the search model plans the search from the latest message, the recent conversation and the Dot's catalog of documents. It writes a self-contained question (so "what about the second one?" works), three to five varied queries, a hypothetical answer, and related tags. Every query runs as a keyword and semantic search, the tags match passage keywords and names, and the results are merged with reciprocal rank fusion. The search model then scores the top 40 for relevance. The best six are kept, with at most three per document and two per section, and each comes with its neighbouring passages and references to related passages. Greetings and small talk skip the search. If the search model is slow or fails, plain search of the message is used.
+
+Dots can also call `list_documents`, `search_documents` (the same pipeline for a query of their own, optionally limited to documents or tags), `read_passage` (to open a related passage) and `read_document`. Each call checks the Dot's current access, and related passages from documents the Dot cannot read are never shown.
+
+Searching adds two model calls to each turn that involves documents, usually one to three seconds; a small, fast `RERANK_MODEL` keeps this low. Indexing costs one call for the document and one per eight passages.
 
 Back up `DOCUMENTS_DIR` together with the SQLite database. The Postgres data can be rebuilt by reprocessing documents, but learned memories live only in Postgres, so back up its volume too.
 

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   chunksToMarkdown,
+  INDEX_FORMAT,
   type DocumentLibrary,
   type StoredChunk,
 } from './document-library.js';
@@ -26,7 +27,7 @@ const result = z.object({
 export interface IngestorOptions {
   tickMs?: number;
   pollMs?: number;
-  /** Total time one document may take, including queueing in docling-serve. */
+  /** Total time one document may take: queueing, conversion and enrichment. */
   timeoutMs?: number;
   /** How often a running job extends its lease. */
   renewMs?: number;
@@ -49,13 +50,20 @@ export class DocumentIngestor {
     this.options = {
       tickMs: 2_000,
       pollMs: 2_000,
-      timeoutMs: 30 * 60_000,
+      timeoutMs: 60 * 60_000,
       renewMs: 60_000,
       ...options,
     };
   }
   start() {
     if (this.timer) return;
+    try {
+      const stale = this.documents.requeueStale(INDEX_FORMAT);
+      if (stale)
+        console.log(`Re-indexing ${stale} documents with the current pipeline.`);
+    } catch {
+      console.error('Could not queue documents for re-indexing.');
+    }
     void this.library
       .sweep()
       .catch(() =>
@@ -103,10 +111,10 @@ export class DocumentIngestor {
         controller.abort(new Error('Document changed while processing.'));
     }, this.options.renewMs);
     try {
-      const { chunks, markdown } = await this.convert(
-        current,
-        controller.signal,
-      );
+      // A version converted before only needs enriching and indexing again.
+      const { chunks, markdown } =
+        (await this.library.storedConversion(current)) ??
+        (await this.convert(current, controller.signal));
       await this.library.saveConversion(
         current,
         chunks,
