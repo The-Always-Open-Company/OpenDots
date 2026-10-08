@@ -42,6 +42,109 @@ const ctx = (cause: ExecutionContext['cause']): ExecutionContext => ({
 });
 
 describe('execution engine', () => {
+  it('allows twenty attempts on a recurring objective and fails the next one', () => {
+    const { engine } = open();
+    expect(engine.policy('dot').maxExecutionsPerWorkItem).toBe(20);
+    const item = engine.createWorkItem({
+      actorId: 'dot',
+      title: 'Hello',
+      objective: 'Say hello',
+      source: 'schedule',
+      recurring: true,
+      autoResume: false,
+    });
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const id = engine.enqueueExecution(String(item.id));
+      expect(id).toBeTruthy();
+      expect(engine.claimExecution()?.id).toBe(id);
+      engine.finishExecution(String(id), 'completed');
+      expect(engine.workItem(String(item.id))?.status).toBe('open');
+    }
+    expect(engine.enqueueExecution(String(item.id))).toBeNull();
+    expect(engine.workItem(String(item.id))?.status).toBe('failed');
+  });
+
+  it('keeps a saved attempt cap below the default', () => {
+    const { engine } = open();
+    engine.savePolicy('dot', { maxExecutionsPerWorkItem: 5 });
+    const item = engine.createWorkItem({
+      actorId: 'dot',
+      title: 'Hello',
+      objective: 'Say hello',
+      source: 'schedule',
+      recurring: true,
+      autoResume: false,
+    });
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const id = engine.enqueueExecution(String(item.id))!;
+      engine.claimExecution();
+      engine.finishExecution(id, 'completed');
+    }
+    expect(engine.enqueueExecution(String(item.id))).toBeNull();
+    expect(engine.workItem(String(item.id))?.status).toBe('failed');
+  });
+
+  it('tells an approved schedule and wake that earlier pending results are done', () => {
+    const { engine } = open();
+    const owner = engine.createWorkItem({
+      actorId: 'dot',
+      title: 'Note',
+      objective: 'Write the note',
+      source: 'owner',
+    });
+    expect(engine.continuationPrompt(String(owner.id))).toContain(
+      'continuation the owner already allowed',
+    );
+    const scheduled = engine.createWorkItem({
+      actorId: 'dot',
+      title: 'Hello reminder',
+      objective: 'Send a brief hello',
+      source: 'schedule',
+      recurring: true,
+    });
+    const scheduleId = String(scheduled.id);
+    const triggerId = engine.addTrigger({
+      workItemId: scheduleId,
+      actorId: 'dot',
+      kind: 'schedule',
+      spec: { kind: 'interval', seconds: 60 },
+      nextRunAt: 1,
+    });
+    const executionId = engine.enqueueExecution(scheduleId, { triggerId })!;
+    engine.claimExecution();
+    const prompt = engine.continuationPrompt(scheduleId);
+    expect(prompt).toContain('This run is the schedule firing');
+    expect(prompt).toContain('The owner already approved it');
+    expect(prompt).toContain(
+      'Do not call propose_schedule or arm_trigger again',
+    );
+    expect(prompt).toContain('not still waiting');
+    expect(prompt).toContain('Send a brief hello');
+    engine.finishExecution(executionId, 'completed');
+
+    const wakeItem = engine.createWorkItem({
+      actorId: 'dot',
+      title: 'Inbox',
+      objective: 'Check overnight notes',
+      source: 'responsibility',
+      recurring: true,
+    });
+    const wakeId = String(wakeItem.id);
+    const wakeTrigger = engine.addTrigger({
+      workItemId: wakeId,
+      actorId: 'dot',
+      kind: 'wake',
+      spec: { kind: 'interval', seconds: 3600 },
+      nextRunAt: 1,
+    });
+    engine.enqueueExecution(wakeId, { triggerId: wakeTrigger });
+    engine.claimExecution();
+    const wakePrompt = engine.continuationPrompt(wakeId);
+    expect(wakePrompt).toContain('This run is a wake');
+    expect(wakePrompt).toContain('not still waiting');
+    expect(wakePrompt).not.toContain('propose_schedule');
+  });
+
   it('lets only one claim win and only one active execution exist', () => {
     const { engine } = open();
     const item = engine.createWorkItem({
@@ -77,11 +180,13 @@ describe('execution engine', () => {
     expect(engine.fireDueTriggers()).toHaveLength(1);
     expect(engine.fireDueTriggers()).toHaveLength(0);
     expect(
-      engine.detail(String(item.id))?.executions.filter((row) =>
-        ['queued', 'running'].includes(
-          String((row as { status: string }).status),
+      engine
+        .detail(String(item.id))
+        ?.executions.filter((row) =>
+          ['queued', 'running'].includes(
+            String((row as { status: string }).status),
+          ),
         ),
-      ),
     ).toHaveLength(1);
   });
 
@@ -117,7 +222,9 @@ describe('execution engine', () => {
     expect(engine.workItem(String(item.id))?.status).toBe('open');
     const second = engine.claimExecution();
     expect(second).toBeTruthy();
-    expect(second && 'finishIntent' in second && second.finishIntent).toBeNull();
+    expect(
+      second && 'finishIntent' in second && second.finishIntent,
+    ).toBeNull();
     engine.finishExecution(String(second?.id), 'completed');
     expect(engine.workItem(String(item.id))?.status).toBe('open');
   });
@@ -165,9 +272,15 @@ describe('execution engine', () => {
     expect(second.action).toBe('run');
     if (first.action !== 'run' || second.action !== 'run') return;
     expect(first.operationId).not.toBe(second.operationId);
-    engine.completeEffect(workItemId, 'plugin_billing_create', first.operationId, 'succeeded', {
-      invoice: 'inv-1',
-    });
+    engine.completeEffect(
+      workItemId,
+      'plugin_billing_create',
+      first.operationId,
+      'succeeded',
+      {
+        invoice: 'inv-1',
+      },
+    );
     const replay = engine.beginEffect(
       workItemId,
       null,
@@ -210,7 +323,10 @@ describe('execution engine', () => {
       { amount: 10, operationId: begun.operationId },
       false,
     );
-    expect(again).toMatchObject({ action: 'return', result: { status: 'uncertain' } });
+    expect(again).toMatchObject({
+      action: 'return',
+      result: { status: 'uncertain' },
+    });
     expect(engine.workItem(String(item.id))?.status).toBe('open');
   });
 
@@ -303,9 +419,9 @@ describe('execution engine', () => {
       engine.finishExecution(String(remaining.id), 'completed');
     }
     const parentExecutions =
-      engine.detail(String(parent.id))?.executions.filter((row) =>
-        String((row as { id?: string }).id),
-      ) ?? [];
+      engine
+        .detail(String(parent.id))
+        ?.executions.filter((row) => String((row as { id?: string }).id)) ?? [];
     expect(parentExecutions.length).toBeLessThanOrEqual(2);
   });
 
@@ -332,9 +448,9 @@ describe('execution engine', () => {
     expect(engine.cutover).toBe(true);
     expect(store.claim()).toBeNull();
     const migrated = engine.listWork().map((detail) => detail?.workItem);
-    expect(migrated.some((item) => String(item?.objective) === recurring.prompt)).toBe(
-      true,
-    );
+    expect(
+      migrated.some((item) => String(item?.objective) === recurring.prompt),
+    ).toBe(true);
     expect(
       migrated.some((item) => String(item?.objective) === 'One shot'),
     ).toBe(true);
@@ -409,15 +525,15 @@ describe('authorize', () => {
     expect(decide(ctx('model'), 'edit_space_page', {}, askOnly)).toMatchObject({
       effect: 'pending',
     });
-    expect(decide(ctx('approved_action'), 'edit_space_page', {}, askOnly).effect).toBe(
-      'allow',
-    );
+    expect(
+      decide(ctx('approved_action'), 'edit_space_page', {}, askOnly).effect,
+    ).toBe('allow');
   });
 
   it('does not inherit another Dot grant', () => {
-    expect(
-      decide(ctx('model'), 'plugin_mail_send', {}, snapshot).effect,
-    ).toBe('allow');
+    expect(decide(ctx('model'), 'plugin_mail_send', {}, snapshot).effect).toBe(
+      'allow',
+    );
     expect(
       decide(
         { ...ctx('model'), actorId: 'dot-b' },

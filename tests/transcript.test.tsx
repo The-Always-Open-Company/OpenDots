@@ -114,3 +114,42 @@ it('hides only marked receipt prompts while retaining summaries and prior unmark
   expect(html).toContain('Confirmed call summary');
   expect(html).toContain('My next question');
 });
+
+it('shows a schedule or wake as a marker and keeps the reply', () => {
+  const html = renderToStaticMarkup(
+    <ChatTranscript
+      messages={[
+        {
+          id: 'opendots-work:schedule',
+          role: 'user',
+          content:
+            'Objective: Hello reminder\nSend a brief hello every minute.',
+          metadata: { opendotsSource: 'work', triggerKind: 'schedule' },
+        },
+        { id: 'reply', role: 'assistant', content: 'Hello.' },
+        {
+          id: 'opendots-work:wake',
+          role: 'user',
+          content: 'Objective: Check the notes',
+          metadata: { opendotsSource: 'work', triggerKind: 'wake' },
+        },
+        {
+          id: 'opendots-work:legacy',
+          role: 'user',
+          content: 'Objective: Older run without a kind',
+        },
+        { id: 'person', role: 'user', content: 'A message from me' },
+      ]}
+      calls={[]}
+    />,
+  );
+  expect(html).toContain('Schedule ran');
+  expect(html).toContain('Woke up');
+  expect(html).toContain('Scheduled run');
+  expect(html).toContain('Hello.');
+  expect(html).toContain('A message from me');
+  expect(html).not.toContain('Hello reminder');
+  expect(html).not.toContain('Send a brief hello');
+  expect(html).not.toContain('Check the notes');
+  expect(html).not.toContain('Older run without a kind');
+});

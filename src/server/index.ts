@@ -193,6 +193,13 @@ const work = new WorkRunner(
       threadId = created.id;
       engine.setWorkThread(String(item.id), threadId);
     }
+    const triggerKind = trigger
+      ? String(trigger.kind)
+      : String(item.source) === 'schedule'
+        ? 'schedule'
+        : String(item.source) === 'responsibility'
+          ? 'wake'
+          : undefined;
     await platform.turn(
       threadId,
       engine.continuationPrompt(String(item.id)),
@@ -201,14 +208,12 @@ const work = new WorkRunner(
         opendotsSource: 'work',
         workItemId: String(item.id),
         executionId: claim.id,
+        ...(triggerKind ? { triggerKind } : {}),
       },
     );
   },
   (action) =>
-    applyApprovedAction(
-      { engine, workspace, store, plugins, memory },
-      action,
-    ),
+    applyApprovedAction({ engine, workspace, store, plugins, memory }, action),
 );
 runner.attachWork(work);
 if (config.slackChannel)

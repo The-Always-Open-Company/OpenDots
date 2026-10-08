@@ -3,7 +3,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
+import { createApp } from '../src/server/app.js';
 import { Platform } from '../src/server/platform.js';
+import { Runner } from '../src/server/runner.js';
 import { Store } from '../src/server/store.js';
 import { WorkspaceStore } from '../src/server/workspace.js';
 import type { PlatformConfig } from '../src/server/platform-config.js';
@@ -196,6 +198,65 @@ it('runs server-side turns in the same stored conversation', async () => {
   expect(messages).toHaveLength(4);
   expect(messages[2].id).toMatch(/^opendots:voice_receipt:/);
   expect(await f.platform.history('thread')).toContain('assistant: Noted.');
+});
+
+it('reports a server run and keeps the work marker on the stored turn', async () => {
+  const f = fixture();
+  const app = createApp({
+    store: f.platform.store,
+    runner: new Runner(f.platform.store, { mode: 'sample', baseUrl: '' }),
+    config: { mode: 'sample', baseUrl: '' },
+    platform: f.platform,
+  });
+  expect(
+    await (await app.request('/api/conversations/thread/activity')).json(),
+  ).toEqual({
+    running: false,
+    latestRunId: null,
+  });
+  expect(
+    (await app.request('/api/conversations/missing/activity')).status,
+  ).toBe(404);
+  let release!: (response: Response) => void;
+  vi.spyOn(globalThis, 'fetch').mockImplementationOnce(
+    () => new Promise((resolve) => (release = resolve)),
+  );
+  const turn = f.platform.turn(
+    'thread',
+    'Objective: Hello reminder',
+    AbortSignal.timeout(5000),
+    {
+      opendotsSource: 'work',
+      triggerKind: 'schedule',
+      workItemId: 'work',
+      executionId: 'execution',
+    },
+  );
+  await vi.waitFor(() => expect(release).toBeDefined());
+  expect(
+    await (await app.request('/api/conversations/thread/activity')).json(),
+  ).toMatchObject({
+    running: true,
+  });
+  release(completion({ role: 'assistant', content: 'Hello.' }));
+  await expect(turn).resolves.toBe('Hello.');
+  const after = (await (
+    await app.request('/api/conversations/thread/activity')
+  ).json()) as { running: boolean; latestRunId: string | null };
+  expect(after.running).toBe(false);
+  expect(after.latestRunId).toEqual(expect.any(String));
+  const stored = f.workspace.threads.messages('thread')[0];
+  expect(stored.id.startsWith('opendots-work:')).toBe(true);
+  expect(stored).toMatchObject({
+    metadata: { opendotsSource: 'work', triggerKind: 'schedule' },
+  });
+  const replay = await events(
+    await f.platform.handle(connectRequest(f.dot.id)),
+  );
+  const body = JSON.stringify(replay);
+  expect(body).toContain('opendots-work:');
+  expect(body).toContain('schedule');
+  expect(body).toContain('Hello.');
 });
 
 it('rejects a second turn while the conversation is answering', async () => {

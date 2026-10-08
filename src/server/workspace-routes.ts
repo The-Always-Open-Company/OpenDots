@@ -111,6 +111,18 @@ export function workspaceRoutes(platform: Platform, voice: VoiceService) {
   app.get('/conversations/:id/capture', (c) =>
     c.json(platform.workspace.capture(c.req.param('id'))),
   );
+  app.get('/conversations/:id/activity', async (c) => {
+    const threadId = c.req.param('id');
+    try {
+      platform.workspace.requireThread(threadId);
+    } catch {
+      return c.json({ error: 'Conversation not found.' }, 404);
+    }
+    return c.json({
+      running: await platform.runner.isRunning({ threadId }),
+      latestRunId: platform.workspace.threads.lastRunId(threadId),
+    });
+  });
   app.post('/voice/calls', async (c) => {
     const data = z
       .object({ threadId: z.string(), sdp: z.string().max(100000) })

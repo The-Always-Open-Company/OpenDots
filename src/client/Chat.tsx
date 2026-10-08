@@ -27,6 +27,7 @@ import {
   type ComputerToolRenderProps,
 } from './ComputerToolCard';
 import { ChatTranscript, isInternalVoiceReceipt } from './ChatTranscript';
+import { decideFollow } from './follow-server-run';
 import type {
   CallReceipt,
   Conversation,
@@ -192,6 +193,13 @@ export function Chat({
   const [error, setError] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [running, setRunning] = useState(false);
+  const [following, setFollowing] = useState(false);
+  const runningRef = useRef(false);
+  runningRef.current = running;
+  const seenRun = useRef<{ threadId: string; runId: string | null } | null>(
+    null,
+  );
+  const pendingLocal = useRef(false);
   const voice = useVoice(thread.id, onSaved, agent.messages.at(-1)?.id);
   const sent = useRef(false);
   const bottom = useRef<HTMLDivElement>(null);
@@ -225,6 +233,63 @@ export function Chat({
       active = false;
     };
   }, [agent, copilotkit, isReady]);
+  useEffect(() => {
+    if (!loaded) return;
+    let stopped = false;
+    let followingRun = false;
+    const tick = async () => {
+      if (stopped || followingRun) return;
+      let activity: { running: boolean; latestRunId: string | null };
+      try {
+        activity = await api(`/conversations/${thread.id}/activity`);
+      } catch {
+        return;
+      }
+      if (stopped) return;
+      if (runningRef.current || agent.isRunning) {
+        pendingLocal.current = true;
+        return;
+      }
+      const decision = decideFollow({
+        threadId: thread.id,
+        seenThreadId: seenRun.current?.threadId ?? null,
+        seenRunId: seenRun.current?.runId ?? null,
+        activityRunning: activity.running,
+        latestRunId: activity.latestRunId,
+        pendingLocal: pendingLocal.current,
+      });
+      if (decision.action === 'seed' || decision.action === 'adopt') {
+        pendingLocal.current = false;
+        seenRun.current = { threadId: thread.id, runId: decision.runId };
+        return;
+      }
+      if (decision.action === 'wait') return;
+      followingRun = true;
+      setFollowing(true);
+      try {
+        // Replaying onto messages already on screen appends their text again.
+        agent.setMessages([]);
+        await copilotkit.connectAgent({ agent });
+        if (stopped) return;
+        const after = await api<{
+          running: boolean;
+          latestRunId: string | null;
+        }>(`/conversations/${thread.id}/activity`);
+        seenRun.current = { threadId: thread.id, runId: after.latestRunId };
+      } catch {
+        // The next poll retries while this run is still unseen.
+      } finally {
+        followingRun = false;
+        if (!stopped) setFollowing(false);
+      }
+    };
+    const timer = setInterval(() => void tick(), 1000);
+    void tick();
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [agent, copilotkit, loaded, thread.id]);
   const send = async (text: string) => {
     const documents = attachments.flatMap((item) =>
       item.document ? [item.document] : [],
@@ -233,6 +298,7 @@ export function Chat({
       (!text.trim() && !documents.length) ||
       !attachmentsReady ||
       running ||
+      following ||
       !loaded ||
       !contextReady ||
       paused
@@ -348,14 +414,14 @@ export function Chat({
           character={dot.mascot}
           name={dot.name}
           small
-          state={running ? 'working' : paused ? 'paused' : 'idle'}
+          state={running || following ? 'working' : paused ? 'paused' : 'idle'}
         />
         <div>
           <strong>{dot.name}</strong>
           <span>
             {paused
               ? 'Paused'
-              : running
+              : running || following
                 ? 'Thinking…'
                 : loaded && contextReady
                   ? 'Here with you'
@@ -366,7 +432,7 @@ export function Chat({
           <button
             className="icon-button"
             aria-label="Save conversation as page"
-            disabled={running}
+            disabled={running || following}
             onClick={async () => {
               const title = window.prompt('Page title', thread.title);
               if (!title) return;
@@ -447,7 +513,7 @@ export function Chat({
             />
           )}
         />
-        {running && (
+        {(running || following) && (
           <div className="thinking">
             <span />
             <span />
@@ -645,6 +711,7 @@ export function Chat({
               className="send-button"
               aria-label="Send message"
               disabled={
+                following ||
                 (!draft.trim() && !attachments.length) ||
                 !attachmentsReady ||
                 !loaded ||

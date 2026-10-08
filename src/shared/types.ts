@@ -79,12 +79,28 @@ export interface WorkView {
     status: string;
     source: string;
     updatedAt: number;
+    workThreadId: string | null;
   };
-  executions: { id: string; status: string; attempt: number; error: string | null }[];
-  events: { id: number; type: string; payloadJson: string; createdAt: number }[];
+  executions: {
+    id: string;
+    status: string;
+    attempt: number;
+    error: string | null;
+  }[];
+  events: {
+    id: number;
+    type: string;
+    payloadJson: string;
+    createdAt: number;
+  }[];
   actions: PendingAction[];
   children: { id: string; title: string; status: string; blocking: number }[];
-  triggers: { id: string; kind: string; enabled: number; nextRunAt: number | null }[];
+  triggers: {
+    id: string;
+    kind: string;
+    enabled: number;
+    nextRunAt: number | null;
+  }[];
   invocations?: {
     id: string;
     executionId: string | null;

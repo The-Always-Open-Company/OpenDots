@@ -252,6 +252,13 @@ h3 {
   border-radius: 3px;
   color: #6879b5;
 }
+.nav-item small.nav-attention,
+.nav-item.active small.nav-attention {
+  background: #e37b4a;
+  color: #fff;
+  border-radius: 999px;
+  padding: 1px 6px;
+}
 .sidebar-bottom {
   margin-top: auto;
 }
@@ -2278,6 +2285,17 @@ h3 {
   font-size: 9px;
   line-height: 1.7;
   color: #ab9189;
+}
+.work-marker {
+  align-self: center;
+  background: #eef1ea;
+  color: #6d7a68;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
 .chat-composer {
   border-top: 1px solid #ebece9;

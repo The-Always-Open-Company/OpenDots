@@ -51,6 +51,12 @@ import { WorkspaceDialog, type Dialog } from './WorkspaceDialog';
 import { LearnedMemories } from './LearnedMemories';
 import { DocumentLibrary } from './DocumentLibrary';
 import { DocumentDetail } from './DocumentDetail';
+import {
+  notifyFinishedAttempt,
+  requestActivityNotifications,
+  takeNewFinishes,
+  attemptHeadline,
+} from './activity-notice';
 
 function describeFailure(error: unknown, fallback: string) {
   return {
@@ -169,6 +175,35 @@ export function App() {
     const timer = setInterval(() => void refresh(), 3000);
     return () => clearInterval(timer);
   }, [refresh]);
+  const seenExecutions = useRef<Set<string> | null>(null);
+  const [unseenRuns, setUnseenRuns] = useState(0);
+  useEffect(() => {
+    const ask = () => requestActivityNotifications();
+    window.addEventListener('pointerdown', ask, { once: true });
+    return () => window.removeEventListener('pointerdown', ask);
+  }, []);
+  useEffect(() => {
+    if (!state) return;
+    const result = takeNewFinishes(seenExecutions.current, state.work ?? []);
+    seenExecutions.current = result.seen;
+    if (!result.fresh.length) return;
+    if (view !== 'tasks') setUnseenRuns((count) => count + result.fresh.length);
+    const pageVisible = document.visibilityState === 'visible';
+    for (const attempt of result.fresh) {
+      const headline = attemptHeadline(attempt);
+      notifyFinishedAttempt({
+        ...headline,
+        tag: attempt.id,
+        visibleHere:
+          pageVisible &&
+          (view === 'tasks' ||
+            (view === 'chat' && selectedThread === attempt.threadId)),
+      });
+    }
+  }, [state, view, selectedThread]);
+  useEffect(() => {
+    if (view === 'tasks') setUnseenRuns(0);
+  }, [view]);
   useEffect(() => {
     setCapture(undefined);
     if (!selectedThread) return;
@@ -495,13 +530,19 @@ export function App() {
           <button
             className={`nav-item ${view === 'tasks' ? 'active' : ''}`}
             onClick={() => {
+              requestActivityNotifications();
               setView('tasks');
               setMobile(false);
             }}
           >
             <Clock3 size={17} />
             <span>Scheduled & activity</span>
-            <small>{state.tasks.length}</small>
+            <small className={unseenRuns ? 'nav-attention' : undefined}>
+              {unseenRuns +
+                (state.actions ?? []).filter(
+                  (action) => action.status === 'pending',
+                ).length || state.tasks.length + (state.work?.length ?? 0)}
+            </small>
           </button>
           <button
             className={`nav-item ${view === 'memories' ? 'active' : ''}`}
@@ -685,9 +726,10 @@ export function App() {
                       action.status === 'pending' &&
                       action.threadId === thread.id,
                   )}
-                  onApprove={(id) =>
-                    void mutate(`/actions/${id}/approve`, 'POST', {})
-                  }
+                  onApprove={(id) => {
+                    requestActivityNotifications();
+                    void mutate(`/actions/${id}/approve`, 'POST', {});
+                  }}
                   onDecline={(id) =>
                     void mutate(`/actions/${id}/decline`, 'POST', {})
                   }
@@ -907,9 +949,10 @@ export function App() {
                     onAction={(id, action) =>
                       void mutate(`/work/${id}/actions`, 'POST', { action })
                     }
-                    onApprove={(id) =>
-                      void mutate(`/actions/${id}/approve`, 'POST', {})
-                    }
+                    onApprove={(id) => {
+                      requestActivityNotifications();
+                      void mutate(`/actions/${id}/approve`, 'POST', {});
+                    }}
                     onDecline={(id) =>
                       void mutate(`/actions/${id}/decline`, 'POST', {})
                     }
@@ -917,7 +960,11 @@ export function App() {
                       void mutate(`/triggers/${id}/disable`, 'POST', {})
                     }
                     onCreate={async (title, objective) => {
-                      await mutate('/work', 'POST', { dotId: dot.id, title, objective });
+                      await mutate('/work', 'POST', {
+                        dotId: dot.id,
+                        title,
+                        objective,
+                      });
                     }}
                   />
                 )}
@@ -940,9 +987,7 @@ export function App() {
                         key={task.id}
                         task={task}
                         onClick={() => {
-                          setMinutes(
-                            String((task.intervalSeconds ?? 0) / 60),
-                          );
+                          setMinutes(String((task.intervalSeconds ?? 0) / 60));
                           void api<Detail>(`/tasks/${task.id}`)
                             .then(setTaskDetail)
                             .catch((e) => setError(e.message));

@@ -3,6 +3,7 @@ import { EventType, type Message, type RunAgentInput } from '@ag-ui/core';
 import type { AgentRunner } from '@copilotkit/runtime/v2';
 import { randomUUID } from 'node:crypto';
 import { voiceReceiptMessagePrefix } from '../shared/voice-receipt.js';
+import { workPromptPrefix } from '../shared/work-marker.js';
 
 export function currentTurnText(messages: Message[], error?: Error): string {
   if (error) throw error;
@@ -28,7 +29,13 @@ export async function runThreadTurn(
 ): Promise<string> {
   signal.throwIfAborted();
   const message = {
-    id: `${metadata?.opendotsSource === 'voice_receipt' ? voiceReceiptMessagePrefix : ''}${randomUUID()}`,
+    id: `${
+      metadata?.opendotsSource === 'voice_receipt'
+        ? voiceReceiptMessagePrefix
+        : metadata?.opendotsSource === 'work'
+          ? workPromptPrefix
+          : ''
+    }${randomUUID()}`,
     role: 'user',
     content: prompt,
     ...(metadata ? { metadata } : {}),

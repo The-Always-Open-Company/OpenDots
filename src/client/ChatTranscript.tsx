@@ -1,10 +1,11 @@
 import { openPageLink } from './page-navigation';
 import { Fragment, type ReactNode } from 'react';
-import { PhoneOff } from 'lucide-react';
+import { Clock3, PhoneOff } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import type { AssistantMessage, Message } from '@ag-ui/core';
 import type { CallReceipt } from '../shared/types';
 import { voiceReceiptMessagePrefix } from '../shared/voice-receipt';
+import { workPromptKind, workPromptLabel } from '../shared/work-marker';
 // These markers only control rendering; they do not confer trust or permissions.
 export function isInternalVoiceReceipt(message: Message): boolean {
   const metadata = message.metadata;
@@ -51,44 +52,57 @@ export function ChatTranscript({
         .map((call) => (
           <Receipt key={call.id} call={call} />
         ))}
-      {messages.map((message) => (
-        <Fragment key={message.id}>
-          {typeof message.content === 'string' && message.content.trim() && (
-            <div className={`chat-bubble ${message.role}`}>
-              <ReactMarkdown
-                components={{
-                  img: ({ alt }) => <span>{alt}</span>,
-                  a: ({ href, children }) => (
-                    <a
-                      onClick={(event) => {
-                        if (href?.startsWith('/#/spaces/')) {
-                          event.preventDefault();
-                          openPageLink(href);
-                        }
-                      }}
-                      href={href}
-                      target={
-                        href?.startsWith('/#/spaces/') ? undefined : '_blank'
-                      }
-                      rel="noreferrer"
-                    >
-                      {children}
-                    </a>
-                  ),
-                }}
-              >
-                {String(message.content)}
-              </ReactMarkdown>
-            </div>
-          )}
-          {message.role === 'assistant' && renderTools?.(message)}
-          {calls
-            .filter((call) => call.anchorMessageId === message.id)
-            .map((call) => (
-              <Receipt key={call.id} call={call} />
-            ))}
-        </Fragment>
-      ))}
+      {messages.map((message) => {
+        const marker = workPromptKind(message);
+        return (
+          <Fragment key={message.id}>
+            {marker ? (
+              <div className="work-marker">
+                <Clock3 size={13} />
+                <span>{workPromptLabel(marker)}</span>
+              </div>
+            ) : (
+              typeof message.content === 'string' &&
+              message.content.trim() && (
+                <div className={`chat-bubble ${message.role}`}>
+                  <ReactMarkdown
+                    components={{
+                      img: ({ alt }) => <span>{alt}</span>,
+                      a: ({ href, children }) => (
+                        <a
+                          onClick={(event) => {
+                            if (href?.startsWith('/#/spaces/')) {
+                              event.preventDefault();
+                              openPageLink(href);
+                            }
+                          }}
+                          href={href}
+                          target={
+                            href?.startsWith('/#/spaces/')
+                              ? undefined
+                              : '_blank'
+                          }
+                          rel="noreferrer"
+                        >
+                          {children}
+                        </a>
+                      ),
+                    }}
+                  >
+                    {String(message.content)}
+                  </ReactMarkdown>
+                </div>
+              )
+            )}
+            {message.role === 'assistant' && renderTools?.(message)}
+            {calls
+              .filter((call) => call.anchorMessageId === message.id)
+              .map((call) => (
+                <Receipt key={call.id} call={call} />
+              ))}
+          </Fragment>
+        );
+      })}
     </>
   );
 }
