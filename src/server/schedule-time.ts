@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 export interface IntervalSpec {
   kind: 'interval';
   seconds: number;
@@ -11,6 +13,51 @@ export interface CalendarSpec {
   endAt?: number;
 }
 export type ScheduleSpec = IntervalSpec | CalendarSpec;
+
+/** Shape sent to the model. `parseSchedule` remains the check at execution. */
+export const scheduleInput = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('interval').describe('Repeat on a fixed interval.'),
+    seconds: z
+      .number()
+      .int()
+      .min(60)
+      .max(31_536_000)
+      .describe(
+        'Seconds between runs. 60 is one minute. The maximum is one year.',
+      ),
+  }),
+  z.object({
+    kind: z.literal('calendar').describe('Run at a minute of the day.'),
+    timezone: z
+      .string()
+      .trim()
+      .min(1)
+      .max(80)
+      .describe('IANA timezone, such as America/New_York.'),
+    weekdays: z
+      .array(z.number().int().min(0).max(6))
+      .max(7)
+      .describe(
+        '0 is Sunday through 6 Saturday. An empty list means every day.',
+      ),
+    minuteOfDay: z
+      .number()
+      .int()
+      .min(0)
+      .max(1439)
+      .describe(
+        'Minutes after midnight in that timezone, from 0 through 1439.',
+      ),
+    endAt: z
+      .number()
+      .int()
+      .optional()
+      .describe(
+        'Optional UTC millisecond timestamp after which the schedule stops.',
+      ),
+  }),
+]);
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 

@@ -2,6 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { toJSONSchema, type ZodType } from 'zod';
 import { createApp } from '../src/server/app.js';
 import { decide, consultationBlocked } from '../src/server/authorize.js';
 import { ExecutionEngine } from '../src/server/execution-engine.js';
@@ -340,6 +341,63 @@ describe('delegation and consultation', () => {
 });
 
 describe('notes, profile, schedules, and wakes', () => {
+  it('gives the model the interval and calendar schedule shapes', () => {
+    const { deps } = world();
+    const tools = workTools(deps());
+    const propose = tools.find((tool) => tool.name === 'propose_schedule');
+    const update = tools.find((tool) => tool.name === 'update_schedule');
+    const proposeSchema = propose?.parameters as ZodType;
+    const updateSchema = update?.parameters as ZodType;
+    const minute = { kind: 'interval', seconds: 60 };
+    const clock = {
+      kind: 'calendar',
+      timezone: 'America/New_York',
+      weekdays: [1, 2, 3, 4, 5],
+      minuteOfDay: 9 * 60,
+    };
+    expect(
+      proposeSchema.safeParse({
+        title: 'Hello',
+        objective: 'Say hello',
+        spec: minute,
+      }).success,
+    ).toBe(true);
+    expect(
+      proposeSchema.safeParse({
+        title: 'Hello',
+        objective: 'Say hello',
+        spec: clock,
+      }).success,
+    ).toBe(true);
+    expect(
+      proposeSchema.safeParse({
+        title: 'Hello',
+        objective: 'Say hello',
+        spec: { every: '1 minute' },
+      }).success,
+    ).toBe(false);
+    expect(
+      proposeSchema.safeParse({
+        title: 'Hello',
+        objective: 'Say hello',
+        spec: { kind: 'interval', seconds: 30 },
+      }).success,
+    ).toBe(false);
+    expect(updateSchema.safeParse({ triggerId: 't', spec: minute }).success).toBe(
+      true,
+    );
+    const published = JSON.stringify(toJSONSchema(proposeSchema));
+    for (const field of [
+      'interval',
+      'calendar',
+      'seconds',
+      'timezone',
+      'weekdays',
+      'minuteOfDay',
+    ])
+      expect(published).toContain(field);
+  });
+
   it('keeps note changes in this Dot’s scope and arms a schedule only after approval', async () => {
     const { engine, workspace, store, plugins, dot, deps, scopes, memory } = world();
     const tools = workTools(deps());

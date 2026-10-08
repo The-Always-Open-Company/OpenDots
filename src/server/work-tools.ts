@@ -14,6 +14,7 @@ import {
   assertWake,
   initialRunAt,
   parseSchedule,
+  scheduleInput,
 } from './schedule-time.js';
 import {
   loadSkills,
@@ -467,21 +468,27 @@ export function workTools(deps: WorkDeps): ToolDefinition[] {
     defineTool({
       name: 'propose_schedule',
       description:
-        'Ask the owner to confirm a schedule. Nothing runs until they approve.',
+        'Ask the owner to confirm a schedule. Nothing runs until they approve. spec.kind "interval" repeats every spec.seconds (60 is one minute). spec.kind "calendar" runs at minuteOfDay in a timezone, on weekdays 0 (Sunday) through 6.',
       parameters: z.object({
         title: z.string().trim().min(1).max(160),
         objective: z.string().trim().min(1).max(4000),
-        spec: z.record(z.string(), z.unknown()),
-        anchor: z.enum(['clock', 'after_success']).optional(),
+        spec: scheduleInput,
+        anchor: z
+          .enum(['clock', 'after_success'])
+          .optional()
+          .describe(
+            'clock repeats from the clock. after_success waits until the previous run succeeds. Defaults to clock.',
+          ),
       }),
       execute: (args) => proposeSchedule(deps, args),
     }),
     defineTool({
       name: 'update_schedule',
-      description: 'Ask the owner to change a schedule this Dot is allowed to manage.',
+      description:
+        'Ask the owner to change a schedule this Dot is allowed to manage. spec uses the same interval or calendar shape as propose_schedule.',
       parameters: z.object({
         triggerId: z.string(),
-        spec: z.record(z.string(), z.unknown()),
+        spec: scheduleInput,
       }),
       execute: async ({ triggerId, spec }) => {
         deps.check();
