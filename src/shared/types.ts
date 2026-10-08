@@ -61,12 +61,48 @@ export interface Detail {
   runs: Run[];
   events: TaskEvent[];
 }
+export interface PendingAction {
+  id: string;
+  toolName: string;
+  status: string;
+  argumentsJson: string;
+  workItemId: string | null;
+  threadId?: string;
+  createdAt: number;
+}
+export interface WorkView {
+  workItem: {
+    id: string;
+    actorId: string;
+    title: string;
+    objective: string;
+    status: string;
+    source: string;
+    updatedAt: number;
+  };
+  executions: { id: string; status: string; attempt: number; error: string | null }[];
+  events: { id: number; type: string; payloadJson: string; createdAt: number }[];
+  actions: PendingAction[];
+  children: { id: string; title: string; status: string; blocking: number }[];
+  triggers: { id: string; kind: string; enabled: number; nextRunAt: number | null }[];
+  invocations?: {
+    id: string;
+    executionId: string | null;
+    toolName: string;
+    status: string;
+    resultJson: string | null;
+  }[];
+  inbound?: { id: string; status: string; payload: string }[];
+}
 export interface State {
   settings: Settings;
   tasks: Task[];
   memories: Memory[];
   mode: 'sample' | 'live';
   configured: boolean;
+  work?: WorkView[];
+  actions?: PendingAction[];
+  rules?: { id: string; text: string; mode: string; toolNames: string[] }[];
 }
 export type Action = 'run' | 'pause' | 'cancel';
 export interface Space {
@@ -86,6 +122,8 @@ export interface Dot {
   memoryAllowed: boolean;
   /** Other Dots may ask this Dot questions with ask_dot. */
   consultable: boolean;
+  /** Chosen mascot. Null keeps the color derived from the Dot id. */
+  mascot: string | null;
   createdAt: number;
 }
 export interface Conversation {

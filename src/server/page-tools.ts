@@ -1,7 +1,18 @@
 import { defineTool } from '@copilotkit/runtime/v2';
 import { z } from 'zod';
 import type { WorkspaceStore } from './workspace.js';
+import { effectOperationId } from './effect-context.js';
 import { pageInput, pagePatch } from './pages.js';
+const operationId = {
+  operationId: z
+    .string()
+    .min(1)
+    .max(80)
+    .optional()
+    .describe(
+      'Pass the existing operation id only when retrying this exact call.',
+    ),
+};
 export function pageAccess(
   workspace: WorkspaceStore,
   spaceId: string,
@@ -38,7 +49,14 @@ export function pageAccess(
     read: (id: string, requested?: string) =>
       linked(workspace.pages.get(resolve(requested), id)),
     create: (input: z.input<typeof pageInput>, requested?: string) =>
-      linked(workspace.pages.create(resolve(requested), input)),
+      linked(
+        workspace.pages.create(
+          resolve(requested),
+          input,
+          threadId,
+          effectOperationId(),
+        ),
+      ),
     edit: (id: string, input: z.input<typeof pagePatch>, requested?: string) =>
       linked(workspace.pages.update(resolve(requested), id, input)),
   };
@@ -78,15 +96,16 @@ export function pageTools(access: ReturnType<typeof pageAccess>) {
       name: 'create_space_page',
       description:
         'Create a Markdown page in this Space when the user requests a document.',
-      parameters: pageInput.extend(scope),
-      execute: async ({ spaceId, ...input }) => access.create(input, spaceId),
+      parameters: pageInput.extend({ ...scope, ...operationId }),
+      execute: async ({ spaceId, operationId: _operationId, ...input }) =>
+        access.create(input, spaceId),
     }),
     defineTool({
       name: 'edit_space_page',
       description:
         'Edit a page using its current expectedRevision. On conflict read the new version first. Preserve user content.',
-      parameters: pagePatch.extend({ id: z.string(), ...scope }),
-      execute: async ({ id, spaceId, ...patch }) =>
+      parameters: pagePatch.extend({ id: z.string(), ...scope, ...operationId }),
+      execute: async ({ id, spaceId, operationId: _operationId, ...patch }) =>
         access.edit(id, patch, spaceId),
     }),
   ];

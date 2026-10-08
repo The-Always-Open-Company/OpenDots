@@ -5,6 +5,12 @@ import { research, type Config } from './research.js';
 export class Runner {
   private timer?: ReturnType<typeof setInterval>;
   private active = new Map<string, AbortController>();
+  private attached?: {
+    tick: () => Promise<void>;
+    abortAll: () => void;
+    abort: (id: string) => void;
+    stop: () => void;
+  };
   constructor(
     private store: Store,
     private config: Config,
@@ -32,11 +38,17 @@ export class Runner {
         );
     }
     this.abortAll();
+    this.attached?.stop();
+  }
+  attachWork(work: NonNullable<Runner['attached']>) {
+    this.attached = work;
   }
   abort(id: string) {
     this.active.get(id)?.abort(new Error('Run stopped.'));
+    this.attached?.abort(id);
   }
   abortAll() {
+    this.attached?.abortAll();
     for (const controller of this.active.values())
       controller.abort(new Error('Run stopped because settings changed.'));
   }
@@ -52,6 +64,13 @@ export class Runner {
     }
   }
   private async runTick() {
+    try {
+      await this.attached?.tick();
+    } catch {
+      console.error(
+        'Execution engine tick failed; will retry on the next tick.',
+      );
+    }
     if (this.active.size) return;
     const claim = this.store.claim();
     if (!claim) return;

@@ -94,6 +94,7 @@ const MAX_ATTEMPTS = 3;
  * its Spaces, once a version has been indexed.
  */
 export class Documents {
+  onReady?: (id: string) => void;
   constructor(
     private db: DatabaseSync,
     private exists: {
@@ -520,7 +521,7 @@ export class Documents {
       profile: DocumentProfile;
     },
   ): boolean {
-    return this.transaction(() => {
+    const ready = this.transaction(() => {
       if (!this.owns(claim)) return false;
       this.db
         .prepare(
@@ -541,6 +542,8 @@ export class Documents {
         );
       return true;
     });
+    if (ready) this.onReady?.(claim.id);
+    return ready;
   }
   fail(claim: DocumentClaim, error: string) {
     this.transaction(() => {

@@ -17,6 +17,8 @@ import { SqliteThreadRunner } from './thread-runner.js';
 import type { MemoryProvider } from './memory.js';
 import type { DocumentLibrary } from './document-library.js';
 import type { DocumentRetriever } from './document-retrieval.js';
+import type { ExecutionEngine } from './execution-engine.js';
+import type { PluginService } from './plugins.js';
 
 export const CONSULTATION_TIME_LIMIT_MS = 45_000;
 
@@ -24,6 +26,9 @@ export interface PlatformServices {
   memory?: MemoryProvider;
   documents?: DocumentLibrary;
   retriever?: DocumentRetriever;
+  engine?: ExecutionEngine;
+  plugins?: PluginService;
+  skillsDir?: string;
 }
 
 export class Platform {
@@ -136,9 +141,18 @@ export class Platform {
   ): Promise<string> {
     this.requireReady();
     const thread = this.workspace.requireThread(threadId);
+    const agent = this.agent(thread.dotId);
+    if (
+      typeof metadata?.workItemId === 'string' &&
+      typeof metadata.executionId === 'string'
+    )
+      agent.workContext = {
+        workItemId: metadata.workItemId,
+        executionId: metadata.executionId,
+      };
     return runThreadTurn(
       this.runner,
-      this.agent(thread.dotId),
+      agent,
       threadId,
       prompt,
       signal,

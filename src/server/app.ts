@@ -1,4 +1,9 @@
+import { capabilityRoutes } from './capability-routes.js';
 import { computerRoutes } from './computer-routes.js';
+import type { ExecutionEngine } from './execution-engine.js';
+import type { PluginService } from './plugins.js';
+import { initialRunAt, parseSchedule } from './schedule-time.js';
+import type { WorkRunner } from './work-runner.js';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { timingSafeEqual } from 'node:crypto';
@@ -18,6 +23,10 @@ export interface AppOptions {
   ownerToken?: string;
   origin?: string | string[];
   platform?: Platform;
+  engine?: ExecutionEngine;
+  work?: WorkRunner;
+  plugins?: PluginService;
+  skillsDir?: string;
 }
 export function createApp({
   store,
@@ -26,6 +35,10 @@ export function createApp({
   ownerToken,
   origin,
   platform,
+  engine,
+  work,
+  plugins,
+  skillsDir,
 }: AppOptions) {
   const app = new Hono();
   const tooLarge = bodyLimit({
@@ -93,7 +106,8 @@ export function createApp({
       return c.json({ error: 'Cross-origin requests are not allowed.' }, 403);
     if (c.req.header('sec-fetch-site') === 'cross-site')
       return c.json({ error: 'Cross-site requests are not allowed.' }, 403);
-    if (ownerToken) {
+    const hook = c.req.path.startsWith('/api/hooks/');
+    if (ownerToken && !hook) {
       const expected = Buffer.from(ownerToken);
       const supplied = Buffer.from(
         c.req.header('authorization')?.replace(/^Bearer /, '') ?? '',
@@ -110,6 +124,7 @@ export function createApp({
     const contentType = c.req.header('content-type') ?? '';
     if (
       !['GET', 'HEAD'].includes(c.req.method) &&
+      !hook &&
       !contentType.includes('application/json') &&
       !(
         isUpload(c.req.method, c.req.path) &&
@@ -129,14 +144,42 @@ export function createApp({
       memories: store.memories(),
       mode: config.mode,
       configured: configured(config),
+      ...(engine
+        ? {
+            work: engine.listWork(),
+            actions: engine.pendingActions(),
+            rules: engine.rules(),
+            plugins: plugins?.list() ?? [],
+          }
+        : {}),
     }),
   );
+  if (engine && plugins)
+    capabilityRoutes(app, {
+      engine,
+      store,
+      runner,
+      work,
+      platform,
+      plugins,
+      skillsDir: skillsDir ?? 'skills',
+    });
   app.post('/api/tasks', async (c) => {
     const parsed = z
       .object({
         prompt: z.string().trim().min(3).max(4000),
         intervalSeconds: interval.optional(),
         threadId: z.string().optional(),
+        schedule: z
+          .object({
+            kind: z.enum(['interval', 'calendar']),
+            seconds: z.number().int().optional(),
+            timezone: z.string().optional(),
+            weekdays: z.array(z.number()).optional(),
+            minuteOfDay: z.number().optional(),
+            endAt: z.number().optional(),
+          })
+          .optional(),
       })
       .strict()
       .safeParse(await c.req.json().catch(() => null));
@@ -148,6 +191,68 @@ export function createApp({
         },
         400,
       );
+    if (engine && (engine.cutover || parsed.data.schedule)) {
+      let actorId = 'owner';
+      if (platform && parsed.data.threadId) {
+        try {
+          actorId = platform.workspace.requireThread(parsed.data.threadId).dotId;
+        } catch {
+          return c.json(
+            { error: 'Conversation is not owned by this workspace.' },
+            403,
+          );
+        }
+      }
+      const recurring = !!(parsed.data.schedule || parsed.data.intervalSeconds);
+      let spec;
+      let nextRunAt: number | null = null;
+      if (recurring) {
+        try {
+          spec = parseSchedule(
+            parsed.data.schedule ?? {
+              kind: 'interval',
+              seconds: parsed.data.intervalSeconds,
+            },
+          );
+          nextRunAt = initialRunAt(spec, Date.now());
+        } catch (error) {
+          return c.json(
+            {
+              error:
+                error instanceof Error ? error.message : 'Schedule is invalid.',
+            },
+            400,
+          );
+        }
+        if (nextRunAt == null)
+          return c.json({ error: 'That schedule has no upcoming run.' }, 400);
+      }
+      const item = engine.createWorkItem({
+        actorId,
+        title: parsed.data.prompt.slice(0, 160),
+        objective: parsed.data.prompt,
+        source: recurring ? 'schedule' : 'owner',
+        recurring,
+        autoResume: false,
+        originThreadId: parsed.data.threadId,
+        workThreadId: parsed.data.threadId,
+      });
+      if (!recurring || !spec || nextRunAt == null) {
+        engine.enqueueExecution(String(item.id));
+        return c.json(item, 201);
+      }
+      const triggerId = engine.addTrigger({
+        workItemId: String(item.id),
+        actorId,
+        kind: 'schedule',
+        spec,
+        anchor: spec.kind === 'interval' ? 'after_success' : 'clock',
+        nextRunAt,
+        enabled: true,
+        dotCanManage: false,
+      });
+      return c.json({ ...item, triggerId }, 201);
+    }
     if (!store.settings().researchAllowed)
       return c.json({ error: 'Research is disabled in Settings.' }, 403);
     if (platform) {

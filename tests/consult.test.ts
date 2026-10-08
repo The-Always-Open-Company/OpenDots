@@ -1,3 +1,4 @@
+import '../src/server/disable-telemetry.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { Store } from '../src/server/store.js';
 import { WorkspaceStore } from '../src/server/workspace.js';

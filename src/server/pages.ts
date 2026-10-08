@@ -43,6 +43,7 @@ export class PageError extends Error {
   }
 }
 export class Pages {
+  onUpdated?: (page: Page) => void;
   constructor(
     private db: DatabaseSync,
     private spaceExists: (id: string) => boolean,
@@ -58,6 +59,7 @@ export class Pages {
     )
       db.exec('ALTER TABLE page_reviews ADD COLUMN draft TEXT');
     db.exec(`CREATE TABLE IF NOT EXISTS pages(id TEXT PRIMARY KEY, spaceId TEXT NOT NULL, parentId TEXT, title TEXT NOT NULL, content TEXT NOT NULL, revision INTEGER NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, sourceThreadId TEXT);
+ CREATE TABLE IF NOT EXISTS page_operations(operationId TEXT PRIMARY KEY, spaceId TEXT NOT NULL, pageId TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS page_threads(pageId TEXT NOT NULL,dotId TEXT NOT NULL,threadId TEXT NOT NULL UNIQUE,ready INTEGER NOT NULL DEFAULT 0, leaseUntil INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(pageId,dotId));`);
     if (
       !db
@@ -103,7 +105,16 @@ export class Pages {
     spaceId: string,
     input: z.input<typeof pageInput>,
     sourceThreadId: string | null = null,
+    operationId?: string,
   ): Page {
+    if (operationId) {
+      const existing = this.db
+        .prepare(
+          'SELECT spaceId, pageId FROM page_operations WHERE operationId=?',
+        )
+        .get(operationId) as { spaceId: string; pageId: string } | undefined;
+      if (existing) return this.get(existing.spaceId, existing.pageId);
+    }
     this.requireSpace(spaceId);
     const parsed = pageInput.safeParse(input);
     if (!parsed.success)
@@ -114,19 +125,48 @@ export class Pages {
     this.parent(spaceId, data.parentId);
     const id = randomUUID(),
       now = Date.now();
-    this.db
-      .prepare('INSERT INTO pages VALUES (?,?,?,?,?,1,?,?,?)')
-      .run(
-        id,
-        spaceId,
-        data.parentId,
-        data.title,
-        data.content,
-        now,
-        now,
-        sourceThreadId,
-      );
-    return this.get(spaceId, id);
+    const insert = () =>
+      this.db
+        .prepare('INSERT INTO pages VALUES (?,?,?,?,?,1,?,?,?)')
+        .run(
+          id,
+          spaceId,
+          data.parentId,
+          data.title,
+          data.content,
+          now,
+          now,
+          sourceThreadId,
+        );
+    if (!operationId) {
+      insert();
+      const page = this.get(spaceId, id);
+      this.onUpdated?.(page);
+      return page;
+    }
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const raced = this.db
+        .prepare(
+          'SELECT spaceId, pageId FROM page_operations WHERE operationId=?',
+        )
+        .get(operationId) as { spaceId: string; pageId: string } | undefined;
+      if (raced) {
+        this.db.exec('COMMIT');
+        return this.get(raced.spaceId, raced.pageId);
+      }
+      insert();
+      this.db
+        .prepare('INSERT INTO page_operations VALUES (?, ?, ?)')
+        .run(operationId, spaceId, id);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    const page = this.get(spaceId, id);
+    this.onUpdated?.(page);
+    return page;
   }
   reviewReceipt(
     threadId: string,
@@ -224,7 +264,9 @@ export class Pages {
           data.expectedRevision,
         );
       this.db.exec('COMMIT');
-      return this.get(spaceId, id);
+      const saved = this.get(spaceId, id);
+      this.onUpdated?.(saved);
+      return saved;
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;

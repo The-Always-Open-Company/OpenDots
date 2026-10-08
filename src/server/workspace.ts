@@ -56,6 +56,7 @@ export class WorkspaceStore {
     };
     addColumn('calls', 'anchorMessageId', 'TEXT');
     addColumn('dots', 'consultable', 'INTEGER NOT NULL DEFAULT 1');
+    addColumn('dots', 'mascot', 'TEXT');
     addColumn('thread_bindings', 'kind', "TEXT NOT NULL DEFAULT 'chat'");
     this.db.exec(
       'CREATE TABLE IF NOT EXISTS consultations(fromDotId TEXT NOT NULL, toDotId TEXT NOT NULL, threadId TEXT NOT NULL, PRIMARY KEY(fromDotId, toDotId))',
@@ -101,7 +102,7 @@ export class WorkspaceStore {
   dots(): Dot[] {
     return this.db
       .prepare(
-        'SELECT id, spaceId, name, instructions, researchAllowed, memoryAllowed, consultable, createdAt FROM dots ORDER BY createdAt',
+        'SELECT id, spaceId, name, instructions, researchAllowed, memoryAllowed, consultable, mascot, createdAt FROM dots ORDER BY createdAt',
       )
       .all()
       .map((row) => ({
@@ -115,6 +116,7 @@ export class WorkspaceStore {
         researchAllowed: !!row.researchAllowed,
         memoryAllowed: !!row.memoryAllowed,
         consultable: !!row.consultable,
+        mascot: typeof row.mascot === 'string' ? row.mascot : null,
       })) as unknown as Dot[];
   }
   dot(id: string) {
@@ -139,6 +141,7 @@ export class WorkspaceStore {
       researchAllowed,
       memoryAllowed,
       consultable,
+      mascot: null,
       createdAt: Date.now(),
     };
     this.db.exec('BEGIN');
@@ -187,6 +190,7 @@ export class WorkspaceStore {
       spaceId?: string;
       spaceIds?: string[];
       consultable?: boolean;
+      mascot?: string | null;
     },
   ): Dot {
     const current = this.dot(id);
@@ -214,6 +218,16 @@ export class WorkspaceStore {
       this.db.prepare('DELETE FROM dot_spaces WHERE dotId=?').run(id);
       for (const space of new Set(spaceIds))
         this.db.prepare('INSERT INTO dot_spaces VALUES (?, ?)').run(id, space);
+      if (patch.mascot !== undefined) {
+        if (
+          patch.mascot !== null &&
+          !['blue', 'mint', 'orange', 'purple'].includes(patch.mascot)
+        )
+          throw new Error('Choose a blue, mint, orange, or purple mascot.');
+        this.db
+          .prepare('UPDATE dots SET mascot=? WHERE id=?')
+          .run(patch.mascot, id);
+      }
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');

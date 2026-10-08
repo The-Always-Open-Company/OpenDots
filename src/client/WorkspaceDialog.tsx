@@ -50,6 +50,15 @@ export function WorkspaceDialog({
     dialog.type === 'dot' ? (dialog.dot?.spaceId ?? dialog.spaceId) : '',
   );
   const [interval, setInterval] = useState('86400');
+  const [mascot, setMascot] = useState(
+    dialog.type === 'dot' ? (dialog.dot?.mascot ?? '') : '',
+  );
+  const [useClock, setUseClock] = useState(false);
+  const [timezone, setTimezone] = useState(
+    Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+  );
+  const [timeOfDay, setTimeOfDay] = useState('09:00');
+  const [weekdays, setWeekdays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const container = useRef<HTMLElement>(null);
@@ -138,6 +147,7 @@ export function WorkspaceDialog({
                 researchAllowed: research,
                 memoryAllowed: memory,
                 consultable,
+                mascot: mascot || null,
               };
             }
             if (dialog.type === 'settings') {
@@ -154,11 +164,23 @@ export function WorkspaceDialog({
             }
             if (dialog.type === 'schedule') {
               path = '/tasks';
-              body = {
-                prompt: text,
-                threadId: dialog.threadId,
-                intervalSeconds: Number(interval),
-              };
+              const [hour, minute] = timeOfDay.split(':').map(Number);
+              body = useClock
+                ? {
+                    prompt: text,
+                    threadId: dialog.threadId,
+                    schedule: {
+                      kind: 'calendar',
+                      timezone,
+                      weekdays,
+                      minuteOfDay: hour * 60 + minute,
+                    },
+                  }
+                : {
+                    prompt: text,
+                    threadId: dialog.threadId,
+                    intervalSeconds: Number(interval),
+                  };
             }
             if (await mutate(path, method, body)) onClose();
             else
@@ -178,6 +200,24 @@ export function WorkspaceDialog({
                 onChange={(e) => setName(e.target.value)}
                 required
               />
+              {dialog.type === 'dot' && (
+                <>
+                  <label className="field-label" htmlFor="dot-mascot">
+                    Mascot
+                  </label>
+                  <select
+                    id="dot-mascot"
+                    value={mascot}
+                    onChange={(event) => setMascot(event.target.value)}
+                  >
+                    <option value="">Color from this Dot’s id</option>
+                    <option value="blue">Blue</option>
+                    <option value="mint">Mint</option>
+                    <option value="orange">Orange</option>
+                    <option value="purple">Purple</option>
+                  </select>
+                </>
+              )}
             </>
           )}
           {dialog.type !== 'settings' && (
@@ -303,23 +343,78 @@ export function WorkspaceDialog({
           )}
           {dialog.type === 'schedule' && (
             <>
-              <label className="field-label" htmlFor="schedule-interval">
-                Repeat after each successful run
+              <label className="permission-row">
+                <input
+                  type="checkbox"
+                  checked={useClock}
+                  onChange={(event) => setUseClock(event.target.checked)}
+                />
+                <span>Run at a time of day</span>
               </label>
-              <select
-                id="schedule-interval"
-                value={interval}
-                onChange={(e) => setInterval(e.target.value)}
-              >
-                <option value="60">Every minute (testing)</option>
-                <option value="3600">Every hour</option>
-                <option value="86400">Every day</option>
-                <option value="604800">Every week</option>
-              </select>
+              {useClock ? (
+                <>
+                  <label className="field-label" htmlFor="schedule-time">
+                    Time
+                  </label>
+                  <input
+                    id="schedule-time"
+                    type="time"
+                    value={timeOfDay}
+                    onChange={(event) => setTimeOfDay(event.target.value)}
+                    required
+                  />
+                  <label className="field-label" htmlFor="schedule-zone">
+                    Timezone
+                  </label>
+                  <input
+                    id="schedule-zone"
+                    value={timezone}
+                    onChange={(event) => setTimezone(event.target.value)}
+                    required
+                  />
+                  <fieldset className="space-access-fields">
+                    <legend>Weekdays</legend>
+                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(
+                      (label, day) => (
+                        <label className="permission-row" key={label}>
+                          <input
+                            type="checkbox"
+                            checked={weekdays.includes(day)}
+                            onChange={(event) =>
+                              setWeekdays(
+                                event.target.checked
+                                  ? [...weekdays, day]
+                                  : weekdays.filter((value) => value !== day),
+                              )
+                            }
+                          />
+                          <span>{label}</span>
+                        </label>
+                      ),
+                    )}
+                  </fieldset>
+                </>
+              ) : (
+                <>
+                  <label className="field-label" htmlFor="schedule-interval">
+                    Repeat after each successful run
+                  </label>
+                  <select
+                    id="schedule-interval"
+                    value={interval}
+                    onChange={(e) => setInterval(e.target.value)}
+                  >
+                    <option value="60">Every minute (testing)</option>
+                    <option value="3600">Every hour</option>
+                    <option value="86400">Every day</option>
+                    <option value="604800">Every week</option>
+                  </select>
+                </>
+              )}
               <p className="muted">
                 Runs on the server in this same conversation, even with the tab
-                closed. Failed or interrupted runs wait for manual retry. Review
-                completed work before retrying an interrupted run.
+                closed. Pausing an objective is separate from disabling its
+                schedule.
               </p>
             </>
           )}

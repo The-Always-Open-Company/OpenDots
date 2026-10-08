@@ -26,6 +26,7 @@ import {
 import type {
   Conversation,
   Detail,
+  WorkView,
   Dot,
   Result,
   State,
@@ -45,6 +46,7 @@ import { ThreadList } from './ThreadList';
 import { ResultPane } from './ResultPane';
 import { TaskRow } from './TaskPresentation';
 import { TaskActions } from './TaskActions';
+import { WorkActivity, WorkDetail } from './WorkActivity';
 import { WorkspaceDialog, type Dialog } from './WorkspaceDialog';
 import { LearnedMemories } from './LearnedMemories';
 import { DocumentLibrary } from './DocumentLibrary';
@@ -139,6 +141,8 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [taskDetail, setTaskDetail] = useState<Detail>();
+  const [workDetail, setWorkDetail] = useState<WorkView>();
+  const [minutes, setMinutes] = useState('');
   const refresh = useCallback(async () => {
     try {
       const [s, w] = await Promise.all([
@@ -199,6 +203,12 @@ export function App() {
       await refresh();
       if (taskDetail)
         setTaskDetail(await api<Detail>(`/tasks/${taskDetail.task.id}`));
+      if (workDetail)
+        setWorkDetail(
+          await api<WorkView>(`/work/${workDetail.workItem.id}`).catch(
+            () => undefined,
+          ),
+        );
       return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save.');
@@ -410,7 +420,13 @@ export function App() {
                 }
                 onClick={() => chooseDot(item)}
               >
-                <Mascot identity={item.id} name={item.name} small decorative />
+                <Mascot
+                  identity={item.id}
+                  character={item.mascot}
+                  name={item.name}
+                  small
+                  decorative
+                />
                 <span>{item.name}</span>
               </button>
               <button
@@ -664,12 +680,24 @@ export function App() {
                   onSchedule={() =>
                     setDialog({ type: 'schedule', threadId: thread.id })
                   }
+                  actions={(state.actions ?? []).filter(
+                    (action) =>
+                      action.status === 'pending' &&
+                      action.threadId === thread.id,
+                  )}
+                  onApprove={(id) =>
+                    void mutate(`/actions/${id}/approve`, 'POST', {})
+                  }
+                  onDecline={(id) =>
+                    void mutate(`/actions/${id}/decline`, 'POST', {})
+                  }
                 />
               ) : (
                 <div className="new-conversation">
                   <div className="empty-chat-persona">
                     <Mascot
                       identity={dot.id}
+                      character={dot.mascot}
                       name={dot.name}
                       state={state.settings.paused ? 'paused' : 'idle'}
                     />
@@ -862,6 +890,37 @@ export function App() {
               </>
             ) : (
               <>
+                {dot && (
+                  <WorkActivity
+                    work={(state.work ?? []).filter((item) =>
+                      String(item.workItem.title)
+                        .toLowerCase()
+                        .includes(search.toLowerCase()),
+                    )}
+                    actions={state.actions ?? []}
+                    busy={busy}
+                    onOpen={(id) =>
+                      void api<WorkView>(`/work/${id}`)
+                        .then(setWorkDetail)
+                        .catch((e) => setError(e.message))
+                    }
+                    onAction={(id, action) =>
+                      void mutate(`/work/${id}/actions`, 'POST', { action })
+                    }
+                    onApprove={(id) =>
+                      void mutate(`/actions/${id}/approve`, 'POST', {})
+                    }
+                    onDecline={(id) =>
+                      void mutate(`/actions/${id}/decline`, 'POST', {})
+                    }
+                    onDisableTrigger={(id) =>
+                      void mutate(`/triggers/${id}/disable`, 'POST', {})
+                    }
+                    onCreate={async (title, objective) => {
+                      await mutate('/work', 'POST', { dotId: dot.id, title, objective });
+                    }}
+                  />
+                )}
                 <label className="search-box">
                   <Search size={16} />
                   <input
@@ -880,15 +939,18 @@ export function App() {
                       <TaskRow
                         key={task.id}
                         task={task}
-                        onClick={() =>
+                        onClick={() => {
+                          setMinutes(
+                            String((task.intervalSeconds ?? 0) / 60),
+                          );
                           void api<Detail>(`/tasks/${task.id}`)
                             .then(setTaskDetail)
-                            .catch((e) => setError(e.message))
-                        }
+                            .catch((e) => setError(e.message));
+                        }}
                       />
                     ))}
                 </div>
-                {!state.tasks.length && (
+                {!state.tasks.length && !(state.work ?? []).length && (
                   <div className="large-empty">
                     <Clock3 size={32} />
                     <h2>Let a thought come back around.</h2>
@@ -913,12 +975,7 @@ export function App() {
                         )
                       }
                       onSchedule={async () => {
-                        const raw = window.prompt(
-                          'Repeat interval in minutes (0 removes the schedule)',
-                          String((taskDetail.task.intervalSeconds ?? 0) / 60),
-                        );
-                        if (raw === null) return;
-                        const value = Number(raw);
+                        const value = Number(minutes);
                         if (!Number.isFinite(value) || value < 0) {
                           setError('Enter a valid number of minutes.');
                           return;
@@ -934,6 +991,16 @@ export function App() {
                         );
                       }}
                     />
+                    <label className="field-label" htmlFor="legacy-minutes">
+                      Repeat interval in minutes
+                    </label>
+                    <input
+                      id="legacy-minutes"
+                      type="number"
+                      min={0}
+                      value={minutes}
+                      onChange={(event) => setMinutes(event.target.value)}
+                    />
                     {taskDetail.task.error && (
                       <p className="chat-error">{taskDetail.task.error}</p>
                     )}
@@ -944,6 +1011,15 @@ export function App() {
                     ))}
                     <small>{taskDetail.runs.length} saved runs</small>
                   </section>
+                )}
+                {workDetail && (
+                  <WorkDetail
+                    detail={workDetail}
+                    busy={busy}
+                    onReplay={(id) =>
+                      void mutate(`/inbound/${id}/replay`, 'POST', {})
+                    }
+                  />
                 )}
               </>
             )}

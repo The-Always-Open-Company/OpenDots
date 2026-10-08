@@ -1,6 +1,13 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
+import { ExecutionEngine } from '../src/server/execution-engine.js';
+import { PluginService } from '../src/server/plugins.js';
 import { Store } from '../src/server/store.js';
 import { Runner } from '../src/server/runner.js';
+import { WorkRunner } from '../src/server/work-runner.js';
+import { WorkspaceStore } from '../src/server/workspace.js';
 import { research, type Config } from '../src/server/research.js';
 const config: Config = {
   mode: 'live',
@@ -163,4 +170,86 @@ it('aborts work instead of throwing from an ownership timer', async () => {
   } finally {
     store.close();
   }
+});
+it('runs three executions at once and resumes an expired lease as a new attempt', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'opendots-runner-'));
+  const store = new Store(join(dir, 'open.sqlite'));
+  const workspace = new WorkspaceStore(':memory:', 'owner');
+  const plugins = new PluginService(store.database);
+  store.updateSettings({ researchAllowed: false });
+  const engine = new ExecutionEngine(store.database);
+  const dot = workspace.dots()[0];
+  engine.savePolicy(dot.id, { maxConcurrent: 3 });
+  const ids = [0, 1, 2].map((index) =>
+    String(
+      engine.createWorkItem({
+        actorId: dot.id,
+        title: `Objective ${index}`,
+        objective: 'Keep going',
+        source: 'owner',
+        autoResume: false,
+      }).id,
+    ),
+  );
+  for (const id of ids) engine.enqueueExecution(id);
+  const started: string[] = [];
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const work = new WorkRunner(
+    engine,
+    store,
+    workspace,
+    plugins,
+    async (claim) => {
+      started.push(claim.id);
+      await gate;
+    },
+    async () => undefined,
+  );
+  try {
+    await work.tick();
+    await vi.waitFor(() => expect(started).toHaveLength(3));
+    await work.tick();
+    expect(started).toHaveLength(3);
+    expect(new Set(started.map((id) => engine.execution(id)?.workItemId)).size).toBe(3);
+    release();
+    await vi.waitFor(() => {
+      for (const id of ids) {
+        const executions = engine.detail(id)?.executions as { status: string }[];
+        expect(
+          executions.every((execution) =>
+            ['completed', 'interrupted', 'failed', 'cancelled'].includes(
+              execution.status,
+            ),
+          ),
+        ).toBe(true);
+      }
+    });
+  } finally {
+    release();
+    work.stop();
+    store.close();
+    workspace.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+  let now = 1_700_000_000_000;
+  const leased = new Store(':memory:');
+  const clock = new ExecutionEngine(leased.database, () => now);
+  const item = clock.createWorkItem({
+    actorId: 'dot',
+    title: 'Resume',
+    objective: 'Continue after the lease',
+    source: 'delegation',
+  });
+  const first = clock.enqueueExecution(String(item.id))!;
+  clock.claimExecution();
+  now += 180_000;
+  const second = clock.claimExecution();
+  expect(clock.execution(first)?.status).toBe('interrupted');
+  expect(second?.id).not.toBe(first);
+  expect(second?.resumeOf).toBe(first);
+  expect(clock.workItem(String(item.id))?.status).toBe('open');
+  leased.close();
 });

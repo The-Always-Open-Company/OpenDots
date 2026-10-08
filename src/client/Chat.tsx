@@ -32,6 +32,7 @@ import type {
   Conversation,
   DocumentSummary,
   Dot,
+  PendingAction,
 } from '../shared/types';
 import { Mascot } from './Mascot';
 import { useVoice } from './useVoice';
@@ -61,6 +62,9 @@ export function Chat({
   onSaved,
   onSchedule,
   onComputer,
+  actions = [],
+  onApprove,
+  onDecline,
 }: {
   thread: Conversation;
   dot: Dot;
@@ -73,6 +77,9 @@ export function Chat({
   onSaved: () => void;
   onSchedule: () => void;
   onComputer?: () => void;
+  actions?: PendingAction[];
+  onApprove?: (id: string) => void;
+  onDecline?: (id: string) => void;
 }) {
   const { agent, isReady } = useAgent({
     agentId: `chat-${thread.id}`,
@@ -338,6 +345,7 @@ export function Chat({
       <header className="chat-persona">
         <Mascot
           identity={dot.id}
+          character={dot.mascot}
           name={dot.name}
           small
           state={running ? 'working' : paused ? 'paused' : 'idle'}
@@ -480,6 +488,22 @@ export function Chat({
         dot={dot}
         voice={voice}
       />
+      {actions
+        .filter((action) => action.status === 'pending')
+        .map((action) => (
+          <article className="task-detail-card" key={action.id}>
+            <h2>Waiting for you · {action.toolName}</h2>
+            <p className="muted">{action.argumentsJson.slice(0, 400)}</p>
+            <div className="task-controls">
+              <button type="button" onClick={() => onApprove?.(action.id)}>
+                Approve
+              </button>
+              <button type="button" onClick={() => onDecline?.(action.id)}>
+                Decline
+              </button>
+            </div>
+          </article>
+        ))}
       <form
         className="chat-composer"
         onDragOver={(e) => {

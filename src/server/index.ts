@@ -26,6 +26,11 @@ import { DocumentIngestor } from './document-ingestor.js';
 import { DocumentEnricher } from './document-enrichment.js';
 import { DocumentRetriever } from './document-retrieval.js';
 import { modelJson } from './model-json.js';
+import { ExecutionEngine } from './execution-engine.js';
+import { PluginService } from './plugins.js';
+import { WorkRunner } from './work-runner.js';
+import { applyApprovedAction } from './approved-actions.js';
+import { deliverInternal } from './watches.js';
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 4310);
 const ownerToken = process.env.OWNER_TOKEN;
@@ -120,11 +125,27 @@ if (documents && config.doclingUrl)
 const retriever = documents
   ? new DocumentRetriever(documents, json(config.rerankModel ?? config.model))
   : undefined;
+const engine = new ExecutionEngine(store.database);
+engine.backfillTerminal(store.tasks());
+const plugins = new PluginService(store.database);
+const skillsDir = process.env.SKILLS_DIR ?? join(dirname(database), 'skills');
 const platform = new Platform(store, workspace, config, {
   memory,
   documents,
   retriever,
+  engine,
+  plugins,
+  skillsDir,
 });
+workspace.pages.onUpdated = (page) =>
+  deliverInternal(engine, workspace, 'page.updated', {
+    id: page.id,
+    spaceId: page.spaceId,
+    revision: page.revision,
+    updatedAt: page.updatedAt,
+  });
+workspace.documents.onReady = (id) =>
+  deliverInternal(engine, workspace, 'document.ready', { id, documentId: id });
 const researchConfig = {
   mode: 'live' as const,
   apiKey: config.apiKey,
@@ -149,6 +170,47 @@ const runner = new Runner(
     return { text, sources: [], sample: false };
   },
 );
+const work = new WorkRunner(
+  engine,
+  store,
+  workspace,
+  plugins,
+  async (claim, signal) => {
+    const item = engine.workItem(claim.workItemId);
+    if (!item) throw new Error('Objective not found.');
+    const execution = engine.execution(claim.id);
+    const trigger = execution?.triggerId
+      ? engine.trigger(String(execution.triggerId))
+      : undefined;
+    let threadId = item.workThreadId ? String(item.workThreadId) : '';
+    if (!threadId && trigger?.legacyTaskId)
+      threadId = workspace.taskThread(String(trigger.legacyTaskId)) ?? '';
+    if (!threadId) {
+      const created = await platform.createConversation(
+        String(item.actorId),
+        String(item.title).slice(0, 120),
+      );
+      threadId = created.id;
+      engine.setWorkThread(String(item.id), threadId);
+    }
+    await platform.turn(
+      threadId,
+      engine.continuationPrompt(String(item.id)),
+      signal,
+      {
+        opendotsSource: 'work',
+        workItemId: String(item.id),
+        executionId: claim.id,
+      },
+    );
+  },
+  (action) =>
+    applyApprovedAction(
+      { engine, workspace, store, plugins, memory },
+      action,
+    ),
+);
+runner.attachWork(work);
 if (config.slackChannel)
   console.warn(
     'Slack settings are ignored: Slack ran on CopilotKit Intelligence Channels, which OpenDots no longer uses.',
@@ -160,6 +222,10 @@ const app = createApp({
   ownerToken,
   origin: resolveAppOrigins(process.env.APP_ORIGIN, process.env.NODE_ENV),
   platform,
+  engine,
+  work,
+  plugins,
+  skillsDir,
 });
 app.use('*', async (c, next) => {
   c.header('X-Content-Type-Options', 'nosniff');

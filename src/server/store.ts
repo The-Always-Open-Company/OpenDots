@@ -42,6 +42,22 @@ export class Store {
   close() {
     this.db.close();
   }
+  /** Shared connection for the execution engine. Callers must not close it. */
+  get database() {
+    return this.db;
+  }
+  private engineFlag(key: string) {
+    const table = this.db
+      .prepare(
+        "SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name='engine_meta'",
+      )
+      .get() as { ok: number } | undefined;
+    if (!table) return '';
+    const row = this.db
+      .prepare('SELECT value FROM engine_meta WHERE key=?')
+      .get(key) as { value: string } | undefined;
+    return row?.value ?? '';
+  }
   private transaction<T>(fn: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -192,8 +208,10 @@ export class Store {
   }
   claim(now = Date.now()): Claim | null {
     return this.transaction(() => {
+      if (this.engineFlag('cutover') === '1') return null;
       const settings = this.settings();
       if (settings.paused || !settings.researchAllowed) return null;
+      const recurringStopped = this.engineFlag('legacyRecurringStopped') === '1';
       const expired = this.db
         .prepare("SELECT * FROM tasks WHERE status='running' AND leaseUntil<=?")
         .all(now) as unknown as Task[];
@@ -205,7 +223,7 @@ export class Store {
         );
       const task = this.db
         .prepare(
-          "SELECT * FROM tasks WHERE status='queued' OR (status='completed' AND nextRunAt IS NOT NULL AND nextRunAt<=?) ORDER BY createdAt LIMIT 1",
+            `SELECT * FROM tasks WHERE (status='queued' OR (status='completed' AND nextRunAt IS NOT NULL AND nextRunAt<=?)) ${recurringStopped ? 'AND intervalSeconds IS NULL' : ''} ORDER BY createdAt LIMIT 1`,
         )
         .get(now) as unknown as Task | undefined;
       if (!task) return null;
