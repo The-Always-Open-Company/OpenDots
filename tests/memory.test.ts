@@ -206,6 +206,23 @@ it('never learns from tool output', async () => {
   ]);
 });
 
+it('does not learn from a scheduled run prompt', async () => {
+  const f = fixture();
+  vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+    completion({ role: 'assistant', content: 'Hello.' }),
+  );
+  f.input.messages = [
+    {
+      id: 'opendots-work:1',
+      role: 'user',
+      content: 'Objective: Hello reminder',
+      metadata: { opendotsSource: 'work', triggerKind: 'schedule' },
+    },
+  ];
+  await lastValueFrom(f.agent.run(f.input).pipe(toArray()));
+  expect(f.memory.added).toEqual([]);
+});
+
 it('does not learn or offer memory writes in a consultation thread', async () => {
   const f = fixture('consultation');
   const network = vi

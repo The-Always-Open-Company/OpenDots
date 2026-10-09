@@ -289,6 +289,25 @@ export function App() {
       setBusy(false);
     }
   };
+  const deleteConversation = async (id: string) => {
+    const conversation = workspace?.conversations.find(
+      (item) => item.id === id,
+    );
+    const title = conversation?.title ?? 'this chat';
+    if (
+      !window.confirm(
+        `Delete “${title}”? The messages are removed. Saved pages, memories, and schedules stay.`,
+      )
+    )
+      return;
+    if (!(await mutate(`/conversations/${id}`, 'DELETE'))) return;
+    if (selectedThread === id)
+      setSelectedThread(
+        workspace?.conversations.find(
+          (item) => item.id !== id && item.dotId === conversation?.dotId,
+        )?.id,
+      );
+  };
   if (needsAuth)
     return (
       <main className="unlock">
@@ -513,6 +532,7 @@ export function App() {
               setMobile(false);
             }}
             onNew={() => void newConversation()}
+            onDelete={(id) => void deleteConversation(id)}
           />
         ) : (
           <div className="sidebar-empty">
@@ -863,7 +883,7 @@ export function App() {
                 </h1>
                 <p>
                   {view === 'memories'
-                    ? 'What your Dots know about you: what you share with all of them, and what each one has learned.'
+                    ? 'What you share with every Dot, and the preferences each Dot has learned about you.'
                     : 'Scheduled turns run on the server in their original conversation.'}
                 </p>
               </div>

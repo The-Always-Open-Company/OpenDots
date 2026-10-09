@@ -424,4 +424,47 @@ export class WorkspaceStore {
       .get(threadId);
     return typeof row?.value === 'string' ? JSON.parse(row.value) : null;
   }
+  /**
+   * Removes one chat and its transcript. Saved pages, documents, memories,
+   * and schedules stay. A schedule that used this chat opens a new one next time.
+   */
+  deleteConversation(id: string) {
+    const kind = this.db
+      .prepare('SELECT kind FROM thread_bindings WHERE id=? AND ownerId=?')
+      .get(id, this.ownerId);
+    if (!kind) throw new Error('Conversation not found.');
+    if (kind.kind !== 'chat') throw new Error('Only a chat can be deleted.');
+    this.db.exec('BEGIN');
+    try {
+      for (const statement of [
+        'DELETE FROM runner_messages WHERE threadId=?',
+        'DELETE FROM runner_runs WHERE threadId=?',
+        'DELETE FROM thread_summaries WHERE threadId=?',
+        'DELETE FROM calls WHERE threadId=?',
+        'DELETE FROM captures WHERE threadId=?',
+        'DELETE FROM page_reviews WHERE threadId=?',
+        'DELETE FROM page_threads WHERE threadId=?',
+        'DELETE FROM task_threads WHERE threadId=?',
+      ])
+        this.db.prepare(statement).run(id);
+      if (this.hasTable('work_items'))
+        this.db
+          .prepare(
+            'UPDATE work_items SET workThreadId=NULL WHERE workThreadId=?',
+          )
+          .run(id);
+      this.db
+        .prepare('DELETE FROM thread_bindings WHERE id=? AND ownerId=?')
+        .run(id, this.ownerId);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+  private hasTable(name: string) {
+    return !!this.db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
+      .get(name);
+  }
 }

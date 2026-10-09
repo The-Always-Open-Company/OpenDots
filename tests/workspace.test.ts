@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
+import { ExecutionEngine } from '../src/server/execution-engine.js';
+import { Store } from '../src/server/store.js';
 import { WorkspaceStore } from '../src/server/workspace.js';
 it('persists spaces, specialist permissions, and canonical thread ownership', () => {
   const store = new WorkspaceStore(':memory:', 'owner');
@@ -52,5 +54,75 @@ it('migrates legacy Space ownership once and never restores revoked access on re
     reopened.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it('deletes a chat and leaves pages and the other chat', () => {
+  const store = new WorkspaceStore(':memory:', 'owner');
+  const dot = store.dots()[0];
+  store.bindThread('chat-a', dot.id, 'Keep me');
+  store.bindThread('chat-b', dot.id, 'Remove me');
+  store.threads.appendRun(
+    {
+      runId: 'run',
+      threadId: 'chat-b',
+      agentId: dot.id,
+      parentRunId: null,
+      events: [],
+      createdAt: 1,
+    },
+    [{ id: 'message', role: 'user', content: 'Hello' }],
+    new Set(),
+  );
+  store.createCall('chat-b');
+  store.saveCapture('chat-b', { note: 'draft' });
+  const page = store.pages.create(dot.spaceId, {
+    title: 'Kept page',
+    content: '',
+  });
+  store.pages.reserveThread(page.id, dot.id, 'chat-b');
+  store.deleteConversation('chat-b');
+  expect(store.conversations().map((item) => item.id)).toEqual(['chat-a']);
+  expect(store.threads.messages('chat-b')).toEqual([]);
+  expect(store.pages.list(dot.spaceId).map((item) => item.title)).toEqual([
+    'Kept page',
+  ]);
+  expect(store.pages.thread(page.id, dot.id)).toBeUndefined();
+  expect(() => store.deleteConversation('chat-b')).toThrow(
+    /Conversation not found/,
+  );
+  store.bindThread('consult', dot.id, 'Ask', 'consultation');
+  expect(() => store.deleteConversation('consult')).toThrow(
+    /Only a chat can be deleted/,
+  );
+  store.close();
+});
+
+it('detaches a schedule from a deleted chat without cancelling it', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'opendots-delete-chat-'));
+  const file = join(directory, 'workspace.sqlite');
+  const sqlite = new Store(file);
+  const store = new WorkspaceStore(file, 'owner');
+  const engine = new ExecutionEngine(sqlite.database);
+  try {
+    const dot = store.dots()[0];
+    store.bindThread('chat', dot.id, 'Scheduled');
+    const item = engine.createWorkItem({
+      actorId: dot.id,
+      title: 'Hello',
+      objective: 'Say hello',
+      source: 'schedule',
+      recurring: true,
+      originThreadId: 'chat',
+      workThreadId: 'chat',
+    });
+    store.deleteConversation('chat');
+    expect(engine.workItem(String(item.id))?.workThreadId).toBeNull();
+    expect(engine.workItem(String(item.id))?.status).toBe('open');
+    expect(engine.workItem(String(item.id))?.originThreadId).toBe('chat');
+  } finally {
+    sqlite.close();
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
   }
 });

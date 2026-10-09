@@ -123,6 +123,28 @@ export function workspaceRoutes(platform: Platform, voice: VoiceService) {
       latestRunId: platform.workspace.threads.lastRunId(threadId),
     });
   });
+  app.delete('/conversations/:id', async (c) => {
+    const threadId = c.req.param('id');
+    if (await platform.runner.isRunning({ threadId }))
+      return c.json(
+        {
+          error:
+            'This conversation is still answering. Try again when it finishes.',
+        },
+        409,
+      );
+    try {
+      platform.workspace.deleteConversation(threadId);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Conversation not found.';
+      return c.json(
+        { error: message },
+        message === 'Conversation not found.' ? 404 : 400,
+      );
+    }
+    return c.json({ deleted: true });
+  });
   app.post('/voice/calls', async (c) => {
     const data = z
       .object({ threadId: z.string(), sdp: z.string().max(100000) })

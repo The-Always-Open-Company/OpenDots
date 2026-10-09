@@ -1,5 +1,13 @@
 import type { Memory as Mem0 } from 'mem0ai/oss';
 import { EMBEDDING_DIMENSIONS, type Postgres } from './postgres.js';
+import { modelJson, withTimeout } from './model-json.js';
+import {
+  PREFERENCE_MEMORY_INSTRUCTIONS,
+  memoriesToStore,
+  parsePreferenceMemories,
+  preferenceExtractionUser,
+  preferenceKey,
+} from './preference-memory.js';
 
 export interface LearnedMemory {
   id: string;
@@ -101,6 +109,7 @@ export class Mem0Provider implements MemoryProvider {
         },
         // Otherwise mem0 writes a SQLite history file into the working directory.
         disableHistory: true,
+        customInstructions: PREFERENCE_MEMORY_INSTRUCTIONS,
       });
     })().catch((error: unknown) => {
       this.instance = undefined;
@@ -133,16 +142,40 @@ export class Mem0Provider implements MemoryProvider {
     turns: MemoryTurn[],
     options: { infer: boolean; threadId: string },
   ) {
-    const usable = turns.filter((turn) => turn.content.trim());
-    if (!usable.length) return;
+    const stored = await memoriesToStore(turns, options.infer, (input) =>
+      this.extractPreferences(input),
+    );
+    if (!stored.length) return;
+    const existing = await this.list(scope);
+    const known = new Set(existing.map((item) => preferenceKey(item.text)));
+    const fresh = stored.filter(
+      (turn) => !known.has(preferenceKey(turn.content)),
+    );
+    if (!fresh.length) return;
     const memory = await this.memory();
-    // Not passed as runId: mem0 would then only dedupe within one conversation.
-    await memory.add(usable, {
+    // infer stays off: mem0's own extractor keeps questions, tasks, and replies.
+    await memory.add(fresh, {
       userId: scope.userId,
       agentId: scope.dotId,
-      infer: options.infer,
+      infer: false,
       metadata: { source_thread_id: options.threadId },
     });
+  }
+  private async extractPreferences(turns: MemoryTurn[]) {
+    try {
+      const value = await withTimeout(
+        modelJson(this.config)({
+          system: PREFERENCE_MEMORY_INSTRUCTIONS,
+          user: preferenceExtractionUser(turns),
+          maxTokens: 400,
+        }),
+        20_000,
+      );
+      return parsePreferenceMemories(value);
+    } catch {
+      console.error('Preference extraction failed; nothing saved.');
+      return [];
+    }
   }
   async get(scope: MemoryScope, id: string) {
     const memory = await this.memory();

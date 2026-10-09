@@ -316,9 +316,9 @@ export function WorkspaceDialog({
                 <span>
                   <strong>Use and learn memories</strong>
                   <small>
-                    Include About me and learned memories in new turns, and
-                    learn new facts from chat. Changing permission stops active
-                    work.
+                    Include About me and learned preferences in new turns, and
+                    learn how you like to communicate and work. Changing
+                    permission stops active work.
                   </small>
                 </span>
               </label>

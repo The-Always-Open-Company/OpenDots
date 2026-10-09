@@ -51,10 +51,10 @@ export function LearnedMemories({
     <section className="memory-section" aria-labelledby="learned-heading">
       <div className="memory-section-heading">
         <div>
-          <h2 id="learned-heading">Learned by each Dot</h2>
+          <h2 id="learned-heading">Preferences each Dot learned</h2>
           <p className="muted">
-            Facts a Dot picked up in its own conversations. Only that Dot uses
-            them; other Dots can ask it with ask_dot.
+            Preferences this Dot has learned about you. Only that Dot uses them;
+            other Dots can ask it with ask_dot.
           </p>
         </div>
         {dots.length > 1 && (
@@ -88,7 +88,7 @@ export function LearnedMemories({
       ) : !memories.length ? (
         <p className="muted">
           {dot?.memoryAllowed
-            ? `${dot.name} hasn’t learned anything yet. It learns from what you tell it in chat.`
+            ? `${dot.name} hasn’t learned any preferences yet. It keeps who you are, and how you like to communicate and work.`
             : `${dot?.name} has memory turned off in its settings.`}
         </p>
       ) : (
