@@ -70,6 +70,15 @@ export interface PendingAction {
   threadId?: string;
   createdAt: number;
 }
+export interface Skill {
+  name: string;
+  description: string;
+  body: string;
+  /** Files a skill names but never runs. */
+  scripts: string[];
+  /** Dots allowed to load this skill. */
+  dotIds: string[];
+}
 export interface WorkView {
   workItem: {
     id: string;

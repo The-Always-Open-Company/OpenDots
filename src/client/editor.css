@@ -1188,15 +1188,8 @@
   font-size: 11px;
   line-height: 1.6;
 }
-.template-app .sidebar-bottom .nav-item {
-  color: #58634f;
-}
 .template-app .new-chat.nav-item {
   color: #53634d;
-}
-.template-app .version {
-  color: #65705d;
-  font-size: 9px;
 }
 .template-app .mode-badge {
   color: #53614f;

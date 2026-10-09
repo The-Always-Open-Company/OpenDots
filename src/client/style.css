@@ -259,9 +259,6 @@ h3 {
   border-radius: 999px;
   padding: 1px 6px;
 }
-.sidebar-bottom {
-  margin-top: auto;
-}
 .dot-note {
   display: flex;
   gap: 10px;
@@ -277,20 +274,6 @@ h3 {
 .tiny-star {
   font-size: 27px;
   color: #a8b2cf;
-}
-.sidebar-bottom .nav-item {
-  font-size: 11px;
-}
-.version {
-  display: flex;
-  justify-content: space-between;
-  font-size: 7px;
-  color: #b1b1b7;
-  letter-spacing: 0.8px;
-  padding: 18px 13px 0;
-}
-.version span {
-  letter-spacing: 0;
 }
 .workspace {
   margin-left: 242px;
@@ -849,6 +832,123 @@ h3 {
 }
 .memory-section {
   margin-top: 45px;
+}
+.skill-heading-actions,
+.skill-editor-actions,
+.skill-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.skill-heading-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.skill-editor {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 22px;
+  margin-bottom: 24px;
+}
+.skill-editor h2 {
+  font-size: 16px;
+  margin: 0 0 6px;
+}
+.skill-editor p {
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0 0 14px;
+}
+.skill-editor textarea {
+  width: 100%;
+  font:
+    12px/1.6 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  resize: vertical;
+}
+.skill-editor-actions {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+.skill-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.skill-card {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 18px 20px;
+}
+.skill-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.skill-card h2 {
+  font-size: 14px;
+  margin: 0 0 4px;
+}
+.skill-card-heading p {
+  font-size: 12px;
+  color: #666;
+  margin: 0;
+  line-height: 1.6;
+}
+.skill-scripts {
+  font-size: 11px;
+  margin: 8px 0 0;
+}
+.skill-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 0;
+  margin: 14px 0 0;
+  padding: 0;
+}
+.skill-dots legend {
+  font-size: 11px;
+  color: #888;
+  padding: 0;
+  margin-bottom: 8px;
+}
+.skill-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  color: #666;
+  cursor: pointer;
+}
+.skill-dot.on {
+  border-color: #438c81;
+  background: #eef6f4;
+  color: #1f4f48;
+}
+.skill-dot input {
+  margin: 0 0 0 6px;
+  accent-color: #438c81;
+}
+.skill-dot .mascot.small {
+  width: 22px;
+  height: 22px;
+}
+@media (max-width: 700px) {
+  .page-heading:has(.skill-heading-actions) {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 .memory-section-heading {
   display: flex;
@@ -3201,6 +3301,7 @@ h3 {
   align-items: center;
   gap: 12px;
   padding: 16px 5px;
+  overflow-y: auto;
   border-right: 1px solid var(--line);
   background: #f5f5f5;
 }
@@ -3226,6 +3327,37 @@ h3 {
 }
 .icon-rail .rail-settings {
   margin-top: auto;
+}
+.icon-rail button:not(.rail-brand) {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.icon-rail button:not(.rail-brand):not(:disabled):hover {
+  background: #e9e9e9;
+  color: #222;
+}
+.icon-rail button.active {
+  background: #e3e3e3;
+  color: #111;
+}
+.rail-badge {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #d9d9d9;
+  color: #333;
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 16px;
+  pointer-events: none;
+}
+.rail-badge.nav-attention {
+  background: #e37b4a;
+  color: #fff;
 }
 .template-app.app .sidebar {
   left: 48px;
@@ -3267,11 +3399,6 @@ h3 {
   border: 0;
   color: #252525;
 }
-.template-app .sidebar-bottom {
-  border-top: 1px solid var(--line);
-  padding-top: 10px;
-}
-.template-app .version,
 .template-app .mode-badge,
 .template-app .connection-note,
 .template-app .composer-bottom > span {
@@ -3604,6 +3731,13 @@ h3 {
   .template-app.app .sidebar.open {
     transform: translateX(0);
     visibility: visible;
+  }
+  .template-app.app.mobile-nav-open .icon-rail {
+    display: flex;
+  }
+  .template-app.app.mobile-nav-open .sidebar {
+    left: 48px;
+    width: min(252px, calc(100vw - 48px));
   }
   .template-app .mobile-menu {
     position: fixed;

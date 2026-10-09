@@ -1,4 +1,13 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
 const SCRIPT = /\.(py|sh|bash|js|mjs|cjs|ts|rb|php)$/;
@@ -84,6 +93,52 @@ export function mentionedSkills(text: string, names: string[]) {
   return names.filter((name) =>
     new RegExp(`(^|\\s)@${name}(?![a-z0-9-])`).test(text),
   );
+}
+
+export function isSkillName(name: string) {
+  return NAME.test(name);
+}
+
+export function readSkillMarkdown(dir: string, name: string) {
+  if (!NAME.test(name)) return undefined;
+  try {
+    return readFileSync(join(dir, name, 'SKILL.md'), 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Writes a skill's SKILL.md into its own folder. A new skill must not reuse a
+ * name; an edit must keep its name.
+ */
+export function saveSkill(
+  dir: string,
+  markdown: string,
+  options: { replace?: string } = {},
+): SkillDoc {
+  const text = markdown.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
+  const parsed = parseSkill(text, []);
+  if ('error' in parsed) throw new Error(parsed.error);
+  const folder = join(dir, parsed.name);
+  if (options.replace != null && options.replace !== parsed.name)
+    throw new Error('Keep the skill name when editing it.');
+  if (options.replace == null && existsSync(folder))
+    throw new Error(`A skill named ${parsed.name} already exists.`);
+  if (options.replace != null && !existsSync(join(folder, 'SKILL.md')))
+    throw new Error('Skill not found.');
+  mkdirSync(folder, { recursive: true });
+  const temporary = join(folder, `.SKILL.md.${process.pid}.tmp`);
+  writeFileSync(temporary, text);
+  renameSync(temporary, join(folder, 'SKILL.md'));
+  return parsed;
+}
+
+export function deleteSkill(dir: string, name: string) {
+  if (!NAME.test(name) || !existsSync(join(dir, name, 'SKILL.md')))
+    return false;
+  rmSync(join(dir, name), { recursive: true, force: true });
+  return true;
 }
 
 /** Skill markdown is data. Scripts are named and never run. */

@@ -8,8 +8,8 @@ import {
   ArrowUpRight,
   BookOpen,
   Clock3,
-  Code2,
   Folder,
+  Library,
   Menu,
   MessageCircle,
   Monitor,
@@ -21,6 +21,7 @@ import {
   Search,
   Settings2,
   Trash2,
+  WandSparkles,
   X,
 } from 'lucide-react';
 import type {
@@ -49,6 +50,7 @@ import { TaskActions } from './TaskActions';
 import { WorkActivity, WorkDetail } from './WorkActivity';
 import { WorkspaceDialog, type Dialog } from './WorkspaceDialog';
 import { LearnedMemories } from './LearnedMemories';
+import { SkillLibrary } from './SkillLibrary';
 import { DocumentLibrary } from './DocumentLibrary';
 import { DocumentDetail } from './DocumentDetail';
 import {
@@ -72,7 +74,7 @@ export function App() {
   const [selectedDot, setSelectedDot] = useState('');
   const [selectedThread, setSelectedThread] = useState<string>();
   const [view, rawSetView] = useState<
-    'chat' | 'tasks' | 'memories' | 'space' | 'documents'
+    'chat' | 'tasks' | 'memories' | 'space' | 'documents' | 'skills'
   >('chat');
   const dirtyPage = useRef(false);
   const [spaceId, setSpaceId] = useState('');
@@ -364,14 +366,25 @@ export function App() {
         )}
       </main>
     );
+  const activityCount =
+    unseenRuns +
+      (state.actions ?? []).filter((action) => action.status === 'pending')
+        .length || state.tasks.length + (state.work?.length ?? 0);
+  const railView = (next: typeof view) => {
+    setView(next);
+    setMobile(false);
+  };
   const content = (
-    <div className={`app template-app ${navCollapsed ? 'nav-collapsed' : ''}`}>
+    <div
+      className={`app template-app ${navCollapsed ? 'nav-collapsed' : ''} ${mobile ? 'mobile-nav-open' : ''}`}
+    >
       <nav className="icon-rail" aria-label="Workspace navigation">
         <button
           className="rail-brand"
           aria-label="OpenDots home"
+          title="Home"
           onClick={() => {
-            setView('chat');
+            railView('chat');
             setSelectedThread(undefined);
           }}
         >
@@ -379,32 +392,83 @@ export function App() {
         </button>
         <button
           aria-label={navCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={navCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           onClick={() => setNavCollapsed(!navCollapsed)}
         >
           <PanelLeft size={18} />
         </button>
         <button
           aria-label="New chat"
+          title="New chat"
           disabled={!configured}
           onClick={() => void newConversation()}
         >
           <Plus size={19} />
         </button>
         <button
+          className={view === 'space' ? 'active' : ''}
           aria-label="Open Spaces"
+          title="Spaces"
           onClick={() => {
             if (workspace.spaces[0]) openPage(workspace.spaces[0].id);
           }}
         >
           <Folder size={18} />
         </button>
-        <button aria-label="Open activity" onClick={() => setView('tasks')}>
+        <button
+          className={view === 'documents' ? 'active' : ''}
+          aria-label="Open documents"
+          aria-current={view === 'documents' ? 'page' : undefined}
+          title="Documents"
+          onClick={() => openPageLink('#/documents')}
+        >
+          <Library size={18} />
+        </button>
+        <button
+          className={view === 'tasks' ? 'active' : ''}
+          aria-label={`Open scheduled and activity${activityCount ? `, ${activityCount}` : ''}`}
+          aria-current={view === 'tasks' ? 'page' : undefined}
+          title="Scheduled & activity"
+          onClick={() => {
+            requestActivityNotifications();
+            railView('tasks');
+          }}
+        >
           <Clock3 size={18} />
+          {activityCount > 0 && (
+            <small
+              className={`rail-badge ${unseenRuns ? 'nav-attention' : ''}`}
+            >
+              {activityCount > 99 ? '99+' : activityCount}
+            </small>
+          )}
+        </button>
+        <button
+          className={view === 'memories' ? 'active' : ''}
+          aria-label="Open memories"
+          aria-current={view === 'memories' ? 'page' : undefined}
+          title="Memories"
+          onClick={() => railView('memories')}
+        >
+          <BookOpen size={18} />
+        </button>
+        <button
+          className={view === 'skills' ? 'active' : ''}
+          aria-label="Open skills"
+          aria-current={view === 'skills' ? 'page' : undefined}
+          title="Skills"
+          onClick={() => railView('skills')}
+        >
+          <WandSparkles size={18} />
         </button>
         <button
           className="rail-settings"
-          aria-label="Open settings"
-          onClick={() => setDialog({ type: 'settings' })}
+          aria-label="Open settings and setup"
+          title="Settings & setup"
+          onClick={() => {
+            setDialog({ type: 'settings' });
+            setMobile(false);
+          }}
         >
           <Settings2 size={18} />
         </button>
@@ -539,63 +603,6 @@ export function App() {
             Set up text chat to begin a persistent conversation.
           </div>
         )}
-        <div className="sidebar-bottom">
-          <button
-            className={`nav-item ${view === 'documents' ? 'active' : ''}`}
-            onClick={() => openPageLink('#/documents')}
-          >
-            <Folder size={17} />
-            <span>Documents</span>
-          </button>
-          <button
-            className={`nav-item ${view === 'tasks' ? 'active' : ''}`}
-            onClick={() => {
-              requestActivityNotifications();
-              setView('tasks');
-              setMobile(false);
-            }}
-          >
-            <Clock3 size={17} />
-            <span>Scheduled & activity</span>
-            <small className={unseenRuns ? 'nav-attention' : undefined}>
-              {unseenRuns +
-                (state.actions ?? []).filter(
-                  (action) => action.status === 'pending',
-                ).length || state.tasks.length + (state.work?.length ?? 0)}
-            </small>
-          </button>
-          <button
-            className={`nav-item ${view === 'memories' ? 'active' : ''}`}
-            onClick={() => {
-              setView('memories');
-              setMobile(false);
-            }}
-          >
-            <BookOpen size={17} />
-            <span>Memories</span>
-            <small>{state.memories.length}</small>
-          </button>
-          <button
-            className="nav-item"
-            onClick={() => setDialog({ type: 'settings' })}
-          >
-            <Settings2 size={17} />
-            <span>Settings & setup</span>
-          </button>
-          <a
-            className="nav-item"
-            href="https://github.com/CopilotKit/OpenDots"
-            target="_blank"
-            rel="noreferrer"
-          >
-            <Code2 size={17} />
-            <span>Make it your own</span>
-            <ArrowUpRight size={13} />
-          </a>
-          <div className="version">
-            OPEN SOURCE TEMPLATE <span>v0.1</span>
-          </div>
-        </div>
       </aside>
       <div className="workspace">
         <header className="topbar">
@@ -624,7 +631,9 @@ export function App() {
                     ? 'Pages'
                     : view === 'documents'
                       ? 'Documents'
-                      : 'Memories'}
+                      : view === 'skills'
+                        ? 'Skills'
+                        : 'Memories'}
             </strong>
           </div>
           <div className="top-actions">
@@ -697,6 +706,8 @@ export function App() {
               }
             }}
           />
+        ) : view === 'skills' ? (
+          <SkillLibrary dots={workspace.dots} />
         ) : view === 'documents' ? (
           documentId ? (
             <DocumentDetail

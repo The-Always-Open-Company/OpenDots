@@ -6,7 +6,13 @@ import type { ExecutionEngine } from './execution-engine.js';
 import type { Platform } from './platform.js';
 import type { PluginService } from './plugins.js';
 import { initialRunAt, parseSchedule } from './schedule-time.js';
-import { loadSkills } from './skills.js';
+import {
+  deleteSkill,
+  isSkillName,
+  loadSkills,
+  readSkillMarkdown,
+  saveSkill,
+} from './skills.js';
 import type { Store } from './store.js';
 import type { Runner } from './runner.js';
 import { dedupKey, hookSecretHash, secretsMatch } from './watches.js';
@@ -152,7 +158,81 @@ export function capabilityRoutes(
       ? c.json({ ok: true })
       : c.json({ error: 'Rule not found.' }, 404),
   );
-  app.get('/api/skills', (c) => c.json(loadSkills(skillsDir)));
+  const skillMarkdown = z
+    .object({ markdown: z.string().min(1).max(20_000) })
+    .strict();
+  const skillError = (error: unknown) =>
+    error instanceof Error ? error.message : 'Skill could not be saved.';
+  app.get('/api/skills', (c) => {
+    const grants = engine.skillGrants();
+    return c.json(
+      loadSkills(skillsDir).map((skill) => ({
+        ...skill,
+        dotIds: grants.get(skill.name) ?? [],
+      })),
+    );
+  });
+  app.get('/api/skills/:name', (c) => {
+    const name = c.req.param('name');
+    const skill = loadSkills(skillsDir).find((item) => item.name === name);
+    const markdown = readSkillMarkdown(skillsDir, name);
+    if (!skill || markdown == null)
+      return c.json({ error: 'Skill not found.' }, 404);
+    return c.json({
+      ...skill,
+      markdown,
+      dotIds: engine.skillGrants().get(name) ?? [],
+    });
+  });
+  app.post('/api/skills', async (c) => {
+    const parsed = skillMarkdown.safeParse(
+      await c.req.json().catch(() => null),
+    );
+    if (!parsed.success)
+      return c.json(
+        { error: 'Add SKILL.md text up to 20,000 characters.' },
+        400,
+      );
+    try {
+      return c.json(saveSkill(skillsDir, parsed.data.markdown), 201);
+    } catch (error) {
+      const message = skillError(error);
+      return c.json(
+        { error: message },
+        message.includes('already exists') ? 409 : 400,
+      );
+    }
+  });
+  app.put('/api/skills/:name', async (c) => {
+    const parsed = skillMarkdown.safeParse(
+      await c.req.json().catch(() => null),
+    );
+    if (!parsed.success)
+      return c.json(
+        { error: 'Add SKILL.md text up to 20,000 characters.' },
+        400,
+      );
+    try {
+      return c.json(
+        saveSkill(skillsDir, parsed.data.markdown, {
+          replace: c.req.param('name'),
+        }),
+      );
+    } catch (error) {
+      const message = skillError(error);
+      return c.json(
+        { error: message },
+        message === 'Skill not found.' ? 404 : 400,
+      );
+    }
+  });
+  app.delete('/api/skills/:name', (c) => {
+    const name = c.req.param('name');
+    if (!isSkillName(name) || !deleteSkill(skillsDir, name))
+      return c.json({ error: 'Skill not found.' }, 404);
+    engine.forgetSkill(name);
+    return c.json({ deleted: true });
+  });
   app.post('/api/dots/:id/skills', async (c) => {
     const parsed = z
       .object({ name: z.string().trim().min(1).max(64) })
@@ -160,6 +240,8 @@ export function capabilityRoutes(
       .safeParse(await c.req.json().catch(() => null));
     if (!parsed.success)
       return c.json({ error: 'Name a skill to enable.' }, 400);
+    if (platform && !platform.workspace.dot(c.req.param('id')))
+      return c.json({ error: 'Dot not found.' }, 404);
     if (!loadSkills(skillsDir).some((skill) => skill.name === parsed.data.name))
       return c.json({ error: 'Skill not found.' }, 404);
     engine.grantSkill(c.req.param('id'), parsed.data.name);

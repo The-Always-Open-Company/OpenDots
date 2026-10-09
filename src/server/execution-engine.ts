@@ -1692,6 +1692,21 @@ export class ExecutionEngine {
         .run(dotId, skillName).changes > 0
     );
   }
+  /** Dot IDs keyed by the skill they are allowed to load. */
+  skillGrants() {
+    const grants = new Map<string, string[]>();
+    for (const row of this.db
+      .prepare('SELECT dotId, skillName FROM dot_skills ORDER BY dotId')
+      .all() as { dotId: string; skillName: string }[])
+      grants.set(row.skillName, [
+        ...(grants.get(row.skillName) ?? []),
+        row.dotId,
+      ]);
+    return grants;
+  }
+  forgetSkill(skillName: string) {
+    this.db.prepare('DELETE FROM dot_skills WHERE skillName=?').run(skillName);
+  }
   reviseWork(id: string, title: string, objective: string) {
     this.db
       .prepare(

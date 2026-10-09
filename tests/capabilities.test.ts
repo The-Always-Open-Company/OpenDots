@@ -183,6 +183,82 @@ describe('skills', () => {
       call(workTools(deps()), 'load_skill', { name: 'brief' }),
     ).rejects.toThrow(/not enabled/);
   });
+
+  it('creates, edits, grants, and deletes skills through the API', async () => {
+    const { dir, store, engine, plugins, dot } = world();
+    const skillsDir = join(dir, 'skills');
+    const app = createApp({
+      store,
+      runner: new Runner(store, { mode: 'sample', baseUrl: '' }),
+      config: { mode: 'sample', baseUrl: '' },
+      engine,
+      plugins,
+      skillsDir,
+    });
+    const skill = (description: string) =>
+      `\uFEFF---\r\nname: brief\r\ndescription: ${description}\r\n---\r\nUse short sentences.\r\n`;
+    const send = (path: string, method: string, body: unknown) =>
+      app.request(path, { ...json(body), method });
+
+    const created = await send('/api/skills', 'POST', {
+      markdown: skill('Write a brief'),
+    });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({
+      name: 'brief',
+      description: 'Write a brief',
+    });
+    expect(
+      (await send('/api/skills', 'POST', { markdown: skill('Again') })).status,
+    ).toBe(409);
+    expect(
+      (
+        await send('/api/skills', 'POST', {
+          markdown: '---\nname: Bad Name\ndescription: x\n---\nBody\n',
+        })
+      ).status,
+    ).toBe(400);
+
+    expect(
+      (await send(`/api/dots/${dot.id}/skills`, 'POST', { name: 'brief' }))
+        .status,
+    ).toBe(200);
+    expect(
+      (await send(`/api/dots/${dot.id}/skills`, 'POST', { name: 'missing' }))
+        .status,
+    ).toBe(404);
+    const listed = (await (await app.request('/api/skills')).json()) as {
+      name: string;
+      dotIds: string[];
+    }[];
+    expect(listed).toEqual([
+      expect.objectContaining({ name: 'brief', dotIds: [dot.id] }),
+    ]);
+
+    const renamed = await send('/api/skills/brief', 'PUT', {
+      markdown: '---\nname: other\ndescription: x\n---\nBody\n',
+    });
+    expect(renamed.status).toBe(400);
+    expect(
+      (await send('/api/skills/nope', 'PUT', { markdown: skill('x') })).status,
+    ).toBe(400);
+    expect(
+      (await send('/api/skills/brief', 'PUT', { markdown: skill('Updated') }))
+        .status,
+    ).toBe(200);
+    const full = (await (await app.request('/api/skills/brief')).json()) as {
+      description: string;
+      markdown: string;
+    };
+    expect(full.description).toBe('Updated');
+    expect(full.markdown).not.toMatch(/\r|\uFEFF/);
+
+    expect((await send('/api/skills/brief', 'DELETE', {})).status).toBe(200);
+    expect((await send('/api/skills/brief', 'DELETE', {})).status).toBe(404);
+    expect((await app.request('/api/skills/brief')).status).toBe(404);
+    expect(engine.skillGrants().size).toBe(0);
+    expect(loadSkills(skillsDir)).toEqual([]);
+  });
 });
 
 describe('plugins', () => {
