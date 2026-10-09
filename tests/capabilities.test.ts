@@ -9,6 +9,7 @@ import { ExecutionEngine } from '../src/server/execution-engine.js';
 import type { MemoryProvider, MemoryScope } from '../src/server/memory.js';
 import {
   assertPublicUrl,
+  isBlockedAddress,
   PluginService,
   pluginFetch,
   pollFingerprint,
@@ -20,11 +21,18 @@ import {
   workTools,
   type WorkDeps,
 } from '../src/server/work-tools.js';
-import { applyApprovedAction } from '../src/server/approved-actions.js';
+import {
+  applyApprovedAction,
+  approvalDenied,
+} from '../src/server/approved-actions.js';
 import { Store } from '../src/server/store.js';
 import { deliverInternal, watchDecision } from '../src/server/watches.js';
 import { WorkspaceStore } from '../src/server/workspace.js';
-import { mentionedSkills, skillInstructions, loadSkills } from '../src/server/skills.js';
+import {
+  mentionedSkills,
+  skillInstructions,
+  loadSkills,
+} from '../src/server/skills.js';
 import { WorkRunner } from '../src/server/work-runner.js';
 
 const cleanup: { close: () => void; dir?: string }[] = [];
@@ -155,13 +163,25 @@ describe('skills', () => {
     });
     expect(enabled).toMatch(/Call load_skill/);
     expect(enabled).toMatch(/brief: Write a short brief/);
-    await expect(call(workTools(deps()), 'load_skill', { name: 'brief' })).resolves.toMatchObject({
+    expect(enabled).toMatch(/call start_objective instead/);
+    const inWork = capabilityPrompt({
+      engine,
+      dot,
+      latestUser: 'Continue.',
+      skillsDir: join(dir, 'skills'),
+      inWork: true,
+    });
+    expect(inWork).not.toMatch(/start_objective/);
+    expect(inWork).toMatch(/complete_work or fail_work/);
+    await expect(
+      call(workTools(deps()), 'load_skill', { name: 'brief' }),
+    ).resolves.toMatchObject({
       executed: false,
     });
     engine.revokeSkill(dot.id, 'brief');
-    await expect(call(workTools(deps()), 'load_skill', { name: 'brief' })).rejects.toThrow(
-      /not enabled/,
-    );
+    await expect(
+      call(workTools(deps()), 'load_skill', { name: 'brief' }),
+    ).rejects.toThrow(/not enabled/);
   });
 });
 
@@ -170,24 +190,34 @@ describe('plugins', () => {
     const previous = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';
     try {
-      await expect(assertPublicUrl('http://127.0.0.1/mcp')).rejects.toThrow(/production/);
+      await expect(assertPublicUrl('http://127.0.0.1/mcp')).rejects.toThrow(
+        /production/,
+      );
     } finally {
       process.env.NODE_ENV = previous;
     }
-    await expect(assertPublicUrl('https://10.0.0.5/mcp')).rejects.toThrow(/private/);
-    await expect(assertPublicUrl('https://169.254.169.254/latest')).rejects.toThrow(
+    await expect(assertPublicUrl('https://10.0.0.5/mcp')).rejects.toThrow(
       /private/,
     );
+    await expect(
+      assertPublicUrl('https://169.254.169.254/latest'),
+    ).rejects.toThrow(/private/);
     await expect(
       assertPublicUrl('https://plugins.example/mcp', (async () => [
         { address: '192.168.1.9', family: 4 },
       ]) as never),
     ).rejects.toThrow(/private/);
+    for (const mapped of ['::ffff:127.0.0.1', '::ffff:a00:5', '64:ff9b::a00:5'])
+      expect(isBlockedAddress(mapped)).toBe(true);
+    expect(isBlockedAddress('2606:4700:4700::1111')).toBe(false);
     const fetchMock = vi.fn(async () => new Response('ok'));
     vi.stubGlobal('fetch', fetchMock);
     await pluginFetch('http://127.0.0.1/mcp');
-    const init = (fetchMock.mock.calls as unknown as [string, RequestInit][])[0]?.[1];
+    const init = (
+      fetchMock.mock.calls as unknown as [string, RequestInit][]
+    )[0]?.[1];
     expect(init).toMatchObject({ redirect: 'error' });
+    expect(init).toHaveProperty('dispatcher');
 
     const { store, engine, dot } = world();
     let version = 1;
@@ -226,12 +256,24 @@ describe('plugins', () => {
       objective: 'Send it',
       source: 'owner',
     });
-    const begun = engine.beginEffect(String(item.id), null, 'plugin_mail_send', {}, false);
-    if (begun.action !== 'run') throw new Error('expected a new operation');
-    engine.completeEffect(String(item.id), 'plugin_mail_send', begun.operationId, 'succeeded', result);
-    expect(JSON.stringify(engine.detail(String(item.id))?.events)).not.toContain(
-      'super-secret-token',
+    const begun = engine.beginEffect(
+      String(item.id),
+      null,
+      'plugin_mail_send',
+      {},
+      false,
     );
+    if (begun.action !== 'run') throw new Error('expected a new operation');
+    engine.completeEffect(
+      String(item.id),
+      'plugin_mail_send',
+      begun.operationId,
+      'succeeded',
+      result,
+    );
+    expect(
+      JSON.stringify(engine.detail(String(item.id))?.events),
+    ).not.toContain('super-secret-token');
     version = 2;
     expect((await plugins.refresh('mail')).stale).toBe(true);
     expect(plugins.allowed(dot.id, 'mail', 'send')).toBe(false);
@@ -294,7 +336,9 @@ describe('delegation and consultation', () => {
     engine.finishExecution(String(aside?.id), 'completed');
     expect(engine.detail(String(parent.id))?.executions).toHaveLength(0);
     engine.waitFor(String(parent.id), [waited.workItemId]);
-    expect(engine.workItem(String(parent.id))?.status).toBe('waiting_for_dependency');
+    expect(engine.workItem(String(parent.id))?.status).toBe(
+      'waiting_for_dependency',
+    );
     const needed = engine.claimExecution();
     expect(needed?.workItemId).toBe(waited.workItemId);
     engine.setFinishIntent(String(needed?.id), 'complete');
@@ -337,6 +381,32 @@ describe('delegation and consultation', () => {
         objective: 'This should fail',
       }),
     ).rejects.toThrow(/not available/);
+  });
+});
+
+describe('approvals', () => {
+  it('declines an approval whose permission was revoked, but not one that is only paused', () => {
+    const { store, workspace, engine, plugins, dot } = world();
+    const item = engine.createWorkItem({
+      actorId: dot.id,
+      title: 'Note',
+      objective: 'Remember tea',
+      source: 'owner',
+    });
+    const { pendingActionId } = engine.proposeAction({
+      executionId: null,
+      workItemId: String(item.id),
+      actorId: dot.id,
+      threadId: 'thread',
+      toolName: 'remember',
+      arguments: { text: 'Prefers tea.' },
+    });
+    const deps = { engine, workspace, store, plugins };
+    const action = () => engine.action(pendingActionId)!;
+    store.updateSettings({ paused: true });
+    expect(approvalDenied(deps, action())).toBeNull();
+    store.updateSettings({ paused: false, memoryAllowed: false });
+    expect(approvalDenied(deps, action())).toMatch(/memor/i);
   });
 });
 
@@ -383,9 +453,9 @@ describe('notes, profile, schedules, and wakes', () => {
         spec: { kind: 'interval', seconds: 30 },
       }).success,
     ).toBe(false);
-    expect(updateSchema.safeParse({ triggerId: 't', spec: minute }).success).toBe(
-      true,
-    );
+    expect(
+      updateSchema.safeParse({ triggerId: 't', spec: minute }).success,
+    ).toBe(true);
     const published = JSON.stringify(toJSONSchema(proposeSchema));
     for (const field of [
       'interval',
@@ -399,14 +469,17 @@ describe('notes, profile, schedules, and wakes', () => {
   });
 
   it('keeps note changes in this Dot’s scope and arms a schedule only after approval', async () => {
-    const { engine, workspace, store, plugins, dot, deps, scopes, memory } = world();
+    const { engine, workspace, store, plugins, dot, deps, scopes, memory } =
+      world();
     const tools = workTools(deps());
     await call(tools, 'list_notes');
     await call(tools, 'update_note', { id: 'n1', text: 'tea at four' });
     await call(tools, 'forget', { id: 'n1' });
-    expect(scopes.every((scope) => scope.userId === 'owner' && scope.dotId === dot.id)).toBe(
-      true,
-    );
+    expect(
+      scopes.every(
+        (scope) => scope.userId === 'owner' && scope.dotId === dot.id,
+      ),
+    ).toBe(true);
     const pending = await proposeSchedule(deps(), {
       title: 'Digest',
       objective: 'Send the morning digest',
@@ -447,7 +520,10 @@ describe('notes, profile, schedules, and wakes', () => {
     expect(workspace.dot(dot.id)?.name).toBe(before.name);
     expect(workspace.dot(dot.id)?.instructions).toBe(before.instructions);
     const actionId = (profile as { actionId: string }).actionId;
-    const profileApproved = await app.request(`/api/actions/${actionId}/approve`, json({}));
+    const profileApproved = await app.request(
+      `/api/actions/${actionId}/approve`,
+      json({}),
+    );
     expect((await profileApproved.json()) as { status: string }).toMatchObject({
       status: 'approved',
     });
@@ -479,22 +555,36 @@ describe('notes, profile, schedules, and wakes', () => {
       wakeAt: Date.now() + 6 * 60_000,
     })) as { workItemId: string };
     expect(engine.workItem(saved.workItemId)?.source).toBe('responsibility');
-    const listed = (await call(tools, 'list_responsibilities')) as { id: string }[];
+    const listed = (await call(tools, 'list_responsibilities')) as {
+      id: string;
+    }[];
     expect(listed.map((item) => item.id)).toContain(saved.workItemId);
 
     const executionId = engine.enqueueExecution(saved.workItemId)!;
     engine.claimExecution();
-    const trigger = engine.detail(saved.workItemId)?.triggers[0] as { enabled?: number };
+    const trigger = engine.detail(saved.workItemId)?.triggers[0] as {
+      enabled?: number;
+    };
     await call(tools, 'close_responsibility', { id: saved.workItemId });
     expect(engine.execution(executionId)?.finishIntent).toBe('complete');
-    expect(Number(engine.trigger(String((engine.detail(saved.workItemId)?.triggers[0] as { id: string }).id))?.enabled)).toBe(1);
+    expect(
+      Number(
+        engine.trigger(
+          String(
+            (engine.detail(saved.workItemId)?.triggers[0] as { id: string }).id,
+          ),
+        )?.enabled,
+      ),
+    ).toBe(1);
     expect(Number(trigger.enabled)).toBe(1);
     engine.finishExecution(executionId, 'completed');
     expect(engine.workItem(saved.workItemId)?.status).toBe('completed');
     expect(
       Number(
         engine.trigger(
-          String((engine.detail(saved.workItemId)?.triggers[0] as { id: string }).id),
+          String(
+            (engine.detail(saved.workItemId)?.triggers[0] as { id: string }).id,
+          ),
         )?.enabled,
       ),
     ).toBe(0);
@@ -522,7 +612,8 @@ describe('notes, profile, schedules, and wakes', () => {
     engine.claimExecution();
     engine.finishExecution(executionId, 'completed');
     const next = Number(
-      (engine.detail(String(item.id))?.triggers[0] as { nextRunAt?: number }).nextRunAt,
+      (engine.detail(String(item.id))?.triggers[0] as { nextRunAt?: number })
+        .nextRunAt,
     );
     expect(engine.workItem(String(item.id))?.status).toBe('open');
     expect(next).toBeGreaterThan(Date.now() + 23 * 60 * 60_000);
@@ -573,9 +664,9 @@ describe('watches', () => {
         watchDecision(engine, store, workspace, event),
       ),
     ).toBe(1);
-    expect(engine.detail(String(engine.trigger(watch.id)?.workItemId))?.executions).toHaveLength(
-      1,
-    );
+    expect(
+      engine.detail(String(engine.trigger(watch.id)?.workItemId))?.executions,
+    ).toHaveLength(1);
     const again = await deliver('evt-1');
     expect(await again.json()).toMatchObject({ duplicate: true });
     expect(
@@ -612,7 +703,11 @@ describe('watches', () => {
       ),
       actorId: dot.id,
       kind: 'watch',
-      spec: { watchKind: 'internal', event: 'page.updated', spaceId: dot.spaceId },
+      spec: {
+        watchKind: 'internal',
+        event: 'page.updated',
+        spaceId: dot.spaceId,
+      },
       enabled: true,
     });
     workspace.updateDot(dot.id, {
@@ -631,14 +726,16 @@ describe('watches', () => {
     expect(
       (
         store.database
-          .prepare("SELECT COUNT(*) AS n FROM inbound_events WHERE payload LIKE '%page-1%'")
+          .prepare(
+            "SELECT COUNT(*) AS n FROM inbound_events WHERE payload LIKE '%page-1%'",
+          )
           .get() as { n: number }
       ).n,
     ).toBe(0);
 
     const leftover = engine.claimExecution();
     if (leftover) engine.finishExecution(String(leftover.id), 'cancelled');
-    let now = 1_800_000_000_000;
+    const now = 1_800_000_000_000;
     const clock = new ExecutionEngine(store.database, () => now);
     const watched = clock.createWorkItem({
       actorId: dot.id,
@@ -654,7 +751,11 @@ describe('watches', () => {
       spec: { watchKind: 'webhook' },
       enabled: true,
     });
-    const inbound = clock.acceptWebhook(triggerId, 'retry-me', '{"id":"retry-me"}');
+    const inbound = clock.acceptWebhook(
+      triggerId,
+      'retry-me',
+      '{"id":"retry-me"}',
+    );
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const executionId = clock.enqueueExecution(String(watched.id))!;
       store.database
@@ -718,9 +819,9 @@ describe('watches', () => {
     );
     await work.tick();
     await vi.waitFor(() =>
-      expect(
-        JSON.stringify(engine.detail(String(item.id))?.events),
-      ).toContain('auth_denied'),
+      expect(JSON.stringify(engine.detail(String(item.id))?.events)).toContain(
+        'auth_denied',
+      ),
     );
     expect(calls).toHaveLength(0);
     work.stop();

@@ -20,8 +20,11 @@ import {
   Phone,
   PhoneOff,
   Square,
+  TriangleAlert,
   X,
 } from 'lucide-react';
+import { ToolActivity } from './ToolActivity';
+import { endedWithoutAnswer } from './chat-answer';
 import {
   ComputerToolCard,
   type ComputerToolRenderProps,
@@ -390,7 +393,9 @@ export function Chat({
             showScreen={props.toolCallId === latestBrowserCall?.id}
             onExpand={onComputer}
           />
-        ) : null,
+        ) : (
+          <ToolActivity {...props} />
+        ),
     },
     [dot.id, dot.name, running, latestBrowserCall?.id, onComputer],
   );
@@ -399,13 +404,10 @@ export function Chat({
       !isInternalVoiceReceipt(message) &&
       ['user', 'assistant'].includes(message.role) &&
       ((typeof message.content === 'string' && message.content.trim()) ||
-        (message.role === 'assistant' &&
-          message.toolCalls?.some(
-            (call) =>
-              call.function.name.startsWith('computer_') ||
-              call.function.name === pageReviewTool.name,
-          ))),
+        (message.role === 'assistant' && !!message.toolCalls?.length)),
   );
+  const unanswered =
+    !running && !following && endedWithoutAnswer(agent.messages);
   return (
     <div className="live-chat">
       <header className="chat-persona">
@@ -513,6 +515,14 @@ export function Chat({
             />
           )}
         />
+        {unanswered && (
+          <div className="work-marker">
+            <TriangleAlert size={13} />
+            <span>
+              {dot.name} stopped before writing an answer. Ask it to continue.
+            </span>
+          </div>
+        )}
         {(running || following) && (
           <div className="thinking">
             <span />

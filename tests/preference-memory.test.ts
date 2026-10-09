@@ -21,6 +21,8 @@ describe('preference memories', () => {
     expect(PREFERENCE_MEMORY_INSTRUCTIONS).toContain('communicate');
     expect(PREFERENCE_MEMORY_INSTRUCTIONS).toContain('how they like to work');
     expect(PREFERENCE_MEMORY_INSTRUCTIONS).toContain('question or task');
+    // OpenAI's json_object mode returns 400 unless the prompt mentions JSON.
+    expect(PREFERENCE_MEMORY_INSTRUCTIONS).toMatch(/json/i);
     expect(
       preferenceExtractionUser([
         { role: 'user', content: 'I prefer short answers' },
@@ -54,8 +56,6 @@ describe('preference memories', () => {
         metadata: { opendotsSource: 'voice_receipt' },
       }),
     ).toBe(false);
-    expect(
-      shouldLearnFromMessage({ role: 'user', id: 'plain' }),
-    ).toBe(true);
+    expect(shouldLearnFromMessage({ role: 'user', id: 'plain' })).toBe(true);
   });
 });

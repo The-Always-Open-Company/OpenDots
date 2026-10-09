@@ -31,7 +31,12 @@ export function modelJson(config: {
         adapter,
         stream: false,
         abortController,
-        systemPrompts: [system],
+        // OpenAI rejects json_object mode unless the messages mention JSON.
+        systemPrompts: [
+          /json/i.test(system + user)
+            ? system
+            : `${system}\nAnswer with a JSON object.`,
+        ],
         messages: [{ role: 'user', content: user }],
         modelOptions: {
           max_completion_tokens: maxTokens,

@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import {
   contextMaxTokensFromEnv,
   DEFAULT_CONTEXT_MAX_TOKENS,
+  maxAgentTurnsFromEnv,
   setupStatus,
   type PlatformConfig,
 } from '../src/server/platform-config.js';
@@ -65,4 +66,11 @@ it('parses the context budget and rejects unusable values', () => {
   expect(contextMaxTokensFromEnv('64000')).toBe(64000);
   for (const bad of ['abc', '100', '1.5', '-5000'])
     expect(() => contextMaxTokensFromEnv(bad)).toThrow(/CONTEXT_MAX_TOKENS/);
+});
+it('leaves the turn limit off unless a usable limit is set', () => {
+  for (const off of [undefined, '', ' ', 'off', 'OFF', '0'])
+    expect(maxAgentTurnsFromEnv(off)).toBeUndefined();
+  expect(maxAgentTurnsFromEnv('8')).toBe(8);
+  for (const bad of ['1', '101', '2.5', 'many', '-3'])
+    expect(() => maxAgentTurnsFromEnv(bad)).toThrow(/MAX_AGENT_TURNS/);
 });

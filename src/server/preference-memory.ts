@@ -8,7 +8,7 @@ Keep a memory only when they state something that should shape later conversatio
 - how they want to communicate, such as tone, length, formality, or format
 - how they like to work, such as planning style, tools, review habits, decision style, or a standing constraint
 Do not keep the question or task they asked, topics that matter only for this conversation, the assistant's answer, schedules, document contents, secrets, or credentials.
-Write each kept memory as a short preference. Return {"memories":[]} when the turn has none.`;
+Write each kept memory as a short preference. Answer with a JSON object {"memories":["..."]}, and {"memories":[]} when the turn has none.`;
 
 const extracted = z.object({
   memories: z.array(z.unknown()).max(8),

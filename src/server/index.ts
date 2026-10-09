@@ -13,6 +13,7 @@ import { Platform } from './platform.js';
 import {
   contextMaxTokensFromEnv,
   DEFAULT_EMBEDDING_MODEL,
+  maxAgentTurnsFromEnv,
   maxUploadBytesFromEnv,
   type PlatformConfig,
 } from './platform-config.js';
@@ -54,6 +55,7 @@ const config: PlatformConfig = {
   model: process.env.OPENAI_MODEL,
   baseUrl: process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
   contextMaxTokens: contextMaxTokensFromEnv(process.env.CONTEXT_MAX_TOKENS),
+  maxAgentTurns: maxAgentTurnsFromEnv(process.env.MAX_AGENT_TURNS),
   summaryModel: process.env.SUMMARY_MODEL || undefined,
   databaseUrl: process.env.DATABASE_URL || undefined,
   doclingUrl: process.env.DOCLING_URL || undefined,
@@ -126,7 +128,9 @@ const retriever = documents
   ? new DocumentRetriever(documents, json(config.rerankModel ?? config.model))
   : undefined;
 const engine = new ExecutionEngine(store.database);
-engine.backfillTerminal(store.tasks());
+engine.backfillTerminal(store.tasks(), (task) =>
+  workspace.legacyTaskOwner(task.id),
+);
 const plugins = new PluginService(store.database);
 const skillsDir = process.env.SKILLS_DIR ?? join(dirname(database), 'skills');
 const platform = new Platform(store, workspace, config, {

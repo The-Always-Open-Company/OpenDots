@@ -2316,6 +2316,18 @@ h3 {
   gap: 6px;
   align-items: center;
 }
+.tool-activity {
+  align-self: flex-start;
+  color: #7c8577;
+  font-size: 11px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 2px 4px;
+}
+.tool-activity.error {
+  color: #ab9189;
+}
 .chat-composer {
   border-top: 1px solid #ebece9;
   padding-top: 13px;

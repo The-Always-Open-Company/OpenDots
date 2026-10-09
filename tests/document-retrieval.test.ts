@@ -140,8 +140,9 @@ it('writes a document profile and per-passage context, batched by section', asyn
     .sort((a, b) => a[0] - b[0]);
   expect(batches).toEqual([[0, 1, 2, 3, 4, 5, 6, 7], [8, 9], [10]]);
   const first = calls.find((call) => call.kind === 'passages')!.request.user;
-  expect(first.startsWith('<title>Handbook</title>\n<summary>The staff handbook.'))
-    .toBe(true);
+  expect(
+    first.startsWith('<title>Handbook</title>\n<summary>The staff handbook.'),
+  ).toBe(true);
   expect(enriched[10]).toMatchObject({
     section: 'Policy > Expenses',
     context: 'Context for 10.',
@@ -176,13 +177,11 @@ it('keeps headings only for passages whose enrichment failed, and says so', asyn
     'text',
     chunks,
   );
-  expect(result.chunks.map((chunk) => [chunk.section, chunk.context])).toEqual(
-    [
-      ['A', 'About the intro.'],
-      ['B', ''],
-      ['B', ''],
-    ],
-  );
+  expect(result.chunks.map((chunk) => [chunk.section, chunk.context])).toEqual([
+    ['A', 'About the intro.'],
+    ['B', ''],
+    ['B', ''],
+  ]);
   expect(result.profile.summary).toBeNull();
   expect(result.profile.note).toMatch(
     /summary could not be written, and 2 of 3 passages kept their headings only.*reprocess/,
@@ -221,8 +220,9 @@ it('stops enriching when the conversion is cancelled', async () => {
 });
 
 it('asks the model for a JSON object with a token cap', async () => {
-  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
-    async (_input, init) => {
+  const fetch = vi
+    .spyOn(globalThis, 'fetch')
+    .mockImplementation(async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as { stream?: boolean };
       const content = '{"queries": ["a"]}';
       return body.stream
@@ -240,8 +240,7 @@ it('asks the model for a JSON object with a token cap', async () => {
               },
             ],
           });
-    },
-  );
+    });
   const complete = modelJson({
     apiKey: 'fixture',
     baseUrl: 'https://model.invalid/v1',
@@ -260,6 +259,7 @@ it('asks the model for a JSON object with a token cap', async () => {
     response_format: { type: 'json_object' },
   });
   expect(JSON.stringify(request.messages)).toContain('Plan.');
+  expect(JSON.stringify(request.messages)).toMatch(/json/i);
 });
 
 it('parses JSON wrapped in prose or code fences', () => {
@@ -379,7 +379,10 @@ it('rewrites a follow-up as a standalone question and expands it into several qu
   const plan = await retriever.plan(
     'and the second one?',
     [
-      { role: 'user', content: 'What is the notice period in the first contract?' },
+      {
+        role: 'user',
+        content: 'What is the notice period in the first contract?',
+      },
       { role: 'assistant', content: 'One month.' },
     ],
     [
@@ -405,7 +408,9 @@ it('rewrites a follow-up as a standalone question and expands it into several qu
     tags: ['contracts', 'notice'],
   });
   const prompt = calls[0].request.user;
-  expect(prompt).toContain('user: What is the notice period in the first contract?');
+  expect(prompt).toContain(
+    'user: What is the notice period in the first contract?',
+  );
   expect(prompt).toContain('"summary":"Two supplier contracts."');
   expect(prompt).toContain('<latest>\nand the second one?\n</latest>');
 });
@@ -545,8 +550,10 @@ it('reorders by model relevance, drops irrelevant passages and keeps fused order
 });
 
 it('caps results per document and section and skips neighbours and near-duplicates', () => {
-  const options: Pick<RetrievalOptions, 'limit' | 'perDocument' | 'perSection'> =
-    { limit: 4, perDocument: 2, perSection: 1 };
+  const options: Pick<
+    RetrievalOptions,
+    'limit' | 'perDocument' | 'perSection'
+  > = { limit: 4, perDocument: 2, perSection: 1 };
   const picked = diversify(
     [
       hit('a', 0, 'alpha', 'One'),
@@ -696,9 +703,11 @@ it('searches through the pipeline and opens related passages only when readable'
     new AbortController().signal,
   );
   const run = (name: string, args: object) =>
-    (tools.find((tool) => tool.name === name)!.execute as (
-      args: object,
-    ) => Promise<unknown>)(args);
+    (
+      tools.find((tool) => tool.name === name)!.execute as (
+        args: object,
+      ) => Promise<unknown>
+    )(args);
   const found = (await run('search_documents', { query: 'carry over' })) as {
     ref: string;
   }[];

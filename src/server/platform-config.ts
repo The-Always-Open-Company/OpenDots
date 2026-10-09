@@ -11,6 +11,20 @@ export function contextMaxTokensFromEnv(value: string | undefined): number {
   return tokens;
 }
 
+/** Unset, empty, `off`, or `0` means no limit. */
+export function maxAgentTurnsFromEnv(
+  value: string | undefined,
+): number | undefined {
+  const raw = value?.trim().toLowerCase();
+  if (!raw || raw === 'off' || raw === '0') return undefined;
+  const turns = Number(raw);
+  if (!Number.isInteger(turns) || turns < 2 || turns > 100)
+    throw new Error(
+      'MAX_AGENT_TURNS must be off, or an integer from 2 to 100.',
+    );
+  return turns;
+}
+
 export const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 export const DEFAULT_MAX_UPLOAD_MB = 50;
 
@@ -28,6 +42,8 @@ export interface PlatformConfig extends WebConfig {
   baseUrl: string;
   /** Estimated token budget for conversation history sent to the model. */
   contextMaxTokens?: number;
+  /** Model turns allowed per reply; unset means no limit. */
+  maxAgentTurns?: number;
   /** Model that summarizes older history; defaults to `model`. */
   summaryModel?: string;
   /** Postgres with pgvector, for learned memories and document search. */

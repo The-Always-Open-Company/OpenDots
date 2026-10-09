@@ -74,6 +74,13 @@ export interface WorkItemInput {
 
 type Row = Record<string, string | number | bigint | null>;
 
+/** The Dot, and the conversation when known, that a migrated legacy task belongs to. */
+export type LegacyOwner = (task: Task) => {
+  actorId: string;
+  threadId?: string;
+};
+const legacyFallback: LegacyOwner = () => ({ actorId: 'legacy' });
+
 export class ExecutionEngine {
   constructor(
     private db: DatabaseSync,
@@ -146,6 +153,18 @@ export class ExecutionEngine {
     add('inbound_events', 'nextAttemptAt', 'INTEGER');
     add('inbound_events', 'executionId', 'TEXT');
     add('work_items', 'closeRequested', 'INTEGER NOT NULL DEFAULT 0');
+    this.db.exec(`
+      UPDATE triggers SET enabled=0 WHERE enabled=1 AND workItemId IN
+        (SELECT id FROM work_items WHERE status IN ('cancelled','completed','failed'));
+    `);
+    if (this.flag('skipBacklogCleared') !== '1') {
+      this.db
+        .prepare(
+          "DELETE FROM execution_events WHERE type='trigger_skipped' AND json_extract(payloadJson,'$.reason')='objective not runnable'",
+        )
+        .run();
+      this.setFlag('skipBacklogCleared', '1');
+    }
   }
   private transaction<T>(fn: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
@@ -299,12 +318,15 @@ export class ExecutionEngine {
     const policy = this.policy(String(item.actorId));
     if (attempt > policy.maxExecutionsPerWorkItem) {
       const uncertain = this.uncertainCount(workItemId);
-      if (!uncertain)
+      if (
+        !uncertain &&
         this.db
           .prepare(
             "UPDATE work_items SET status='failed', updatedAt=? WHERE id=? AND status='open'",
           )
-          .run(this.now(), workItemId);
+          .run(this.now(), workItemId).changes
+      )
+        this.disableTriggers(workItemId);
       return null;
     }
     const id = randomUUID();
@@ -342,7 +364,7 @@ export class ExecutionEngine {
   private uncertainCount(workItemId: string) {
     const row = this.db
       .prepare(
-        "SELECT COUNT(*) AS n FROM tool_invocations WHERE workItemId=? AND status IN ('started','uncertain','failed')",
+        "SELECT COUNT(*) AS n FROM tool_invocations WHERE workItemId=? AND status IN ('started','uncertain')",
       )
       .get(workItemId) as { n: number };
     return row.n;
@@ -514,7 +536,7 @@ export class ExecutionEngine {
       const intent = execution.finishIntent
         ? String(execution.finishIntent)
         : null;
-      const unresolved = this.unresolved(String(item.id));
+      const unresolved = this.unresolved(String(item.id), executionId);
       if (intent === 'complete' && this.blockingOpen(String(item.id))) {
         this.db
           .prepare(
@@ -530,10 +552,15 @@ export class ExecutionEngine {
         this.db
           .prepare('UPDATE work_items SET status=?, updatedAt=? WHERE id=?')
           .run(status, now, item.id);
-        if (intent === 'complete') this.disableWake(String(item.id));
+        this.disableTriggers(String(item.id));
         this.maybeContinueParent(String(item.id));
         return true;
       }
+      // The per-item budget bounds retries of one run, not a schedule's lifetime.
+      if (Number(item.recurring) && !unresolved)
+        this.db
+          .prepare('UPDATE work_items SET attemptCount=0 WHERE id=?')
+          .run(item.id);
       if (
         Number(item.autoResume) &&
         outcome === 'completed' &&
@@ -546,12 +573,14 @@ export class ExecutionEngine {
       return true;
     });
   }
-  private unresolved(workItemId: string) {
+  /** A failed idempotent effect blocks only the attempt it failed in; a later clean attempt may finish. */
+  private unresolved(workItemId: string, executionId: string) {
     const invocations = this.db
       .prepare(
-        "SELECT COUNT(*) AS n FROM tool_invocations WHERE workItemId=? AND status IN ('started','uncertain','failed')",
+        `SELECT COUNT(*) AS n FROM tool_invocations WHERE workItemId=? AND
+         (status IN ('started','uncertain') OR (status='failed' AND executionId=?))`,
       )
-      .get(workItemId) as { n: number };
+      .get(workItemId, executionId) as { n: number };
     const actions = this.db
       .prepare(
         "SELECT COUNT(*) AS n FROM pending_actions WHERE workItemId=? AND status IN ('pending','approved','executing')",
@@ -617,10 +646,10 @@ export class ExecutionEngine {
       payload: { children },
     });
   }
-  private disableWake(workItemId: string) {
+  private disableTriggers(workItemId: string) {
     this.db
       .prepare(
-        "UPDATE triggers SET enabled=0, updatedAt=? WHERE workItemId=? AND kind='wake'",
+        'UPDATE triggers SET enabled=0, updatedAt=? WHERE workItemId=? AND enabled=1',
       )
       .run(this.now(), workItemId);
   }
@@ -732,14 +761,15 @@ export class ExecutionEngine {
     const item = this.workItem(String(current.workItemId));
     if (
       !item ||
-      ['paused', 'cancelled', 'completed', 'failed'].includes(
-        String(item.status),
-      )
+      ['cancelled', 'completed', 'failed'].includes(String(item.status))
     ) {
+      this.db
+        .prepare('UPDATE triggers SET enabled=0, updatedAt=? WHERE id=?')
+        .run(now, current.id);
       this.event('trigger_skipped', {
         triggerId: String(current.id),
         workItemId: String(current.workItemId),
-        payload: { reason: 'objective not runnable' },
+        payload: { reason: 'objective closed; trigger disabled' },
       });
       return null;
     }
@@ -753,6 +783,19 @@ export class ExecutionEngine {
             anchor === 'after_success' ? now : Number(current.nextRunAt),
             anchor,
           );
+    if (item.status === 'paused') {
+      this.db
+        .prepare(
+          'UPDATE triggers SET nextRunAt=?, enabled=?, updatedAt=? WHERE id=?',
+        )
+        .run(following, following == null ? 0 : 1, now, current.id);
+      this.event('trigger_skipped', {
+        triggerId: String(current.id),
+        workItemId: String(item.id),
+        payload: { reason: 'objective paused', nextRunAt: following },
+      });
+      return null;
+    }
     if (spec.kind === 'calendar' && spec.endAt != null && now > spec.endAt) {
       this.db
         .prepare('UPDATE triggers SET enabled=0, updatedAt=? WHERE id=?')
@@ -1023,7 +1066,8 @@ export class ExecutionEngine {
       }
       const row = this.db
         .prepare(
-          "SELECT * FROM pending_actions WHERE status='approved' ORDER BY createdAt LIMIT 1",
+          `SELECT * FROM pending_actions WHERE status='approved' AND (workItemId IS NULL OR workItemId NOT IN
+             (SELECT id FROM work_items WHERE status='paused')) ORDER BY createdAt LIMIT 1`,
         )
         .get() as Row | undefined;
       if (!row) return null;
@@ -1083,6 +1127,7 @@ export class ExecutionEngine {
           "UPDATE executions SET status='cancelled', finishedAt=? WHERE workItemId=? AND status='queued'",
         )
         .run(now, id);
+      if (changed.changes === 1) this.disableTriggers(id);
       return changed.changes === 1;
     });
   }
@@ -1497,7 +1542,7 @@ export class ExecutionEngine {
           .run('stored', attempts, this.now() + delays[attempts - 1], row.id);
     }
   }
-  backfillTerminal(tasks: Task[]) {
+  backfillTerminal(tasks: Task[], ownerOf: LegacyOwner = legacyFallback) {
     const terminal = new Set([
       'completed',
       'failed',
@@ -1513,6 +1558,7 @@ export class ExecutionEngine {
           .get(task.id)
       )
         continue;
+      // A legacy schedule is "completed" between runs; it is still a standing objective.
       const status =
         task.status === 'interrupted' || task.status === 'failed'
           ? 'open'
@@ -1520,14 +1566,19 @@ export class ExecutionEngine {
             ? 'paused'
             : task.status === 'cancelled'
               ? 'cancelled'
-              : 'completed';
+              : task.intervalSeconds
+                ? 'open'
+                : 'completed';
+      const owner = ownerOf(task);
       const item = this.createWorkItem({
-        actorId: 'legacy',
+        actorId: owner.actorId,
         title: task.prompt.slice(0, 160),
         objective: task.prompt,
         source: 'schedule',
         recurring: !!task.intervalSeconds,
         autoResume: false,
+        originThreadId: owner.threadId,
+        workThreadId: owner.threadId,
       });
       this.db
         .prepare('UPDATE work_items SET status=? WHERE id=?')
@@ -1535,7 +1586,7 @@ export class ExecutionEngine {
       if (task.intervalSeconds)
         this.addTrigger({
           workItemId: String(item.id),
-          actorId: 'legacy',
+          actorId: owner.actorId,
           kind: 'schedule',
           spec: { kind: 'interval', seconds: task.intervalSeconds },
           anchor: 'after_success',
@@ -1556,15 +1607,15 @@ export class ExecutionEngine {
    * then moves queued tasks and recurring schedules onto this engine.
    */
   beginCutover(
-    tasks: Task[],
     interruptRunning: (task: Task) => void,
     waitUntil: (deadline: number) => Task[],
+    ownerOf: LegacyOwner = legacyFallback,
   ) {
     this.setFlag('legacyRecurringStopped', '1');
     const deadline = this.now() + LEASE_MS;
-    let running = tasks.filter((task) => task.status === 'running');
-    const still = waitUntil(deadline);
-    running = still.filter((task) => task.status === 'running');
+    const running = waitUntil(deadline).filter(
+      (task) => task.status === 'running',
+    );
     for (const task of running) interruptRunning(task);
     const remaining = waitUntil(this.now()).filter(
       (task) => task.status === 'queued' || task.intervalSeconds,
@@ -1576,22 +1627,25 @@ export class ExecutionEngine {
           .get(task.id)
       )
         continue;
+      const owner = ownerOf(task);
       const item = this.createWorkItem({
-        actorId: 'legacy',
+        actorId: owner.actorId,
         title: task.prompt.slice(0, 160),
         objective: task.prompt,
         source: 'schedule',
         recurring: !!task.intervalSeconds,
         autoResume: false,
+        originThreadId: owner.threadId,
+        workThreadId: owner.threadId,
       });
-      if (task.status === 'paused')
+      if (task.status === 'paused' || task.status === 'cancelled')
         this.db
-          .prepare("UPDATE work_items SET status='paused' WHERE id=?")
-          .run(item.id);
+          .prepare('UPDATE work_items SET status=? WHERE id=?')
+          .run(task.status, item.id);
       if (task.intervalSeconds)
         this.addTrigger({
           workItemId: String(item.id),
-          actorId: 'legacy',
+          actorId: owner.actorId,
           kind: 'schedule',
           spec: { kind: 'interval', seconds: task.intervalSeconds },
           anchor: 'after_success',
@@ -1606,7 +1660,8 @@ export class ExecutionEngine {
     }
     this.db
       .prepare(
-        'UPDATE triggers SET enabled=1 WHERE legacyTaskId IS NOT NULL AND enabled=0 AND anchor=?',
+        `UPDATE triggers SET enabled=1 WHERE legacyTaskId IS NOT NULL AND enabled=0 AND anchor=?
+         AND workItemId IN (SELECT id FROM work_items WHERE status NOT IN ('cancelled','completed','failed'))`,
       )
       .run('after_success');
     this.setFlag('cutover', '1');

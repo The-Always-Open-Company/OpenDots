@@ -225,6 +225,7 @@ export function capabilityPrompt(input: {
   dot: Dot;
   latestUser: string;
   skillsDir: string;
+  inWork?: boolean;
 }) {
   const policy = input.engine.policy(input.dot.id);
   const skills = loadSkills(input.skillsDir).filter((skill) =>
@@ -276,6 +277,9 @@ export function capabilityPrompt(input: {
     denied.length
       ? `${denied.map((name) => '@' + name).join(', ')} is not enabled for you.`
       : '',
+    input.inWork
+      ? 'This run has about 90 seconds. End it with a written summary of what you found, and call complete_work or fail_work when the objective is settled.'
+      : 'A chat reply has about 90 seconds. When a request needs broad research, many pages, or several checks, tell the owner the plan in a sentence and call start_objective instead of doing it all in this reply. Always end a reply with an answer, even a partial one.',
     `Wake window: at least ${Math.round(policy.minWakeIntervalMs / 60_000)} minutes and at most ${Math.round(policy.maxWakeHorizonMs / 86_400_000)} days. An earlier wake is rejected.`,
     'If a tool returns status pending, that action is stored for the owner. Do not call it again. A pending result from an earlier turn is not still waiting when a later message says the owner already approved it.',
     'To retry an effect that already started, pass its operationId. A new call without that id is a new operation.',
@@ -350,7 +354,7 @@ export function workTools(deps: WorkDeps): ToolDefinition[] {
     defineTool({
       name: 'start_objective',
       description:
-        'Start an objective the owner asked for. It runs on its own work thread.',
+        'Start an objective the owner asked for. It runs on its own work thread, can take several attempts, and reports back when done. Use it for research or tasks that need many steps.',
       parameters: z.object({
         title: z.string().trim().min(1).max(160),
         objective: z.string().trim().min(1).max(4000),

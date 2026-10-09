@@ -36,7 +36,7 @@ export function parseSkill(
 }
 
 export function loadSkills(dir: string): SkillDoc[] {
-  let entries: string[] = [];
+  let entries: string[];
   try {
     entries = readdirSync(dir);
   } catch {
@@ -58,9 +58,7 @@ export function loadSkills(dir: string): SkillDoc[] {
         const nested = readdirSync(join(folder, 'scripts')).filter((file) =>
           SCRIPT.test(file),
         );
-        parsed.scripts.push(
-          ...nested.map((file) => `scripts/${file}`),
-        );
+        parsed.scripts.push(...nested.map((file) => `scripts/${file}`));
       } catch {
         // A skill does not have to include scripts.
       }

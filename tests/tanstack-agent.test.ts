@@ -13,7 +13,7 @@ afterEach(() => {
   databases.splice(0).forEach((db) => db.close());
 });
 
-function fixture() {
+function fixture(maxAgentTurns?: number) {
   const store = new Store(':memory:');
   const workspace = new WorkspaceStore(':memory:', 'owner');
   databases.push(store, workspace);
@@ -28,6 +28,7 @@ function fixture() {
       baseUrl: 'https://unused.invalid/v1',
       voiceName: 'marin',
       slackUsers: [],
+      maxAgentTurns,
     },
     dot.id,
   );
@@ -56,14 +57,14 @@ function fixture() {
   return { store, workspace, dot, agent, input };
 }
 
-function createPageCall(args: Record<string, unknown>) {
+function createPageCall(args: Record<string, unknown>, id = 'create-page') {
   return completion(
     {
       role: 'assistant',
       tool_calls: [
         {
           index: 0,
-          id: 'create-page',
+          id,
           type: 'function',
           function: {
             name: 'create_space_page',
@@ -132,6 +133,52 @@ it('executes a page tool, continues with its result, and emits AG-UI text and to
         tool_call_id: 'create-page',
         content: expect.stringContaining('Notes'),
       }),
+    ]),
+  );
+});
+
+it('keeps calling tools past five turns when no turn limit is set', async () => {
+  const f = fixture();
+  const network = vi.spyOn(globalThis, 'fetch');
+  for (let turn = 0; turn < 6; turn++)
+    network.mockResolvedValueOnce(
+      createPageCall({ title: 123 }, `invalid-${turn}`),
+    );
+  network.mockResolvedValueOnce(
+    completion({ role: 'assistant', content: 'Here is what I found.' }),
+  );
+  const events = await lastValueFrom(f.agent.run(f.input).pipe(toArray()));
+  expect(network).toHaveBeenCalledTimes(7);
+  expect(events).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ delta: 'Here is what I found.' }),
+    ]),
+  );
+});
+
+it('makes the last allowed turn answer without tools when a turn limit is set', async () => {
+  const f = fixture(3);
+  const network = vi
+    .spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(createPageCall({ title: 123 }, 'invalid-0'))
+    .mockResolvedValueOnce(createPageCall({ title: 123 }, 'invalid-1'))
+    .mockResolvedValueOnce(
+      completion({ role: 'assistant', content: 'Answer from what I found.' }),
+    );
+  const events = await lastValueFrom(f.agent.run(f.input).pipe(toArray()));
+  expect(network).toHaveBeenCalledTimes(3);
+  const requests = network.mock.calls.map((call) =>
+    JSON.parse(String(call[1]?.body)),
+  );
+  expect(requests[0].tool_choice).toBeUndefined();
+  expect(requests[1].tool_choice).toBeUndefined();
+  expect(requests[2].tool_choice).toBe('none');
+  expect(JSON.stringify(requests[2].messages)).toContain(
+    'You have used every tool step for this reply.',
+  );
+  expect(events).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ delta: 'Answer from what I found.' }),
     ]),
   );
 });

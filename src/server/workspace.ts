@@ -336,6 +336,19 @@ export class WorkspaceStore {
       .get(taskId);
     return typeof row?.threadId === 'string' ? row.threadId : undefined;
   }
+  /** The Dot and conversation a legacy task ran in; the first Dot when it had none. */
+  legacyTaskOwner(taskId: string): { actorId: string; threadId?: string } {
+    const row = this.db
+      .prepare(
+        `SELECT b.id AS threadId, b.dotId FROM task_threads t
+         JOIN thread_bindings b ON b.id=t.threadId AND b.ownerId=?
+         WHERE t.taskId=?`,
+      )
+      .get(this.ownerId, taskId) as
+      { threadId: string; dotId: string } | undefined;
+    if (row) return { actorId: row.dotId, threadId: row.threadId };
+    return { actorId: this.dots()[0]?.id ?? 'legacy' };
+  }
   calls(threadId?: string): CallReceipt[] {
     if (threadId) this.requireThread(threadId);
     return this.db

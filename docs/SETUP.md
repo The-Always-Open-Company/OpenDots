@@ -41,6 +41,10 @@ Each model call is kept within an estimated token budget, `CONTEXT_MAX_TOKENS` (
 
 Summaries use `SUMMARY_MODEL`, which defaults to `OPENAI_MODEL`. Stored history is never rewritten; compaction affects only what is sent to the model.
 
+### Turn limit
+
+A reply can take several model turns: each turn may call tools, and the next turn reads their results. `MAX_AGENT_TURNS` caps those turns per reply. It is off by default, so a reply continues until the model answers or the 90-second reply time limit is reached. When a limit is set, the last allowed turn cannot call tools and must answer from what was already found.
+
 ### Connection settings
 
 Edit `.env` on the server and restart after changes:
@@ -51,6 +55,7 @@ Edit `.env` on the server and restart after changes:
 | `OPENAI_BASE_URL`                | Compatible model API endpoint                                      |
 | `CONTEXT_MAX_TOKENS`             | Estimated token budget for history sent to the model               |
 | `SUMMARY_MODEL`                  | Model for summaries of older turns; defaults to the model          |
+| `MAX_AGENT_TURNS`                | Model turns per reply, 2–100; unset or `off` means no limit        |
 | `OWNER_ID`                       | Stable identity used for this deployment's conversations           |
 | `DATABASE_PATH`                  | SQLite file containing conversations, pages, and metadata          |
 | `OWNER_TOKEN`                    | Application access token; required for external bindings           |

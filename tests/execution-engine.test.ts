@@ -42,7 +42,7 @@ const ctx = (cause: ExecutionContext['cause']): ExecutionContext => ({
 });
 
 describe('execution engine', () => {
-  it('allows twenty attempts on a recurring objective and fails the next one', () => {
+  it('allows twenty failed attempts on a recurring objective and fails the next one', () => {
     const { engine } = open();
     expect(engine.policy('dot').maxExecutionsPerWorkItem).toBe(20);
     const item = engine.createWorkItem({
@@ -53,15 +53,47 @@ describe('execution engine', () => {
       recurring: true,
       autoResume: false,
     });
+    const triggerId = engine.addTrigger({
+      workItemId: String(item.id),
+      actorId: 'dot',
+      kind: 'schedule',
+      spec: { kind: 'interval', seconds: 3600 },
+      nextRunAt: 2_000_000,
+      enabled: true,
+    });
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const id = engine.enqueueExecution(String(item.id));
       expect(id).toBeTruthy();
       expect(engine.claimExecution()?.id).toBe(id);
-      engine.finishExecution(String(id), 'completed');
+      engine.finishExecution(String(id), 'failed', 'Model error.');
       expect(engine.workItem(String(item.id))?.status).toBe('open');
     }
     expect(engine.enqueueExecution(String(item.id))).toBeNull();
     expect(engine.workItem(String(item.id))?.status).toBe('failed');
+    expect(Number(engine.trigger(triggerId)?.enabled)).toBe(0);
+  });
+
+  it('keeps a recurring schedule running past the attempt cap when its runs succeed', () => {
+    const { engine } = open();
+    engine.savePolicy('dot', { maxExecutionsPerWorkItem: 5 });
+    const item = engine.createWorkItem({
+      actorId: 'dot',
+      title: 'Hello',
+      objective: 'Say hello',
+      source: 'schedule',
+      recurring: true,
+      autoResume: false,
+    });
+    for (let run = 0; run < 10; run += 1) {
+      const id = engine.enqueueExecution(String(item.id));
+      expect(id).toBeTruthy();
+      engine.claimExecution();
+      engine.finishExecution(String(id), 'completed');
+    }
+    expect(engine.workItem(String(item.id))).toMatchObject({
+      status: 'open',
+      attemptCount: 0,
+    });
   });
 
   it('keeps a saved attempt cap below the default', () => {
@@ -78,7 +110,7 @@ describe('execution engine', () => {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const id = engine.enqueueExecution(String(item.id))!;
       engine.claimExecution();
-      engine.finishExecution(id, 'completed');
+      engine.finishExecution(id, 'failed', 'Model error.');
     }
     expect(engine.enqueueExecution(String(item.id))).toBeNull();
     expect(engine.workItem(String(item.id))?.status).toBe('failed');
@@ -437,7 +469,6 @@ describe('execution engine', () => {
     const engine = new ExecutionEngine(store.database, () => Date.now());
     engine.backfillTerminal([]);
     engine.beginCutover(
-      store.tasks(),
       (task) =>
         store.interrupt(
           { ...task, lease: task.lease ?? '' },
@@ -481,6 +512,168 @@ describe('execution engine', () => {
     expect(engine.resumeWork(String(item.id))).toBe(true);
     expect(engine.workItem(String(item.id))?.status).toBe('open');
     expect(Number(engine.trigger(triggerId)?.enabled)).toBe(1);
+  });
+
+  it('moves a paused trigger to its next run instead of skipping on every tick', () => {
+    const { engine, db, setTime } = open();
+    const item = engine.createWorkItem({
+      actorId: 'dot',
+      title: 'Digest',
+      objective: 'Send it',
+      source: 'schedule',
+      recurring: true,
+    });
+    const triggerId = engine.addTrigger({
+      workItemId: String(item.id),
+      actorId: 'dot',
+      kind: 'schedule',
+      spec: { kind: 'interval', seconds: 60 },
+      nextRunAt: 1_000_000,
+      enabled: true,
+    });
+    engine.pauseWork(String(item.id));
+    for (let tick = 0; tick < 5; tick += 1) {
+      setTime(1_000_000 + tick * 1000);
+      engine.fireDueTriggers();
+    }
+    expect(Number(engine.trigger(triggerId)?.nextRunAt)).toBe(1_060_000);
+    const skips = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM execution_events WHERE type='trigger_skipped'",
+      )
+      .get() as { n: number };
+    expect(skips.n).toBe(1);
+  });
+
+  it('disables the triggers of a cancelled objective', () => {
+    const { engine, db, setTime } = open();
+    const item = engine.createWorkItem({
+      actorId: 'dot',
+      title: 'Uplifting message',
+      objective: 'Send one',
+      source: 'schedule',
+      recurring: true,
+    });
+    const triggerId = engine.addTrigger({
+      workItemId: String(item.id),
+      actorId: 'dot',
+      kind: 'schedule',
+      spec: { kind: 'interval', seconds: 60 },
+      nextRunAt: 1_000_000,
+      enabled: true,
+    });
+    expect(engine.cancelWork(String(item.id))).toBe(true);
+    expect(Number(engine.trigger(triggerId)?.enabled)).toBe(0);
+
+    db.prepare('UPDATE triggers SET enabled=1 WHERE id=?').run(triggerId);
+    for (let tick = 0; tick < 5; tick += 1) {
+      setTime(1_000_000 + tick * 1000);
+      engine.fireDueTriggers();
+    }
+    expect(Number(engine.trigger(triggerId)?.enabled)).toBe(0);
+    const skips = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM execution_events WHERE type='trigger_skipped'",
+      )
+      .get() as { n: number };
+    expect(skips.n).toBe(1);
+  });
+
+  it('repairs stuck triggers and clears the old skip backlog on startup', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'opendots-engine-'));
+    const db = new DatabaseSync(join(dir, 'test.sqlite'));
+    resources.push({ close: () => db.close(), dir });
+    const engine = new ExecutionEngine(db, () => 1_000_000);
+    const item = engine.createWorkItem({
+      actorId: 'dot',
+      title: 'Old',
+      objective: 'Old',
+      source: 'schedule',
+      recurring: true,
+    });
+    const triggerId = engine.addTrigger({
+      workItemId: String(item.id),
+      actorId: 'dot',
+      kind: 'schedule',
+      spec: { kind: 'interval', seconds: 60 },
+      nextRunAt: 1_000_000,
+      enabled: true,
+    });
+    db.prepare("UPDATE work_items SET status='cancelled' WHERE id=?").run(
+      item.id,
+    );
+    db.prepare("DELETE FROM engine_meta WHERE key='skipBacklogCleared'").run();
+    for (let row = 0; row < 3; row += 1)
+      engine.event('trigger_skipped', {
+        triggerId,
+        workItemId: String(item.id),
+        payload: { reason: 'objective not runnable' },
+      });
+    new ExecutionEngine(db, () => 1_000_000);
+    expect(Number(engine.trigger(triggerId)?.enabled)).toBe(0);
+    const skips = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM execution_events WHERE type='trigger_skipped'",
+      )
+      .get() as { n: number };
+    expect(skips.n).toBe(0);
+  });
+
+  it('lets a later clean attempt complete after an idempotent effect failed', () => {
+    const { engine } = open();
+    const item = engine.createWorkItem({
+      actorId: 'dot',
+      title: 'Brief',
+      objective: 'Write it',
+      source: 'owner',
+    });
+    const first = engine.enqueueExecution(String(item.id))!;
+    engine.claimExecution();
+    const begun = engine.beginEffect(
+      String(item.id),
+      first,
+      'create_space_page',
+      { title: 'Brief' },
+      true,
+    );
+    engine.completeEffect(
+      String(item.id),
+      'create_space_page',
+      begun.operationId,
+      'failed',
+      { error: 'Title taken.' },
+    );
+    engine.setFinishIntent(first, 'complete');
+    engine.finishExecution(first, 'completed');
+    expect(engine.workItem(String(item.id))?.status).toBe('open');
+    const second = engine.enqueueExecution(String(item.id))!;
+    engine.claimExecution();
+    engine.setFinishIntent(second, 'complete');
+    engine.finishExecution(second, 'completed');
+    expect(engine.workItem(String(item.id))?.status).toBe('completed');
+  });
+
+  it('holds an approved action while its objective is paused', () => {
+    const { engine } = open();
+    const item = engine.createWorkItem({
+      actorId: 'dot',
+      title: 'Profile',
+      objective: 'Rename',
+      source: 'owner',
+    });
+    const action = engine.proposeAction({
+      executionId: null,
+      workItemId: String(item.id),
+      actorId: 'dot',
+      threadId: 'thread',
+      toolName: 'apply_profile',
+      arguments: { name: 'Bella' },
+    });
+    engine.pauseWork(String(item.id));
+    engine.approveAction(action.pendingActionId, true);
+    expect(engine.claimApprovedAction()).toBeNull();
+    engine.resumeWork(String(item.id));
+    expect(engine.claimApprovedAction()?.id).toBe(action.pendingActionId);
   });
 });
 

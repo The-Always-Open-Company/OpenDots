@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { approvalDenied } from './approved-actions.js';
 import type { ExecutionEngine } from './execution-engine.js';
 import type { Platform } from './platform.js';
 import type { PluginService } from './plugins.js';
@@ -42,7 +43,8 @@ export function capabilityRoutes(
       })
       .strict()
       .safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: 'Enter a title and an objective.' }, 400);
+    if (!parsed.success)
+      return c.json({ error: 'Enter a title and an objective.' }, 400);
     if (platform && !platform.workspace.dot(parsed.data.dotId))
       return c.json({ error: 'Dot not found.' }, 404);
     const item = engine.createWorkItem({
@@ -57,14 +59,17 @@ export function capabilityRoutes(
   });
   app.get('/api/work/:id', (c) => {
     const detail = engine.detail(c.req.param('id'));
-    return detail ? c.json(detail) : c.json({ error: 'Objective not found.' }, 404);
+    return detail
+      ? c.json(detail)
+      : c.json({ error: 'Objective not found.' }, 404);
   });
   app.post('/api/work/:id/actions', async (c) => {
     const parsed = z
       .object({ action: z.enum(['pause', 'resume', 'cancel']) })
       .strict()
       .safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: 'Unknown objective action.' }, 400);
+    if (!parsed.success)
+      return c.json({ error: 'Unknown objective action.' }, 400);
     const id = c.req.param('id');
     const ok =
       parsed.data.action === 'pause'
@@ -78,12 +83,24 @@ export function capabilityRoutes(
       : c.json({ error: 'Objective not found.' }, 404);
   });
   app.post('/api/actions/:id/approve', (c) => {
-    const action = engine.approveAction(c.req.param('id'), true);
+    const id = c.req.param('id');
+    const proposed = engine.action(id);
+    const denied =
+      platform && proposed?.status === 'pending'
+        ? approvalDenied(
+            { engine, workspace: platform.workspace, store, plugins },
+            proposed,
+          )
+        : null;
+    const action = engine.approveAction(id, !denied, denied ?? undefined);
     if (!action) return c.json({ error: 'Action not found.' }, 404);
     return c.json({ status: action.status, actionId: action.id });
   });
   app.post('/api/actions/:id/decline', (c) => {
-    const action = engine.declineAction(c.req.param('id'), 'Declined by the owner.');
+    const action = engine.declineAction(
+      c.req.param('id'),
+      'Declined by the owner.',
+    );
     if (!action) return c.json({ error: 'Action not found.' }, 404);
     return c.json({ status: action.status, actionId: action.id });
   });
@@ -102,7 +119,6 @@ export function capabilityRoutes(
     )
       await new Promise((resolve) => setTimeout(resolve, 200));
     engine.beginCutover(
-      store.tasks(),
       (task) => {
         if (task.lease)
           store.interrupt(
@@ -112,6 +128,8 @@ export function capabilityRoutes(
         runner.abort(task.id);
       },
       () => store.tasks(),
+      (task) =>
+        platform?.workspace.legacyTaskOwner(task.id) ?? { actorId: 'legacy' },
     );
     return c.json({ cutover: engine.cutover });
   });
@@ -140,7 +158,8 @@ export function capabilityRoutes(
       .object({ name: z.string().trim().min(1).max(64) })
       .strict()
       .safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: 'Name a skill to enable.' }, 400);
+    if (!parsed.success)
+      return c.json({ error: 'Name a skill to enable.' }, 400);
     if (!loadSkills(skillsDir).some((skill) => skill.name === parsed.data.name))
       return c.json({ error: 'Skill not found.' }, 404);
     engine.grantSkill(c.req.param('id'), parsed.data.name);
@@ -169,7 +188,10 @@ export function capabilityRoutes(
       return c.json(engine.savePolicy(c.req.param('id'), parsed.data));
     } catch (error) {
       return c.json(
-        { error: error instanceof Error ? error.message : 'Invalid wake policy.' },
+        {
+          error:
+            error instanceof Error ? error.message : 'Invalid wake policy.',
+        },
         400,
       );
     }
@@ -199,7 +221,10 @@ export function capabilityRoutes(
       return c.json(await plugins.refresh(c.req.param('id'), false));
     } catch (error) {
       return c.json(
-        { error: error instanceof Error ? error.message : 'Plugin refresh failed.' },
+        {
+          error:
+            error instanceof Error ? error.message : 'Plugin refresh failed.',
+        },
         400,
       );
     }
@@ -209,7 +234,12 @@ export function capabilityRoutes(
       return c.json(await plugins.refresh(c.req.param('id'), true));
     } catch (error) {
       return c.json(
-        { error: error instanceof Error ? error.message : 'Plugin schema was not accepted.' },
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : 'Plugin schema was not accepted.',
+        },
         400,
       );
     }
@@ -234,7 +264,10 @@ export function capabilityRoutes(
       return c.json({ ok: true });
     } catch (error) {
       return c.json(
-        { error: error instanceof Error ? error.message : 'Invalid plugin grant.' },
+        {
+          error:
+            error instanceof Error ? error.message : 'Invalid plugin grant.',
+        },
         400,
       );
     }
@@ -255,7 +288,10 @@ export function capabilityRoutes(
       })
       .strict()
       .safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success || (platform && !platform.workspace.dot(parsed.data.dotId)))
+    if (
+      !parsed.success ||
+      (platform && !platform.workspace.dot(parsed.data.dotId))
+    )
       return c.json({ error: 'Invalid watch.' }, 400);
     const data = parsed.data;
     if (data.watchKind === 'internal' && !data.event)
@@ -269,7 +305,10 @@ export function capabilityRoutes(
       source: 'watch',
       autoResume: true,
     });
-    const secret = data.watchKind === 'webhook' ? randomBytes(24).toString('hex') : undefined;
+    const secret =
+      data.watchKind === 'webhook'
+        ? randomBytes(24).toString('hex')
+        : undefined;
     const spec =
       data.watchKind === 'webhook'
         ? { watchKind: 'webhook', secretHash: hookSecretHash(secret!) }
@@ -289,7 +328,9 @@ export function capabilityRoutes(
       spec,
       enabled: true,
       nextRunAt:
-        data.watchKind === 'poll' ? Date.now() + (data.intervalMs ?? 300_000) : null,
+        data.watchKind === 'poll'
+          ? Date.now() + (data.intervalMs ?? 300_000)
+          : null,
     });
     return c.json(
       {
@@ -310,7 +351,9 @@ export function capabilityRoutes(
     const trigger = engine.trigger(c.req.param('id'));
     if (!trigger || trigger.kind !== 'watch')
       return c.json({ error: 'Watch not found.' }, 404);
-    const spec = JSON.parse(String(trigger.specJson)) as { secretHash?: string };
+    const spec = JSON.parse(String(trigger.specJson)) as {
+      secretHash?: string;
+    };
     const provided =
       c.req.header('x-opendots-token') ?? c.req.header('x-hook-secret') ?? '';
     if (!spec.secretHash || !secretsMatch(spec.secretHash, provided))
@@ -326,14 +369,16 @@ export function capabilityRoutes(
   });
   app.post('/api/inbound/:id/replay', (c) => {
     const saved = engine.replayInbound(c.req.param('id'));
-    return saved
-      ? c.json(saved)
-      : c.json({ error: 'Event not found.' }, 404);
+    return saved ? c.json(saved) : c.json({ error: 'Event not found.' }, 404);
   });
-  return { scheduleSpec, parseOwnerSchedule(input: unknown) {
-    const spec = parseSchedule(input);
-    const nextRunAt = initialRunAt(spec, Date.now());
-    if (nextRunAt == null) throw new Error('That schedule has no upcoming run.');
-    return { spec, nextRunAt };
-  } };
+  return {
+    scheduleSpec,
+    parseOwnerSchedule(input: unknown) {
+      const spec = parseSchedule(input);
+      const nextRunAt = initialRunAt(spec, Date.now());
+      if (nextRunAt == null)
+        throw new Error('That schedule has no upcoming run.');
+      return { spec, nextRunAt };
+    },
+  };
 }

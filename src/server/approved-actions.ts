@@ -5,7 +5,7 @@ import { assertWake, parseSchedule } from './schedule-time.js';
 import type { Store } from './store.js';
 import type { WorkspaceStore } from './workspace.js';
 import { snapshotFor } from './work-tools.js';
-import type { ExecutionContext } from './authorize.js';
+import { decide, type ExecutionContext } from './authorize.js';
 
 const MASCOTS = ['blue', 'mint', 'orange', 'purple'];
 
@@ -13,6 +13,43 @@ type ActionRow = Record<string, unknown>;
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : 'Approved action failed.';
+}
+
+/**
+ * Why the owner's approval cannot stand now, such as a revoked permission.
+ * A pause is not a reason: the approved action waits until work resumes.
+ */
+export function approvalDenied(
+  deps: {
+    engine: ExecutionEngine;
+    workspace: WorkspaceStore;
+    store: Store;
+    plugins: PluginService;
+  },
+  action: ActionRow,
+): string | null {
+  const dot = deps.workspace.dot(String(action.actorId));
+  if (!dot) return 'Dot not found.';
+  const workItemId = action.workItemId ? String(action.workItemId) : undefined;
+  const decision = decide(
+    {
+      actorId: dot.id,
+      ownerId: deps.workspace.ownerId,
+      workItemId,
+      executionId: action.executionId ? String(action.executionId) : '',
+      threadId: String(action.threadId),
+      mode: 'background',
+      cause: 'approved_action',
+    },
+    String(action.toolName),
+    JSON.parse(String(action.argumentsJson)) as Record<string, unknown>,
+    {
+      ...snapshotFor(deps, dot, false, workItemId),
+      paused: false,
+      rules: deps.engine.rules(),
+    },
+  );
+  return decision.effect === 'block' ? decision.reason : null;
 }
 
 export async function applyApprovedAction(
@@ -27,7 +64,10 @@ export async function applyApprovedAction(
 ) {
   const id = String(action.id);
   const toolName = String(action.toolName);
-  const args = JSON.parse(String(action.argumentsJson)) as Record<string, unknown>;
+  const args = JSON.parse(String(action.argumentsJson)) as Record<
+    string,
+    unknown
+  >;
   const dot = deps.workspace.dot(String(action.actorId));
   if (!dot) {
     deps.engine.completeApprovedAction(id, 'declined', {
@@ -53,7 +93,9 @@ export async function applyApprovedAction(
       snapshotFor(deps, dot, false, workItemId),
     );
   } catch (error) {
-    deps.engine.completeApprovedAction(id, 'declined', { error: message(error) });
+    deps.engine.completeApprovedAction(id, 'declined', {
+      error: message(error),
+    });
     return;
   }
   const operationId = String(action.operationId ?? '');
@@ -65,7 +107,10 @@ export async function applyApprovedAction(
     toolName === 'remember' ||
     toolName === 'update_note' ||
     deps.plugins.idempotent(toolName);
-  const finish = (status: 'executed' | 'uncertain' | 'declined', result: unknown) => {
+  const finish = (
+    status: 'executed' | 'uncertain' | 'declined',
+    result: unknown,
+  ) => {
     const schedule =
       toolName === 'arm_trigger' ||
       toolName === 'apply_profile' ||
@@ -76,7 +121,16 @@ export async function applyApprovedAction(
     });
   };
   try {
-    const result = await run(deps, dot.id, toolName, args, operationId, workItemId, ctx.executionId || null, idempotent);
+    const result = await run(
+      deps,
+      dot.id,
+      toolName,
+      args,
+      operationId,
+      workItemId,
+      ctx.executionId || null,
+      idempotent,
+    );
     finish('executed', result);
   } catch (error) {
     finish('uncertain', { error: message(error) });
@@ -99,10 +153,14 @@ async function run(
   idempotent: boolean,
 ) {
   const perform = async () => {
-    if (toolName === 'arm_trigger') return arm(deps.engine, actorId, args, operationId);
-    if (toolName === 'update_schedule') return updateSchedule(deps, actorId, args);
-    if (toolName === 'cancel_schedule') return cancelSchedule(deps, actorId, args);
-    if (toolName === 'apply_profile') return applyProfile(deps.workspace, actorId, args);
+    if (toolName === 'arm_trigger')
+      return arm(deps.engine, actorId, args, operationId);
+    if (toolName === 'update_schedule')
+      return updateSchedule(deps, actorId, args);
+    if (toolName === 'cancel_schedule')
+      return cancelSchedule(deps, actorId, args);
+    if (toolName === 'apply_profile')
+      return applyProfile(deps.workspace, actorId, args);
     if (toolName === 'create_space_page')
       return createPage(deps.workspace, actorId, args, operationId);
     if (toolName === 'edit_space_page')
@@ -131,8 +189,7 @@ async function run(
       return { deleted: true };
     }
     const plugin = toolName.match(/^plugin_([a-z][a-z0-9-]*)_(.+)$/);
-    if (plugin)
-      return deps.plugins.call(actorId, plugin[1], plugin[2], args);
+    if (plugin) return deps.plugins.call(actorId, plugin[1], plugin[2], args);
     throw new Error(`No worker is registered for ${toolName}.`);
   };
   if (!workItemId) return perform();
@@ -178,7 +235,8 @@ function arm(
   const spec = parseSchedule(args.spec);
   const nextRunAt = Number(args.nextRunAt);
   if (!Number.isFinite(nextRunAt)) throw new Error('Schedule time is invalid.');
-  if (args.kind === 'wake') assertWake(engine.policy(actorId), nextRunAt, Date.now());
+  if (args.kind === 'wake')
+    assertWake(engine.policy(actorId), nextRunAt, Date.now());
   const workItemId = String(args.workItemId);
   const triggerId = engine.addTrigger({
     workItemId,
@@ -206,7 +264,11 @@ function updateSchedule(
   args: Record<string, unknown>,
 ) {
   const trigger = deps.engine.trigger(String(args.triggerId));
-  if (!trigger || !Number(trigger.dotCanManage) || String(trigger.actorId) !== actorId)
+  if (
+    !trigger ||
+    !Number(trigger.dotCanManage) ||
+    String(trigger.actorId) !== actorId
+  )
     throw new Error('This schedule is managed by the owner.');
   const spec = parseSchedule(args.spec);
   deps.engine.updateTrigger(String(trigger.id), {
@@ -222,7 +284,11 @@ function cancelSchedule(
   args: Record<string, unknown>,
 ) {
   const trigger = deps.engine.trigger(String(args.triggerId));
-  if (!trigger || !Number(trigger.dotCanManage) || String(trigger.actorId) !== actorId)
+  if (
+    !trigger ||
+    !Number(trigger.dotCanManage) ||
+    String(trigger.actorId) !== actorId
+  )
     throw new Error('This schedule is managed by the owner.');
   deps.engine.updateTrigger(String(trigger.id), { enabled: false });
   return { triggerId: trigger.id, enabled: false };
