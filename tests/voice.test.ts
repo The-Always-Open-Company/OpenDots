@@ -49,6 +49,7 @@ function fixture() {
         browser: false,
         memory: false,
         documents: false,
+        actionItems: false,
         slack: 'not_configured',
         missing: [],
       }),

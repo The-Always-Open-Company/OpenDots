@@ -84,13 +84,18 @@ export function actionItemRoutes(app: Hono, service: ActionItemService) {
       return failure(c, error);
     }
   });
-  app.get('/api/action-items/review', (c) =>
-    c.json(
-      service.review(owner(), {
-        markReminded: c.req.query('markReminded') === 'true',
-      }),
-    ),
-  );
+  app.get('/api/action-items/review', (c) => {
+    try {
+      const zone = timeZone.parse(c.req.query('timezone'));
+      return c.json(
+        service.review(owner(zone), {
+          markReminded: c.req.query('markReminded') === 'true',
+        }),
+      );
+    } catch (error) {
+      return failure(c, error);
+    }
+  });
   app.get('/api/action-items/:id', (c) => {
     const item = service.detail(c.req.param('id'));
     return item

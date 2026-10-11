@@ -171,7 +171,7 @@ export const searchInput = z.object({
   labels: z.array(z.string().trim().min(1).max(40)).max(5).optional(),
   dueBefore: when.optional(),
   dueAfter: when.optional(),
-  limit: z.number().int().min(1).max(50).optional(),
+  limit: z.number().int().min(1).max(200).optional(),
 });
 export type SearchInput = z.input<typeof searchInput>;
 

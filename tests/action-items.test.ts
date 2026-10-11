@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { z } from 'zod';
 import { Runner } from '../src/server/runner.js';
 import { createApp } from '../src/server/app.js';
 import {
@@ -485,6 +486,10 @@ describe('action item tools', () => {
       items: { owner: string; due: string | null }[];
     };
     expect(found.items[0]).toMatchObject({ owner: 'you', due: null });
+    const parameters = (search as unknown as { parameters: z.ZodType })
+      .parameters;
+    expect(parameters.safeParse({ limit: 50 }).success).toBe(true);
+    expect(parameters.safeParse({ limit: 51 }).success).toBe(false);
   });
 });
 
@@ -529,6 +534,8 @@ describe('action item API', () => {
     expect((await app.request('/api/action-items?status=bogus')).status).toBe(
       400,
     );
+    expect((await app.request('/api/action-items?limit=200')).status).toBe(200);
+    expect((await app.request('/api/action-items?limit=201')).status).toBe(400);
 
     expect(
       (await send(`/api/action-items/${id}`, 'PATCH', { status: 'done' }))
@@ -556,13 +563,16 @@ describe('action item API', () => {
     expect(done.items).toHaveLength(1);
 
     const review = (await (
-      await app.request('/api/action-items/review')
+      await app.request('/api/action-items/review?timezone=America/Chicago')
     ).json()) as {
       owedToYouOverdue: { statement: string }[];
     };
     expect(review.owedToYouOverdue.map((item) => item.statement)).toEqual([
       owedByPersonJ.statement,
     ]);
+    expect(
+      (await app.request('/api/action-items/review?timezone=Mars/Base')).status,
+    ).toBe(400);
 
     const entities = (await (
       await app.request('/api/entities?kind=organization')

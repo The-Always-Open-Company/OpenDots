@@ -101,6 +101,7 @@ export function setupStatus(
     voice: !!(config.voiceKey && config.voiceModel && !missing.length),
     memory: !!(config.databaseUrl && !missing.length),
     documents: !!(config.databaseUrl && config.doclingUrl && !missing.length),
+    actionItems: !!(config.databaseUrl && config.apiKey && !missing.length),
     slack,
     missing,
   };

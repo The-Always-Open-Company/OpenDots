@@ -152,7 +152,9 @@ export function actionItemTools(
       name: 'search_action_items',
       description:
         "Find the owner's action items by meaning and keywords within filters: entities they concern, who owes them, who asked, status, labels and due dates. Open and waiting items are searched unless statuses are given.",
-      parameters: searchInput,
+      parameters: searchInput.extend({
+        limit: z.number().int().min(1).max(50).optional(),
+      }),
       execute: async (input) => {
         deps.check();
         const found = await service.search(input, actor, deps.signal);

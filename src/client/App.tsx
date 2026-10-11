@@ -10,6 +10,7 @@ import {
   Clock3,
   Folder,
   Library,
+  ListChecks,
   Menu,
   MessageCircle,
   Monitor,
@@ -53,6 +54,7 @@ import { LearnedMemories } from './LearnedMemories';
 import { SkillLibrary } from './SkillLibrary';
 import { DocumentLibrary } from './DocumentLibrary';
 import { DocumentDetail } from './DocumentDetail';
+import { ActionItems, useActionItemBadge } from './ActionItems';
 import {
   notifyFinishedAttempt,
   requestActivityNotifications,
@@ -74,7 +76,13 @@ export function App() {
   const [selectedDot, setSelectedDot] = useState('');
   const [selectedThread, setSelectedThread] = useState<string>();
   const [view, rawSetView] = useState<
-    'chat' | 'tasks' | 'memories' | 'space' | 'documents' | 'skills'
+    | 'chat'
+    | 'tasks'
+    | 'memories'
+    | 'space'
+    | 'documents'
+    | 'skills'
+    | 'actionItems'
   >('chat');
   const dirtyPage = useRef(false);
   const [spaceId, setSpaceId] = useState('');
@@ -259,6 +267,14 @@ export function App() {
     (item) => item.id === selectedThread && item.dotId === dot?.id,
   );
   const configured = !!workspace && workspace.setup.missing.length === 0;
+  const actionItemBadge = useActionItemBadge(!!workspace?.setup.actionItems);
+  const openThread = (id: string) => {
+    const target = workspace?.conversations.find((t) => t.id === id);
+    if (!target) return setError('That conversation no longer exists.');
+    setView('chat');
+    setSelectedDot(target.dotId);
+    setSelectedThread(id);
+  };
   const chooseDot = (next: Dot) => {
     setSelectedDot(next.id);
     setSelectedThread(
@@ -440,6 +456,20 @@ export function App() {
               className={`rail-badge ${unseenRuns ? 'nav-attention' : ''}`}
             >
               {activityCount > 99 ? '99+' : activityCount}
+            </small>
+          )}
+        </button>
+        <button
+          className={view === 'actionItems' ? 'active' : ''}
+          aria-label={`Open action items${actionItemBadge.count ? `, ${actionItemBadge.count} overdue or due soon` : ''}`}
+          aria-current={view === 'actionItems' ? 'page' : undefined}
+          title="Action items"
+          onClick={() => railView('actionItems')}
+        >
+          <ListChecks size={18} />
+          {actionItemBadge.count > 0 && (
+            <small className="rail-badge">
+              {actionItemBadge.count > 99 ? '99+' : actionItemBadge.count}
             </small>
           )}
         </button>
@@ -633,7 +663,9 @@ export function App() {
                       ? 'Documents'
                       : view === 'skills'
                         ? 'Skills'
-                        : 'Memories'}
+                        : view === 'actionItems'
+                          ? 'Action items'
+                          : 'Memories'}
             </strong>
           </div>
           <div className="top-actions">
@@ -708,6 +740,14 @@ export function App() {
           />
         ) : view === 'skills' ? (
           <SkillLibrary dots={workspace.dots} />
+        ) : view === 'actionItems' ? (
+          <ActionItems
+            workspace={workspace}
+            onOpenDocument={(id) => openPageLink(`#/documents/${id}`)}
+            onOpenPage={openPage}
+            onOpenThread={openThread}
+            onChanged={() => void actionItemBadge.refresh()}
+          />
         ) : view === 'documents' ? (
           documentId ? (
             <DocumentDetail

@@ -134,7 +134,9 @@ Back up `DOCUMENTS_DIR` together with the SQLite database. The Postgres data can
 
 ### Action items
 
-Dots keep a list of things to follow up on: what you need to do, and what others owe you. Action items need `DATABASE_URL` and `OPENAI_API_KEY`; without them the tools and API are not available. There is no screen for them yet.
+Dots keep a list of things to follow up on: what you need to do, and what others owe you. Action items need `DATABASE_URL` and `OPENAI_API_KEY`; without them the tools, API and screen are not available.
+
+Open **Action items** on the icon rail to see them. Its badge counts your items that are overdue or due within three days. The list is grouped into overdue, due soon, upcoming, no due date, waiting, and owed to you; turn on **Show completed** to include done and dropped items. Type in the search box to rank items by meaning instead, and filter by who owes it, status, person or organization, label and due dates. Clicking a person, organization or label on an item filters by it. Select an item to see its context, the people involved and their roles, the quoted source with a link back to the document, page or conversation, and its history. From there you can mark it done, waiting or dropped, reopen it, change its priority, due date or reminder date, add a note, or delete it. Dates you pick are read in your browser's timezone.
 
 When a Dot reads something with commitments in it (meeting notes, an email thread, a document, or your own message), it files them with `create_action_items` and tells you what it filed. Each item keeps:
 

@@ -250,6 +250,8 @@ export interface SetupStatus {
   memory: boolean;
   /** Document library: needs DATABASE_URL and DOCLING_URL. */
   documents: boolean;
+  /** Action items: needs DATABASE_URL and OPENAI_API_KEY for embeddings. */
+  actionItems: boolean;
   slack: string;
   missing: string[];
 }
