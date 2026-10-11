@@ -1,11 +1,13 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { EventType, type RunAgentInput } from '@ag-ui/core';
 import { lastValueFrom, toArray } from 'rxjs';
-import { DotAgent } from '../src/server/dot-agent.js';
+import { DotAgent, type DotServices } from '../src/server/dot-agent.js';
+import { NotificationService } from '../src/server/notifications.js';
 import { completion } from './fixtures/model-stream.js';
 import { Store } from '../src/server/store.js';
 import { WorkspaceStore } from '../src/server/workspace.js';
 import { pageReviewTool } from '../src/shared/page-review.js';
+import type { ModelApi } from '../src/server/platform-config.js';
 
 const databases: Array<{ close(): void }> = [];
 afterEach(() => {
@@ -13,7 +15,11 @@ afterEach(() => {
   databases.splice(0).forEach((db) => db.close());
 });
 
-function fixture(maxAgentTurns?: number) {
+function fixture(
+  maxAgentTurns?: number,
+  modelApi?: ModelApi,
+  services: DotServices = {},
+) {
   const store = new Store(':memory:');
   const workspace = new WorkspaceStore(':memory:', 'owner');
   databases.push(store, workspace);
@@ -29,8 +35,11 @@ function fixture(maxAgentTurns?: number) {
       voiceName: 'marin',
       slackUsers: [],
       maxAgentTurns,
+      modelApi,
     },
     dot.id,
+    false,
+    services,
   );
   const input: RunAgentInput = {
     threadId: 'thread',
@@ -316,6 +325,46 @@ it('tells the model the current time so scheduled runs do not invent one', async
   } finally {
     vi.useRealTimers();
   }
+});
+
+it('notifies the owner when an interactive reply finishes', async () => {
+  const database = new Store(':memory:');
+  databases.push(database);
+  const notifications = new NotificationService(database.database);
+  const f = fixture(undefined, undefined, { notifications });
+  vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+    completion({ role: 'assistant', content: 'Here is the summary.' }),
+  );
+  await lastValueFrom(f.agent.run(f.input).pipe(toArray()));
+  expect(notifications.list({ unread: true })).toEqual([
+    expect.objectContaining({
+      kind: 'reply',
+      dotId: f.dot.id,
+      title: `${f.dot.name} replied`,
+      body: 'Here is the summary.',
+      threadId: 'thread',
+    }),
+  ]);
+});
+
+it('calls the Responses API with room for reasoning when configured', async () => {
+  const f = fixture(undefined, 'responses');
+  const network = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    new Response(JSON.stringify({ error: { message: 'stop here' } }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  );
+  await lastValueFrom(f.agent.run(f.input).pipe(toArray())).catch(
+    () => undefined,
+  );
+  expect(String(network.mock.calls[0][0])).toBe(
+    'https://unused.invalid/v1/responses',
+  );
+  const request = JSON.parse(String(network.mock.calls[0][1]?.body));
+  expect(request.model).toBe('custom-model');
+  expect(request.max_output_tokens).toBe(8000);
+  expect(request.max_completion_tokens).toBeUndefined();
 });
 
 it('reports a turn that hits the time limit as a RUN_ERROR instead of ending silently', async () => {

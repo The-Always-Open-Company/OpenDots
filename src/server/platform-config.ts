@@ -25,6 +25,16 @@ export function maxAgentTurnsFromEnv(
   return turns;
 }
 
+export type ModelApi = 'chat-completions' | 'responses';
+
+/** Unset means chat completions, which every OpenAI-compatible endpoint speaks. */
+export function modelApiFromEnv(value: string | undefined): ModelApi {
+  const raw = value?.trim().toLowerCase();
+  if (!raw || raw === 'chat-completions') return 'chat-completions';
+  if (raw === 'responses') return 'responses';
+  throw new Error('OPENAI_API must be chat-completions or responses.');
+}
+
 export const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 export const DEFAULT_MAX_UPLOAD_MB = 50;
 
@@ -40,6 +50,8 @@ export interface PlatformConfig extends WebConfig {
   model?: string;
   apiKey?: string;
   baseUrl: string;
+  /** API the conversation model is called through; defaults to chat completions. */
+  modelApi?: ModelApi;
   /** Estimated token budget for conversation history sent to the model. */
   contextMaxTokens?: number;
   /** Model turns allowed per reply; unset means no limit. */

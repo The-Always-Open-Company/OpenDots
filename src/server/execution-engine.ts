@@ -82,6 +82,16 @@ export type LegacyOwner = (task: Task) => {
 const legacyFallback: LegacyOwner = () => ({ actorId: 'legacy' });
 
 export class ExecutionEngine {
+  /** Called after each event is recorded, possibly inside a transaction. */
+  onEvent?: (
+    type: string,
+    fields: {
+      executionId?: string | null;
+      workItemId?: string | null;
+      actorId?: string | null;
+      payload?: unknown;
+    },
+  ) => void;
   constructor(
     private db: DatabaseSync,
     private now: () => number = Date.now,
@@ -245,6 +255,7 @@ export class ExecutionEngine {
         JSON.stringify(fields.payload ?? {}),
         this.now(),
       );
+    this.onEvent?.(type, fields);
   }
   workItem(id: string) {
     return this.db.prepare('SELECT * FROM work_items WHERE id=?').get(id) as

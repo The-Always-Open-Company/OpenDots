@@ -102,7 +102,7 @@ export function pageTools(access: ReturnType<typeof pageAccess>) {
     defineTool({
       name: 'create_space_page',
       description:
-        'Create a Markdown page in this Space when the user requests a document.',
+        'Create a Markdown page in this Space when the user requests a document, or when a write-up (such as a meeting summary) is worth keeping.',
       parameters: pageInput.extend({ ...scope, ...operationId }),
       execute: async ({ spaceId, operationId: _operationId, ...input }) =>
         access.create(input, spaceId),

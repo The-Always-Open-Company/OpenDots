@@ -240,7 +240,7 @@ export function actionItemTools(
     defineTool({
       name: 'merge_entities',
       description:
-        'Merge two entities that name the same organization, person, project or topic. Only after the owner has confirmed they are the same.',
+        'Merge two entities that name the same organization, person, project or topic. Use it when they are clearly the same (for example a nickname or a short form of the same name in the same context) or the owner has said so.',
       parameters: z.object({
         fromEntityId: z.string().describe('The entity that goes away.'),
         intoEntityId: z.string().describe('The entity that stays.'),
@@ -263,7 +263,7 @@ export const ACTION_ITEM_PROMPT = [
   'For each item: write the statement so it makes sense on its own months later; put the situation in context (which company, topic, meeting or document, and why it matters); tag organizations, people, projects and topics with a role (owner is someone else who must do it; requester is who asked; about is everything else). When the person you work for must do it, give it no owner and never tag them as an entity, even when the notes use their name; quote the source line; set a due date only when one is stated or clearly implied.',
   'Then tell the owner briefly what you filed, what matched existing items, and what you were unsure about.',
   'When a result is possible_duplicate, add what is new to the existing item with add_action_item_note; refile with force only if it is really a different item.',
-  'When a result lists possibleEntityMatches, ask the owner whether those are the same before calling merge_entities.',
-  'Use search_action_items before answering what the owner has to do or is owed, and update_action_item when the owner says something is done or changed.',
+  'When a result lists possibleEntityMatches, merge them with merge_entities when they are clearly the same, and ask the owner only when you are unsure.',
+  'Use search_action_items before answering what the owner has to do or is owed, and update_action_item without asking whenever the owner or new content shows something is done, dropped, waiting or changed.',
   'If the owner wants reminders or follow-ups, propose a schedule whose objective is to call review_action_items and report what is overdue, due soon, due for a reminder, or owed to the owner.',
 ].join(' ');

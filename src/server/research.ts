@@ -142,8 +142,7 @@ export async function research(
       signal,
       body: JSON.stringify({
         model: config.model,
-        temperature: 0.3,
-        max_tokens: 1800,
+        max_completion_tokens: 1800,
         messages: [
           {
             role: 'system',

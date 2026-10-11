@@ -15,6 +15,7 @@ import {
   DEFAULT_EMBEDDING_MODEL,
   maxAgentTurnsFromEnv,
   maxUploadBytesFromEnv,
+  modelApiFromEnv,
   type PlatformConfig,
 } from './platform-config.js';
 import { dirname, join } from 'node:path';
@@ -35,6 +36,8 @@ import { deliverInternal } from './watches.js';
 import { ActionItemStore } from './action-item-store.js';
 import { PgActionItemIndex } from './action-item-index.js';
 import { ActionItemService } from './action-items.js';
+import { NotificationService, notifyWork } from './notifications.js';
+import { HandoffService } from './handoffs.js';
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 4310);
 const ownerToken = process.env.OWNER_TOKEN;
@@ -57,6 +60,7 @@ const config: PlatformConfig = {
   apiKey: process.env.OPENAI_API_KEY,
   model: process.env.OPENAI_MODEL,
   baseUrl: process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
+  modelApi: modelApiFromEnv(process.env.OPENAI_API),
   contextMaxTokens: contextMaxTokensFromEnv(process.env.CONTEXT_MAX_TOKENS),
   maxAgentTurns: maxAgentTurnsFromEnv(process.env.MAX_AGENT_TURNS),
   summaryModel: process.env.SUMMARY_MODEL || undefined,
@@ -149,6 +153,8 @@ const actionItems =
         json(config.rerankModel ?? config.model),
       )
     : undefined;
+const notifications = new NotificationService(store.database);
+notifyWork(engine, workspace, notifications);
 const platform = new Platform(store, workspace, config, {
   memory,
   documents,
@@ -157,6 +163,7 @@ const platform = new Platform(store, workspace, config, {
   plugins,
   skillsDir,
   actionItems,
+  notifications,
 });
 workspace.pages.onUpdated = (page) =>
   deliverInternal(engine, workspace, 'page.updated', {
@@ -165,8 +172,26 @@ workspace.pages.onUpdated = (page) =>
     revision: page.revision,
     updatedAt: page.updatedAt,
   });
-workspace.documents.onReady = (id) =>
+const handoffs = new HandoffService(
+  store.database,
+  engine,
+  workspace,
+  notifications,
+);
+const settleHandoffs = (id?: string) => {
+  try {
+    handoffs.sweep(id);
+  } catch {
+    console.error('Could not start a document sent to a Dot.');
+  }
+};
+workspace.documents.onReady = (id) => {
   deliverInternal(engine, workspace, 'document.ready', { id, documentId: id });
+  settleHandoffs(id);
+};
+workspace.documents.onFailed = (id) => settleHandoffs(id);
+const handoffSweep = setInterval(() => settleHandoffs(), 5 * 60_000);
+handoffSweep.unref();
 const researchConfig = {
   mode: 'live' as const,
   apiKey: config.apiKey,
@@ -253,6 +278,8 @@ const app = createApp({
   plugins,
   skillsDir,
   actionItems,
+  notifications,
+  handoffs,
 });
 app.use('*', async (c, next) => {
   c.header('X-Content-Type-Options', 'nosniff');
@@ -270,6 +297,7 @@ const server = serve({ fetch: app.fetch, hostname: host, port }, (info) => {
   console.log(`OpenDots template listening on http://${host}:${info.port}`);
   runner.start();
   ingestor?.start();
+  settleHandoffs();
   void platform.start();
   void actionItems
     ?.reindexStale(500)

@@ -61,19 +61,3 @@ export function requestActivityNotifications() {
   if (Notification.permission !== 'default') return;
   void Notification.requestPermission().catch(() => undefined);
 }
-
-export function notifyFinishedAttempt(input: {
-  title: string;
-  body: string;
-  tag: string;
-  visibleHere: boolean;
-}) {
-  if (input.visibleHere) return;
-  if (typeof Notification === 'undefined') return;
-  if (Notification.permission !== 'granted') return;
-  try {
-    new Notification(input.title, { body: input.body, tag: input.tag });
-  } catch {
-    // Notification can throw outside a secure context. The badge still updates.
-  }
-}

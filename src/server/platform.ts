@@ -20,6 +20,7 @@ import type { DocumentRetriever } from './document-retrieval.js';
 import type { ExecutionEngine } from './execution-engine.js';
 import type { PluginService } from './plugins.js';
 import type { ActionItemService } from './action-items.js';
+import type { NotificationService } from './notifications.js';
 
 export const CONSULTATION_TIME_LIMIT_MS = 45_000;
 
@@ -31,6 +32,7 @@ export interface PlatformServices {
   plugins?: PluginService;
   skillsDir?: string;
   actionItems?: ActionItemService;
+  notifications?: NotificationService;
 }
 
 export class Platform {

@@ -20,6 +20,8 @@ import {
   formatSize,
   type AccessMode,
 } from './DocumentUploadDialog';
+import { SendToDot } from './SendToDot';
+import { documentReaders } from './send-to-dot';
 
 const PREVIEW_CHARS = 20_000;
 const REASONS: Record<DocumentAccessReason, string> = {
@@ -180,7 +182,10 @@ export function DocumentDetail({
         {(document.summary ||
           document.tags.length > 0 ||
           document.entities.length > 0) && (
-          <section className="document-profile" aria-label="About this document">
+          <section
+            className="document-profile"
+            aria-label="About this document"
+          >
             {document.summary && <p>{document.summary}</p>}
             {document.tags.length > 0 && (
               <div className="document-tags">
@@ -203,6 +208,15 @@ export function DocumentDetail({
           <p className="muted">{document.enrichmentNote}</p>
         )}
         <div className="document-actions">
+          {workspace.setup.documents &&
+            (document.status !== 'failed' ||
+              document.indexedVersion != null) && (
+              <SendToDot
+                dots={documentReaders(workspace.dots, document.readers)}
+                target={{ kind: 'document', documentId: document.id }}
+                emptyHint="No Dot can read this document yet. Change its access first."
+              />
+            )}
           <button
             disabled={busy || !workspace.setup.documents}
             onClick={() =>

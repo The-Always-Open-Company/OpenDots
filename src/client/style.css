@@ -4589,3 +4589,234 @@ h3 {
   font-size: 14px;
   color: #c9e8dd;
 }
+
+/* Notifications */
+.notification-toasts {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(360px, calc(100vw - 40px));
+}
+.notification-toast {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 12px 10px 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 10px 30px #20263424;
+  animation: notification-in 180ms ease-out;
+}
+.notification-toast.work_failed,
+.notification-toast.handoff_failed {
+  border-color: #ebcfc5;
+}
+.notification-toast.approval_needed {
+  border-color: #ead9b8;
+}
+.notification-toast .mascot.small,
+.notification-item .mascot.small {
+  width: 30px;
+  height: 30px;
+}
+.notification-toast strong {
+  display: block;
+  font-size: 13px;
+  color: var(--ink);
+}
+.notification-toast p {
+  margin: 4px 0 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #555;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.notification-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: #3e6b58;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.notification-link:hover:not(:disabled) {
+  color: #24362c;
+}
+.notification-link:disabled {
+  text-decoration: none;
+  color: var(--muted);
+}
+.notification-panel {
+  position: fixed;
+  left: 56px;
+  bottom: 16px;
+  z-index: 55;
+  width: min(380px, calc(100vw - 72px));
+  max-height: min(560px, calc(100vh - 32px));
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 36px #20263424;
+}
+.notification-panel header {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+.notification-panel h2 {
+  margin: 0;
+  font-size: 14px;
+}
+.notification-panel ul {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+}
+.notification-empty {
+  padding: 14px;
+  margin: 0;
+  font-size: 12px;
+}
+.notification-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  text-align: left;
+}
+.notification-item:hover {
+  background: #f5f5f5;
+}
+.notification-item span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.notification-item strong {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #555;
+}
+.notification-item.unread strong {
+  font-weight: 650;
+  color: var(--ink);
+}
+.notification-item small {
+  font-size: 12px;
+  color: #666;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notification-item time {
+  font-size: 11px;
+  color: var(--muted);
+}
+.send-to-dot {
+  position: relative;
+  display: inline-flex;
+}
+.send-to-dot-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.document-topbar .send-to-dot-button {
+  border: 1px solid #e3e5e0;
+  background: #fff;
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: #4b5348;
+}
+.send-to-dot-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  width: 290px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 30px #20263420;
+  text-align: left;
+}
+.document-actions .send-to-dot-popover {
+  left: 0;
+  right: auto;
+}
+.send-to-dot-popover p {
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.send-to-dot-popover select,
+.send-to-dot-popover textarea {
+  width: 100%;
+  font-size: 12px;
+}
+.send-to-dot-popover .primary {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.send-to-dot-sent {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  width: max-content;
+  max-width: 280px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #24362c;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.document-actions .send-to-dot-sent {
+  left: 0;
+  right: auto;
+}
+@keyframes notification-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .notification-toast {
+    animation: none;
+  }
+}

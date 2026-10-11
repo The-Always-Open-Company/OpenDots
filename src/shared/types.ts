@@ -202,6 +202,31 @@ export interface State {
   work?: WorkView[];
   actions?: PendingAction[];
   rules?: { id: string; text: string; mode: string; toolNames: string[] }[];
+  /** Unread, newest first. */
+  notifications?: AppNotification[];
+}
+export type NotificationKind =
+  | 'work_finished'
+  | 'work_failed'
+  | 'approval_needed'
+  | 'reply'
+  | 'handoff_failed';
+export type HandoffTarget =
+  | { kind: 'document'; documentId: string }
+  | { kind: 'page'; spaceId: string; pageId: string };
+export type HandoffResult =
+  | { status: 'started'; workItemId: string }
+  | { status: 'waiting'; handoffId: string };
+export interface AppNotification {
+  id: string;
+  kind: NotificationKind;
+  dotId: string | null;
+  title: string;
+  body: string;
+  threadId: string | null;
+  workItemId: string | null;
+  createdAt: number;
+  readAt: number | null;
 }
 export type Action = 'run' | 'pause' | 'cancel';
 export interface Space {

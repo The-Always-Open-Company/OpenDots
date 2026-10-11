@@ -95,6 +95,7 @@ const MAX_ATTEMPTS = 3;
  */
 export class Documents {
   onReady?: (id: string) => void;
+  onFailed?: (id: string) => void;
   constructor(
     private db: DatabaseSync,
     private exists: {
@@ -546,14 +547,16 @@ export class Documents {
     return ready;
   }
   fail(claim: DocumentClaim, error: string) {
-    this.transaction(() => {
-      if (!this.owns(claim)) return;
+    const failed = this.transaction(() => {
+      if (!this.owns(claim)) return false;
       this.db
         .prepare(
           "UPDATE documents SET status='failed', error=?, lease=NULL, leaseUntil=NULL, updatedAt=? WHERE id=?",
         )
         .run(error.slice(0, 500), Date.now(), claim.id);
+      return true;
     });
+    if (failed) this.onFailed?.(claim.id);
   }
   /** Requeues work that was running when the server stopped. */
   release(claim: DocumentClaim) {

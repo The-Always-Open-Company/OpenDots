@@ -6,6 +6,7 @@ import { CopilotKitProvider } from '@copilotkit/react-core/v2';
 import {
   ArrowUp,
   ArrowUpRight,
+  Bell,
   BookOpen,
   Clock3,
   Folder,
@@ -26,6 +27,7 @@ import {
   X,
 } from 'lucide-react';
 import type {
+  AppNotification,
   Conversation,
   Detail,
   WorkView,
@@ -56,11 +58,15 @@ import { DocumentLibrary } from './DocumentLibrary';
 import { DocumentDetail } from './DocumentDetail';
 import { ActionItems, useActionItemBadge } from './ActionItems';
 import {
-  notifyFinishedAttempt,
   requestActivityNotifications,
   takeNewFinishes,
-  attemptHeadline,
 } from './activity-notice';
+import { NotificationPanel, NotificationToasts } from './Notifications';
+import {
+  systemNotify,
+  takeNewNotifications,
+  watchedThread,
+} from './notification-feed';
 
 function describeFailure(error: unknown, fallback: string) {
   return {
@@ -196,21 +202,49 @@ export function App() {
     if (!state) return;
     const result = takeNewFinishes(seenExecutions.current, state.work ?? []);
     seenExecutions.current = result.seen;
+    if (result.fresh.length && view !== 'tasks')
+      setUnseenRuns((count) => count + result.fresh.length);
+  }, [state, view]);
+  const seenNotifications = useRef<Set<string> | null>(null);
+  const markedRead = useRef(new Set<string>());
+  const [toasts, setToasts] = useState<AppNotification[]>([]);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const markRead = useCallback((id: string) => {
+    if (markedRead.current.has(id)) return;
+    markedRead.current.add(id);
+    void api(`/notifications/${id}/read`, 'POST', {}).catch(() =>
+      markedRead.current.delete(id),
+    );
+  }, []);
+  const openNotificationRef = useRef<(item: AppNotification) => void>(
+    () => undefined,
+  );
+  const dropToast = useCallback(
+    (item: AppNotification) =>
+      setToasts((current) => current.filter((toast) => toast.id !== item.id)),
+    [],
+  );
+  const closeNotifications = useCallback(() => setNotificationsOpen(false), []);
+  useEffect(() => {
+    if (!state?.notifications) return;
+    const result = takeNewNotifications(
+      seenNotifications.current,
+      state.notifications,
+      watchedThread({
+        view,
+        selectedThread,
+        pageVisible: document.visibilityState === 'visible',
+      }),
+    );
+    seenNotifications.current = result.seen;
+    for (const item of result.silent) markRead(item.id);
     if (!result.fresh.length) return;
-    if (view !== 'tasks') setUnseenRuns((count) => count + result.fresh.length);
-    const pageVisible = document.visibilityState === 'visible';
-    for (const attempt of result.fresh) {
-      const headline = attemptHeadline(attempt);
-      notifyFinishedAttempt({
-        ...headline,
-        tag: attempt.id,
-        visibleHere:
-          pageVisible &&
-          (view === 'tasks' ||
-            (view === 'chat' && selectedThread === attempt.threadId)),
-      });
-    }
-  }, [state, view, selectedThread]);
+    setToasts((current) =>
+      [...result.fresh].reverse().concat(current).slice(0, 4),
+    );
+    for (const item of result.fresh)
+      systemNotify(item, () => openNotificationRef.current(item));
+  }, [state, view, selectedThread, markRead]);
   useEffect(() => {
     if (view === 'tasks') setUnseenRuns(0);
   }, [view]);
@@ -275,6 +309,23 @@ export function App() {
     setSelectedDot(target.dotId);
     setSelectedThread(id);
   };
+  const openNotification = (item: AppNotification) => {
+    markRead(item.id);
+    dropToast(item);
+    setNotificationsOpen(false);
+    setMobile(false);
+    if (
+      item.threadId &&
+      workspace?.conversations.some((t) => t.id === item.threadId)
+    )
+      return openThread(item.threadId);
+    setView('tasks');
+    if (item.workItemId)
+      void api<WorkView>(`/work/${item.workItemId}`)
+        .then(setWorkDetail)
+        .catch((e) => setError(e.message));
+  };
+  openNotificationRef.current = openNotification;
   const chooseDot = (next: Dot) => {
     setSelectedDot(next.id);
     setSelectedThread(
@@ -386,6 +437,7 @@ export function App() {
     unseenRuns +
       (state.actions ?? []).filter((action) => action.status === 'pending')
         .length || state.tasks.length + (state.work?.length ?? 0);
+  const unreadNotifications = state.notifications?.length ?? 0;
   const railView = (next: typeof view) => {
     setView(next);
     setMobile(false);
@@ -490,6 +542,23 @@ export function App() {
           onClick={() => railView('skills')}
         >
           <WandSparkles size={18} />
+        </button>
+        <button
+          className={`rail-notifications ${notificationsOpen ? 'active' : ''}`}
+          aria-label={`Notifications${unreadNotifications ? `, ${unreadNotifications} unread` : ''}`}
+          aria-expanded={notificationsOpen}
+          title="Notifications"
+          onClick={() => {
+            requestActivityNotifications();
+            setNotificationsOpen((open) => !open);
+          }}
+        >
+          <Bell size={18} />
+          {unreadNotifications > 0 && (
+            <small className="rail-badge nav-attention">
+              {unreadNotifications >= 20 ? '20+' : unreadNotifications}
+            </small>
+          )}
         </button>
         <button
           className="rail-settings"
@@ -1159,6 +1228,27 @@ export function App() {
           </div>
         )}
       </div>
+      {notificationsOpen && (
+        <NotificationPanel
+          dots={workspace.dots}
+          unreadCount={unreadNotifications}
+          onOpen={openNotification}
+          onReadAll={() =>
+            api('/notifications/read-all', 'POST', {}).then(refresh)
+          }
+          onClose={closeNotifications}
+        />
+      )}
+      <NotificationToasts
+        toasts={toasts}
+        dots={workspace.dots}
+        onOpen={openNotification}
+        onDismiss={(item) => {
+          markRead(item.id);
+          dropToast(item);
+        }}
+        onExpire={dropToast}
+      />
       {dialog && (
         <WorkspaceDialog
           dialog={dialog}

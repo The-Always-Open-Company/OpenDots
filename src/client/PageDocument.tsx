@@ -20,6 +20,7 @@ import { usePageAutosave } from './editor/use-page-autosave';
 import { inspectMarkdown } from './editor/markdown';
 import { DocumentMenu } from './editor/DocumentMenu';
 import { PageConversation } from './PageConversation';
+import { SendToDot } from './SendToDot';
 const RichEditor = lazy(() => import('./editor/RichEditor'));
 export function PageDocument({
   page,
@@ -171,6 +172,16 @@ export function PageDocument({
             ) : null}
             {status}
           </span>
+          {!workspace.setup.missing.length && (
+            <SendToDot
+              dots={workspace.dots.filter((dot) =>
+                dot.spaceIds.includes(page.spaceId),
+              )}
+              target={{ kind: 'page', spaceId: page.spaceId, pageId: page.id }}
+              beforeSend={beforeChat}
+              emptyHint="No Dot works in this Space yet. Add one in Settings."
+            />
+          )}
           <DocumentMenu
             items={[
               {

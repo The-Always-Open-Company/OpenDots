@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Upload, X } from 'lucide-react';
 import type { DocumentDetail, WorkspaceState } from '../shared/types';
 import { upload } from './api';
+import { accessFor, dotCanRead, sendToDot } from './send-to-dot';
 
 export const DOCUMENT_ACCEPT =
   '.pdf,.docx,.pptx,.xlsx,.html,.htm,.md,.txt,.csv,.png,.jpg,.jpeg';
@@ -106,9 +107,19 @@ export function DocumentUploadDialog({
   const [mode, setMode] = useState<AccessMode>(spaceId ? 'none' : 'all');
   const [dotIds, setDotIds] = useState<string[]>([]);
   const [spaceIds, setSpaceIds] = useState<string[]>(spaceId ? [spaceId] : []);
+  const [sendTo, setSendTo] = useState('');
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const container = useRef<HTMLElement>(null);
+  const recipient = workspace.dots.find((dot) => dot.id === sendTo);
+  const access = accessFor(sendTo || undefined, workspace.dots, {
+    mode,
+    dotIds,
+    spaceIds,
+  });
+  const addsAccess =
+    !!recipient && !dotCanRead(recipient, { mode, dotIds, spaceIds });
   useEffect(() => {
     container.current?.querySelector<HTMLElement>('input,button')?.focus();
     const key = (event: KeyboardEvent) => {
@@ -121,30 +132,43 @@ export function DocumentUploadDialog({
     setBusy(true);
     setError('');
     const done: DocumentDetail[] = [];
+    let uploadError = '';
     try {
       for (const file of files)
         done.push(
           await upload<DocumentDetail>('/documents', file, {
-            access: mode,
-            dotIds: mode === 'dots' ? dotIds : undefined,
+            access: access.mode,
+            dotIds: access.mode === 'dots' ? access.dotIds : undefined,
             spaceIds,
             title: files.length === 1 ? title.trim() || undefined : undefined,
           }),
         );
-      onUploaded(done);
-      onClose();
     } catch (e) {
       const failed = files[done.length]?.name ?? 'file';
-      setError(
-        `${failed}: ${e instanceof Error ? e.message : 'Upload failed.'}`,
-      );
-      if (done.length) {
-        setFiles(files.slice(done.length));
-        onUploaded(done);
-      }
-    } finally {
-      setBusy(false);
+      uploadError = `${failed}: ${e instanceof Error ? e.message : 'Upload failed.'}`;
     }
+    if (done.length) onUploaded(done);
+    const unsent: string[] = [];
+    if (recipient)
+      for (const document of done)
+        await sendToDot(
+          recipient.id,
+          { kind: 'document', documentId: document.id },
+          note,
+        ).catch(() => unsent.push(document.title));
+    setBusy(false);
+    if (!uploadError && !unsent.length) return onClose();
+    setFiles(files.slice(done.length));
+    setError(
+      [
+        uploadError,
+        unsent.length
+          ? `Could not send ${unsent.join(', ')} to ${recipient?.name}; use Send to Dot on the document.`
+          : '',
+      ]
+        .filter(Boolean)
+        .join(' '),
+    );
   };
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -214,6 +238,42 @@ export function DocumentUploadDialog({
             onDotIds={setDotIds}
             onSpaceIds={setSpaceIds}
           />
+          <fieldset className="space-access-fields">
+            <legend>Send to a Dot when ready</legend>
+            <p className="muted">
+              The Dot reads it in the background once processing finishes, files
+              action items, and lets you know when it’s done.
+            </p>
+            <select
+              aria-label="Dot to send it to"
+              value={sendTo}
+              onChange={(event) => setSendTo(event.target.value)}
+            >
+              <option value="">Don’t send</option>
+              {workspace.dots.map((dot) => (
+                <option key={dot.id} value={dot.id}>
+                  {dot.name}
+                </option>
+              ))}
+            </select>
+            {recipient && (
+              <>
+                {addsAccess && (
+                  <p className="muted">
+                    {recipient.name} will also be able to read it.
+                  </p>
+                )}
+                <textarea
+                  aria-label={`Note for ${recipient.name} (optional)`}
+                  rows={2}
+                  maxLength={1000}
+                  placeholder="Anything to focus on? (optional)"
+                  value={note}
+                  onChange={(event) => setNote(event.target.value)}
+                />
+              </>
+            )}
+          </fieldset>
           {error && (
             <p className="chat-error" role="alert">
               {error}
@@ -222,7 +282,9 @@ export function DocumentUploadDialog({
           <button
             className="primary full"
             disabled={
-              busy || !files.length || (mode === 'dots' && !dotIds.length)
+              busy ||
+              !files.length ||
+              (access.mode === 'dots' && !access.dotIds.length)
             }
           >
             <Upload size={15} />

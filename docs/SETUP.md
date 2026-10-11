@@ -53,6 +53,7 @@ Edit `.env` on the server and restart after changes:
 | -------------------------------- | ------------------------------------------------------------------ |
 | `OPENAI_API_KEY`, `OPENAI_MODEL` | Model credential and model identifier                              |
 | `OPENAI_BASE_URL`                | Compatible model API endpoint                                      |
+| `OPENAI_API`                     | `chat-completions` (default) or `responses`; see below             |
 | `CONTEXT_MAX_TOKENS`             | Estimated token budget for history sent to the model               |
 | `SUMMARY_MODEL`                  | Model for summaries of older turns; defaults to the model          |
 | `MAX_AGENT_TURNS`                | Model turns per reply, 2–100; unset or `off` means no limit        |
@@ -60,6 +61,8 @@ Edit `.env` on the server and restart after changes:
 | `DATABASE_PATH`                  | SQLite file containing conversations, pages, and metadata          |
 | `OWNER_TOKEN`                    | Application access token; required for external bindings           |
 | `APP_ORIGIN`                     | Comma-separated exact browser origins for a proxy or custom domain |
+
+Conversations use the chat-completions API, which every OpenAI-compatible endpoint serves. Some OpenAI models, such as `gpt-6.1-sol`, only call tools through the Responses API; set `OPENAI_API=responses` for them. That setting applies to conversations only. Summaries, memory extraction, document indexing and search reranking still use chat completions, so point `SUMMARY_MODEL`, `MEMORY_MODEL`, `ENRICHMENT_MODEL` and `RERANK_MODEL` at a model that serves it, typically a small, fast one.
 
 Provider credentials belong in `.env`, not client-side variables or source code. CopilotKit and mem0 telemetry are disabled in code; no telemetry setting is needed.
 
@@ -146,7 +149,7 @@ When a Dot reads something with commitments in it (meeting notes, an email threa
 - where it came from: the document and passage, the page, or the conversation, with a short quote;
 - a history of notes, changes and reminders.
 
-Names are matched ignoring case, accents, punctuation and suffixes such as "Inc." or "Ltd", so "Company A, Inc." and "company a" are the same organization. A close but different name (one misspelt word, or extra words) creates a new entry and the Dot asks you whether to merge them with `merge_entities`. A new item that closely matches an open one is reported as a possible duplicate instead of being filed twice.
+Names are matched ignoring case, accents, punctuation and suffixes such as "Inc." or "Ltd", so "Company A, Inc." and "company a" are the same organization. A close but different name (one misspelt word, or extra words) creates a new entry; the Dot merges it with `merge_entities` when they are clearly the same and asks you when it is unsure. A new item that closely matches an open one is reported as a possible duplicate instead of being filed twice.
 
 Search filters by status, people and organizations, owner, requester, labels and due dates first, then ranks what is left by keyword and meaning together, and the search model drops weak matches. So "the Company A security work" finds the security item from one document and not the Company A pricing item from another. A date without a time is read in the Dot's timezone; due dates mean the end of that day and reminders 9:00. The timezone defaults to UTC; set it with `PUT /api/dots/<id>/policy` and `{ "timezone": "America/New_York" }`. API calls can pass `timezone` instead.
 
@@ -176,6 +179,20 @@ curl -X POST localhost:4310/api/action-items -H 'Content-Type: application/json'
 ```
 
 Items live in SQLite and are backed up with it. The Postgres copy is rebuilt automatically: items saved while Postgres is down are indexed before the next search and on start.
+
+Dots handle low-impact work without asking first: filing and updating action items, adding notes, merging entities that are clearly the same, saving memories, and creating a new page in their default Space when a write-up is worth keeping. They tell you what they did. They still ask before sending messages, buying anything, deleting, or editing an existing page, and enforced rules still apply.
+
+### Send to Dot
+
+To have a Dot read something and pick out action items, use **Send to Dot** on a document's page, at the top of a page in a Space, or choose a Dot under **Send to a Dot when ready** when uploading. Add an optional note to say what to focus on. The Dot works on it as a background objective: it reads all of it, files action items with it as the source, and finishes with a short summary of decisions and open questions in a new conversation. An upload that is still being processed waits; the Dot starts once it can be read, and you are notified if processing fails. Only Dots that can read the document, or that work in the page's Space, are offered. Choosing a Dot while uploading grants it access to the new document if the access settings would not.
+
+`POST /api/handoffs` does the same over HTTP: `{ "dotId": "...", "target": { "kind": "document", "documentId": "..." } }` or `{ "kind": "page", "spaceId": "...", "pageId": "..." }`, with an optional `note`. It returns `{ "status": "started", "workItemId": "..." }`, or `{ "status": "waiting", "handoffId": "..." }` while the document is processed.
+
+### Notifications
+
+The app tells you when a Dot finishes background work, cannot finish it, needs your approval, or replies while you are looking at something else. A toast appears in the corner with the start of the Dot's message and an **Open** link to the conversation; it hides after a few seconds and stays in the list under the bell on the icon rail until you open it or mark all as read. Opening a conversation marks its notifications read, and nothing is shown for the conversation you are already watching. While the tab is in the background, the browser shows a system notification instead, if you allowed notifications.
+
+Notifications are stored in SQLite: `GET /api/notifications` (`?unread=1`, `limit`), `POST /api/notifications/:id/read` and `POST /api/notifications/read-all`. Delivery to other places, such as Telegram, email or Slack, plugs in as a `NotificationChannel` on the server's `NotificationService`.
 
 ## Pages and page conversations
 

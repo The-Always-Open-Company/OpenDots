@@ -2,6 +2,10 @@ import { actionItemRoutes } from './action-item-routes.js';
 import type { ActionItemService } from './action-items.js';
 import { capabilityRoutes } from './capability-routes.js';
 import { computerRoutes } from './computer-routes.js';
+import { handoffRoutes } from './handoff-routes.js';
+import type { HandoffService } from './handoffs.js';
+import { notificationRoutes } from './notification-routes.js';
+import type { NotificationService } from './notifications.js';
 import type { ExecutionEngine } from './execution-engine.js';
 import type { PluginService } from './plugins.js';
 import { initialRunAt, parseSchedule } from './schedule-time.js';
@@ -30,6 +34,8 @@ export interface AppOptions {
   plugins?: PluginService;
   skillsDir?: string;
   actionItems?: ActionItemService;
+  notifications?: NotificationService;
+  handoffs?: HandoffService;
 }
 export function createApp({
   store,
@@ -43,6 +49,8 @@ export function createApp({
   plugins,
   skillsDir,
   actionItems,
+  notifications,
+  handoffs,
 }: AppOptions) {
   const app = new Hono();
   const tooLarge = bodyLimit({
@@ -156,8 +164,13 @@ export function createApp({
             plugins: plugins?.list() ?? [],
           }
         : {}),
+      ...(notifications
+        ? { notifications: notifications.list({ unread: true, limit: 20 }) }
+        : {}),
     }),
   );
+  if (notifications) notificationRoutes(app, notifications);
+  if (handoffs) handoffRoutes(app, handoffs);
   if (engine && plugins)
     capabilityRoutes(app, {
       engine,
