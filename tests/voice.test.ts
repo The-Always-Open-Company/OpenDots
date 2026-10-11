@@ -600,6 +600,29 @@ it('fails the call and hangs up when the server cannot attach', async () => {
   ).toBe(true);
 });
 
+it("shows the provider's reason when GPT-Live rejects the session", async () => {
+  const f = fixture(live);
+  f.transport.mockResolvedValueOnce(
+    Response.json(
+      {
+        error: {
+          type: 'invalid_request_error',
+          code: 'invalid_value',
+          param: 'session.model',
+          message: 'Model gpt-realtime-2.1 is not supported by GPT-Live.',
+        },
+      },
+      { status: 400 },
+    ),
+  );
+  await expect(
+    f.voice.begin('thread', offer, new AbortController().signal),
+  ).rejects.toThrow(
+    'Voice provider returned HTTP 400 (invalid_value, session.model): Model gpt-realtime-2.1 is not supported by GPT-Live.',
+  );
+  expect(f.workspace.calls()[0].error).toContain('session.model');
+});
+
 it('splits long answers into appends and points to the chat', () => {
   const sentence = 'This is a sentence about the plan. ';
   const pieces = appendPieces(

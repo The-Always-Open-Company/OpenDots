@@ -101,10 +101,14 @@ export class Platform {
       .join('\n')
       .slice(-12000);
   }
-  /** Recent turns for a voice session's startup history; trimming keeps the newest. */
+  /**
+   * Recent turns for a voice session's startup history; trimming keeps the newest.
+   * GPT-Live rejects more than 8,192 tokens, and links or code can take a token
+   * per two characters, so the budget stays well below that.
+   */
   async historyMessages(
     threadId: string,
-    maxChars = 24_000,
+    maxChars = 12_000,
   ): Promise<{ role: 'user' | 'assistant'; text: string }[]> {
     this.requireReady();
     this.workspace.requireThread(threadId);
@@ -113,10 +117,11 @@ export class Platform {
     for (const message of this.workspace.threads.messages(threadId).reverse()) {
       if (message.role !== 'user' && message.role !== 'assistant') continue;
       if (message.id.startsWith(voiceReceiptMessagePrefix)) continue;
-      const text =
+      const full =
         typeof message.content === 'string' ? message.content.trim() : '';
-      if (!text) continue;
-      if (turns.length >= 120 || used + text.length > maxChars) break;
+      if (!full) continue;
+      const text = full.length > 2000 ? `${full.slice(0, 2000)}…` : full;
+      if (turns.length >= 60 || used + text.length > maxChars) break;
       used += text.length;
       turns.unshift({ role: message.role, text });
     }

@@ -1,5 +1,6 @@
 import type { PlatformConfig } from './platform-config.js';
 import type { SpeechProvider } from './voice.js';
+import { providerError } from './voice-live.js';
 
 const realtimeCalls = 'https://api.openai.com/v1/realtime/calls';
 
@@ -55,10 +56,7 @@ export function realtimeProvider(
         signal,
         redirect: 'error',
       });
-      if (!response.ok)
-        throw new Error(
-          `Voice provider returned HTTP ${response.status}. Check voice configuration and quota.`,
-        );
+      if (!response.ok) throw await providerError(response);
       const location = response.headers.get('location');
       const providerId = location
         ? new URL(location, 'https://api.openai.com').pathname.match(

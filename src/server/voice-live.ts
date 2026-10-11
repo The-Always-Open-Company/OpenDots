@@ -4,6 +4,23 @@ import type { SpeechContext, SpeechProvider } from './voice.js';
 
 export const liveSessions = 'https://api.openai.com/v1/live/sessions';
 
+/** Includes OpenAI's reason so a rejected setup says which setting to fix. */
+export async function providerError(response: Response) {
+  const body = (await response.json().catch(() => null)) as {
+    error?: { message?: unknown; code?: unknown; param?: unknown };
+  } | null;
+  const detail = [body?.error?.code, body?.error?.param]
+    .filter((value): value is string => typeof value === 'string' && !!value)
+    .join(', ');
+  const message =
+    typeof body?.error?.message === 'string'
+      ? body.error.message.replace(/\s+/g, ' ').trim().slice(0, 300)
+      : '';
+  return new Error(
+    `Voice provider returned HTTP ${response.status}${detail ? ` (${detail})` : ''}${message ? `: ${message}` : '. Check voice configuration and quota.'}`,
+  );
+}
+
 export function liveInstructions(dot: Dot) {
   return `You are ${dot.name}, talking with the owner in a live voice call that continues your existing text conversation with them.
 Your role: ${dot.instructions}
@@ -61,10 +78,7 @@ export function liveProvider(
         signal,
         redirect: 'error',
       });
-      if (!response.ok)
-        throw new Error(
-          `Voice provider returned HTTP ${response.status}. Check voice configuration and quota.`,
-        );
+      if (!response.ok) throw await providerError(response);
       const body = (await response.json().catch(() => null)) as {
         session?: { id?: unknown };
         transport?: { sdp?: unknown };
