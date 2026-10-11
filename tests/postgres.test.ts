@@ -2,6 +2,10 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { EMBEDDING_DIMENSIONS, Postgres } from '../src/server/postgres.js';
 import { PgChunkIndex, type IndexedChunk } from '../src/server/chunk-index.js';
+import {
+  PgActionItemIndex,
+  type IndexedActionItem,
+} from '../src/server/action-item-index.js';
 
 // Runs against a disposable pgvector database, e.g. the one in compose.dev.yml:
 // TEST_DATABASE_URL=postgres://opendots:<password>@127.0.0.1:5433/opendots npm test
@@ -133,18 +137,95 @@ describe.skipIf(!url)('Postgres chunk index', () => {
     expect(summary).toContainEqual(['a1', 'b0', 'similar']);
     expect(summary).toContainEqual(['a2', 'b3', 'entity']);
     expect(summary).not.toContainEqual(['a0', 'a1', 'similar']);
-    expect(all.find((link) => link.ordinal === 3 && link.documentId === a))
-      .toMatchObject({ section: 'Later', pageFrom: 4 });
-    const onlyA = await index.links(
-      [{ documentId: a, ordinal: 1 }],
-      [a],
-      3,
-    );
+    expect(
+      all.find((link) => link.ordinal === 3 && link.documentId === a),
+    ).toMatchObject({ section: 'Later', pageFrom: 4 });
+    const onlyA = await index.links([{ documentId: a, ordinal: 1 }], [a], 3);
     expect(onlyA.every((link) => link.documentId === a)).toBe(true);
     await index.remove(b);
     expect(
       await index.links([{ documentId: a, ordinal: 1 }], [a, b], 3),
     ).toEqual([]);
+  });
+});
+
+describe.skipIf(!url)('Postgres action item index', () => {
+  const postgres = new Postgres(url ?? 'postgres://unused');
+  const index = new PgActionItemIndex(postgres);
+  const [pricing, security, other] = [randomUUID(), randomUUID(), randomUUID()];
+  const item = (
+    id: string,
+    hot: number,
+    text: Pick<IndexedActionItem, 'primary' | 'context' | 'body'>,
+  ): IndexedActionItem => ({
+    id,
+    embedding: vector(hot),
+    updatedAt: 1,
+    ...text,
+  });
+  afterAll(async () => {
+    for (const id of [pricing, security, other]) await index.remove(id);
+    await postgres.close();
+  });
+
+  it('searches allowed items by keyword and meaning, and finds near neighbours', async () => {
+    await index.upsert(
+      item(pricing, 400, {
+        primary: 'Send Company A the revised pricing',
+        context: 'Agreed in the Company A renewal call',
+        body: '',
+      }),
+    );
+    await index.upsert(
+      item(security, 401, {
+        primary: 'Answer the Company A security questionnaire',
+        context: 'Needed before procurement signs off',
+        body: 'Note: ask about SOC 2 scope',
+      }),
+    );
+    await index.upsert(
+      item(other, 400, {
+        primary: 'Send Company F the revised pricing',
+        context: 'Not shared with this caller',
+        body: '',
+      }),
+    );
+    // "SOC" is only in the body; the vector points at the pricing item.
+    const keyword = await index.search(
+      'SOC',
+      vector(400),
+      [pricing, security],
+      5,
+    );
+    expect(keyword.map((hit) => hit.id)).toEqual([security, pricing]);
+    const semantic = await index.search(
+      null,
+      vector(401),
+      [pricing, security],
+      1,
+    );
+    expect(semantic.map((hit) => hit.id)).toEqual([security]);
+    expect(await index.search('pricing', vector(400), [], 5)).toEqual([]);
+
+    const near = await index.nearest(vector(400), [pricing, security], 2);
+    expect(near[0]).toMatchObject({ id: pricing });
+    expect(near[0].score).toBeCloseTo(1);
+    expect(near[1].score).toBeCloseTo(0);
+
+    await index.upsert(
+      item(pricing, 402, {
+        primary: 'Send Company A the revised pricing',
+        context: 'Renewal call',
+        body: 'Note: include the multi-year discount',
+      }),
+    );
+    expect(
+      (await index.search('discount', vector(999), [pricing], 5)).map(
+        (hit) => hit.id,
+      ),
+    ).toEqual([pricing]);
+    await index.remove(security);
+    expect(await index.nearest(vector(401), [security], 1)).toEqual([]);
   });
 });
 
@@ -190,12 +271,13 @@ describe.skipIf(!url)('Postgres schema migration', () => {
         section: 'Leave > Holidays',
         context: '',
       });
-      expect(await index.links([{ documentId: 'old', ordinal: 0 }], ['old'], 3))
-        .toEqual([]);
+      expect(
+        await index.links([{ documentId: 'old', ordinal: 0 }], ['old'], 3),
+      ).toEqual([]);
       const version = await postgres.pool.query(
         'SELECT version FROM rag_schema',
       );
-      expect(version.rows).toEqual([{ version: 2 }]);
+      expect(version.rows).toEqual([{ version: 3 }]);
       // A second process migrating again is a no-op.
       const again = scoped();
       await again.ensureSchema();

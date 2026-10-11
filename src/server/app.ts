@@ -1,3 +1,5 @@
+import { actionItemRoutes } from './action-item-routes.js';
+import type { ActionItemService } from './action-items.js';
 import { capabilityRoutes } from './capability-routes.js';
 import { computerRoutes } from './computer-routes.js';
 import type { ExecutionEngine } from './execution-engine.js';
@@ -27,6 +29,7 @@ export interface AppOptions {
   work?: WorkRunner;
   plugins?: PluginService;
   skillsDir?: string;
+  actionItems?: ActionItemService;
 }
 export function createApp({
   store,
@@ -39,6 +42,7 @@ export function createApp({
   work,
   plugins,
   skillsDir,
+  actionItems,
 }: AppOptions) {
   const app = new Hono();
   const tooLarge = bodyLimit({
@@ -164,6 +168,7 @@ export function createApp({
       plugins,
       skillsDir: skillsDir ?? 'skills',
     });
+  if (actionItems) actionItemRoutes(app, actionItems);
   app.post('/api/tasks', async (c) => {
     const parsed = z
       .object({
@@ -195,7 +200,9 @@ export function createApp({
       let actorId = 'owner';
       if (platform && parsed.data.threadId) {
         try {
-          actorId = platform.workspace.requireThread(parsed.data.threadId).dotId;
+          actorId = platform.workspace.requireThread(
+            parsed.data.threadId,
+          ).dotId;
         } catch {
           return c.json(
             { error: 'Conversation is not owned by this workspace.' },

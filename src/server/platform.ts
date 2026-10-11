@@ -19,6 +19,7 @@ import type { DocumentLibrary } from './document-library.js';
 import type { DocumentRetriever } from './document-retrieval.js';
 import type { ExecutionEngine } from './execution-engine.js';
 import type { PluginService } from './plugins.js';
+import type { ActionItemService } from './action-items.js';
 
 export const CONSULTATION_TIME_LIMIT_MS = 45_000;
 
@@ -29,6 +30,7 @@ export interface PlatformServices {
   engine?: ExecutionEngine;
   plugins?: PluginService;
   skillsDir?: string;
+  actionItems?: ActionItemService;
 }
 
 export class Platform {

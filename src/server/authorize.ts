@@ -77,6 +77,11 @@ export const CONSULTATION_BLOCKED_TOOLS = new Set([
   'record_reconciliation',
   'arm_trigger',
   'apply_profile',
+  'create_action_items',
+  'update_action_item',
+  'add_action_item_note',
+  'review_action_items',
+  'merge_entities',
 ]);
 
 export function consultationBlocked(toolName: string) {
@@ -103,8 +108,7 @@ function matching(rules: RuleRow[], actorId: string, toolName: string) {
   const rank = (mode: RuleRow['mode'], workspace: boolean) =>
     (mode === 'block' ? 0 : mode === 'ask' ? 2 : 4) + (workspace ? 0 : 1);
   return named.sort(
-    (a, b) =>
-      rank(a.mode, a.dotId == null) - rank(b.mode, b.dotId == null),
+    (a, b) => rank(a.mode, a.dotId == null) - rank(b.mode, b.dotId == null),
   )[0];
 }
 
@@ -115,7 +119,8 @@ export function decide(
   args: Record<string, unknown>,
   snapshot: AuthSnapshot,
 ): Decision {
-  if (snapshot.cancelled) return { effect: 'block', reason: 'This objective was cancelled.' };
+  if (snapshot.cancelled)
+    return { effect: 'block', reason: 'This objective was cancelled.' };
   if (snapshot.paused && (ctx.mode === 'background' || ctx.cause !== 'model'))
     return { effect: 'block', reason: 'Agents are paused.' };
   if (ctx.cause === 'model' && snapshot.paused)
@@ -125,22 +130,35 @@ export function decide(
     (consultationBlocked(toolName) ||
       snapshot.blockedOnConsultation.has(toolName))
   )
-    return { effect: 'block', reason: 'A consulted Dot cannot change anything.' };
+    return {
+      effect: 'block',
+      reason: 'A consulted Dot cannot change anything.',
+    };
   if (RESEARCH_TOOLS.has(toolName) && !snapshot.researchAllowed)
     return { effect: 'block', reason: 'Research permission is disabled.' };
   if (MEMORY_TOOLS.has(toolName) && !snapshot.memoryAllowed)
     return { effect: 'block', reason: 'Memory permission is disabled.' };
   const spaceId = typeof args.spaceId === 'string' ? args.spaceId : undefined;
   if (spaceId && !snapshot.spaceAllowed(spaceId))
-    return { effect: 'block', reason: 'Space access has been revoked or was not granted.' };
+    return {
+      effect: 'block',
+      reason: 'Space access has been revoked or was not granted.',
+    };
   const documentId =
     typeof args.documentId === 'string'
       ? args.documentId
       : typeof args.id === 'string' && toolName.includes('document')
         ? args.id
         : undefined;
-  if (documentId && toolName.includes('document') && !snapshot.documentAllowed(documentId))
-    return { effect: 'block', reason: 'Document access has been revoked or was not granted.' };
+  if (
+    documentId &&
+    toolName.includes('document') &&
+    !snapshot.documentAllowed(documentId)
+  )
+    return {
+      effect: 'block',
+      reason: 'Document access has been revoked or was not granted.',
+    };
   const plugin = pluginToolName(toolName);
   if (plugin && !snapshot.pluginAllowed(plugin.pluginId, plugin.toolName))
     return { effect: 'block', reason: 'Plugin tool is not granted.' };

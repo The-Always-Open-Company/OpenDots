@@ -70,7 +70,7 @@ Learned memory and the document library need two extra services: Postgres with p
 | Variable                       | Purpose                                                                         |
 | ------------------------------ | ------------------------------------------------------------------------------- |
 | `POSTGRES_PASSWORD`            | Password for the bundled Postgres service. Generate with `openssl rand -hex 24` |
-| `DATABASE_URL`                 | Postgres with pgvector. Enables learned memory and document search              |
+| `DATABASE_URL`                 | Postgres with pgvector. Enables learned memory, document search, action items   |
 | `DOCLING_URL`                  | docling-serve endpoint. With `DATABASE_URL`, enables document uploads           |
 | `EMBEDDING_MODEL`              | Embedding model; defaults to `text-embedding-3-small` (1536 dimensions)         |
 | `MEMORY_MODEL`                 | Model that extracts memories from turns; defaults to `OPENAI_MODEL`             |
@@ -80,7 +80,7 @@ Learned memory and the document library need two extra services: Postgres with p
 | `MAX_UPLOAD_MB`                | Largest accepted file, 1–2000 MB; default 50                                    |
 | `DOCLING_MAX_DOCUMENT_TIMEOUT` | Seconds docling-serve may spend on one file (compose only); default 900         |
 
-Embeddings and memory extraction use `OPENAI_API_KEY` and `OPENAI_BASE_URL`, so a custom endpoint must also serve `/embeddings` with a 1536-dimension model. SQLite remains the source of truth for documents, grants and Space links; Postgres holds only searchable data (memory vectors and document passages). Changing who can read a document takes effect immediately without re-indexing.
+Embeddings and memory extraction use `OPENAI_API_KEY` and `OPENAI_BASE_URL`, so a custom endpoint must also serve `/embeddings` with a 1536-dimension model. SQLite remains the source of truth for documents, grants and Space links; Postgres holds only searchable data (memory vectors, document passages and the search copy of action items). Changing who can read a document takes effect immediately without re-indexing.
 
 For `npm run dev`, run the two services on loopback with the development compose file, then set the URLs in `.env`:
 
@@ -131,6 +131,49 @@ Dots can also call `list_documents`, `search_documents` (the same pipeline for a
 Searching adds two model calls to each turn that involves documents, usually one to three seconds; a small, fast `RERANK_MODEL` keeps this low. Indexing costs one call for the document and one per eight passages.
 
 Back up `DOCUMENTS_DIR` together with the SQLite database. The Postgres data can be rebuilt by reprocessing documents, but learned memories live only in Postgres, so back up its volume too.
+
+### Action items
+
+Dots keep a list of things to follow up on: what you need to do, and what others owe you. Action items need `DATABASE_URL` and `OPENAI_API_KEY`; without them the tools and API are not available. There is no screen for them yet.
+
+When a Dot reads something with commitments in it (meeting notes, an email thread, a document, or your own message), it files them with `create_action_items` and tells you what it filed. Each item keeps:
+
+- a statement that makes sense on its own, the surrounding context, and optional details;
+- status (open, waiting, done, dropped), priority, due date, reminder date and labels;
+- the people, organizations, projects and topics involved, each with a role: who must do it (no owner means you), who asked for it, and what it is about;
+- where it came from: the document and passage, the page, or the conversation, with a short quote;
+- a history of notes, changes and reminders.
+
+Names are matched ignoring case, accents, punctuation and suffixes such as "Inc." or "Ltd", so "Company A, Inc." and "company a" are the same organization. A close but different name (one misspelt word, or extra words) creates a new entry and the Dot asks you whether to merge them with `merge_entities`. A new item that closely matches an open one is reported as a possible duplicate instead of being filed twice.
+
+Search filters by status, people and organizations, owner, requester, labels and due dates first, then ranks what is left by keyword and meaning together, and the search model drops weak matches. So "the Company A security work" finds the security item from one document and not the Company A pricing item from another. A date without a time is read in the Dot's timezone; due dates mean the end of that day and reminders 9:00. The timezone defaults to UTC; set it with `PUT /api/dots/<id>/policy` and `{ "timezone": "America/New_York" }`. API calls can pass `timezone` instead.
+
+`review_action_items` lists overdue items, items due within three days, reminders that have come due, overdue items others owe you, and items untouched for two weeks. To be reminded regularly, ask a Dot to "review my action items every weekday at 9" and approve the schedule it proposes; scheduled runs record each reminder so it is not repeated.
+
+The same operations are available over HTTP. Send `Content-Type: application/json` on every request that is not a GET.
+
+| Method and path                    | Purpose                                                                                                                                                             |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/action-items`            | Search or list. Query: `q`, `entity` (repeatable), `owner` (`me`, `others` or a name), `requester`, `status`, `label`, `dueBefore`, `dueAfter`, `limit`, `timezone` |
+| `GET /api/action-items/review`     | The review lists. `?markReminded=true` records reminders as given                                                                                                   |
+| `GET /api/action-items/:id`        | One item with its history                                                                                                                                           |
+| `POST /api/action-items`           | Create one item, or `{ "items": [...] }`. Set `"force": true` to file a possible duplicate                                                                          |
+| `PATCH /api/action-items/:id`      | Change fields, `addEntities` or `removeEntities`                                                                                                                    |
+| `POST /api/action-items/:id/notes` | Add a note `{ "note": "..." }`                                                                                                                                      |
+| `DELETE /api/action-items/:id`     | Delete an item                                                                                                                                                      |
+| `GET /api/entities`                | List people, organizations, projects and topics. Query: `q`, `kind`                                                                                                 |
+| `POST /api/entities/merge`         | Merge `{ "fromEntityId": "...", "intoEntityId": "..." }`                                                                                                            |
+
+```sh
+curl -X POST localhost:4310/api/action-items -H 'Content-Type: application/json' -d '{
+  "statement": "Send Company A the revised pricing",
+  "context": "Agreed on the renewal call; they need it before their budget meeting",
+  "due": "2026-10-20",
+  "entities": [{ "name": "Company A", "kind": "organization" }, { "name": "Pricing", "kind": "topic" }]
+}'
+```
+
+Items live in SQLite and are backed up with it. The Postgres copy is rebuilt automatically: items saved while Postgres is down are indexed before the next search and on start.
 
 ## Pages and page conversations
 

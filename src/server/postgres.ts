@@ -59,6 +59,15 @@ CREATE TABLE IF NOT EXISTS chunk_links(
   PRIMARY KEY(document_id, ordinal, target_document_id, target_ordinal, kind)
 );
 CREATE INDEX IF NOT EXISTS chunk_links_target ON chunk_links(target_document_id);`,
+  // Search copy of the owner's action items; SQLite holds the items.
+  `CREATE TABLE IF NOT EXISTS action_item_index(
+  item_id TEXT PRIMARY KEY,
+  embedding vector(${EMBEDDING_DIMENSIONS}) NOT NULL,
+  tsv tsvector NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS action_item_index_embedding ON action_item_index USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS action_item_index_tsv ON action_item_index USING gin (tsv);`,
 ];
 
 /** Shared pool for the searchable stores. App data stays in SQLite. */
@@ -85,7 +94,9 @@ export class Postgres {
     try {
       await client.query('BEGIN');
       // Serializes migrations across processes sharing the database.
-      await client.query("SELECT pg_advisory_xact_lock(hashtext('opendots_rag_schema'))");
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext('opendots_rag_schema'))",
+      );
       await client.query(
         'CREATE TABLE IF NOT EXISTS rag_schema(version INTEGER NOT NULL)',
       );

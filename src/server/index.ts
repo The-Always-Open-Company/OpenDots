@@ -32,6 +32,9 @@ import { PluginService } from './plugins.js';
 import { WorkRunner } from './work-runner.js';
 import { applyApprovedAction } from './approved-actions.js';
 import { deliverInternal } from './watches.js';
+import { ActionItemStore } from './action-item-store.js';
+import { PgActionItemIndex } from './action-item-index.js';
+import { ActionItemService } from './action-items.js';
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 4310);
 const ownerToken = process.env.OWNER_TOKEN;
@@ -103,16 +106,19 @@ const json = (model: string | undefined) =>
   config.apiKey && model
     ? modelJson({ apiKey: config.apiKey, baseUrl: config.baseUrl, model })
     : undefined;
+const embed = config.apiKey
+  ? openAiEmbeddings({
+      apiKey: config.apiKey,
+      baseUrl: config.baseUrl,
+      model: config.embeddingModel ?? DEFAULT_EMBEDDING_MODEL,
+    })
+  : undefined;
 const documents =
-  postgres && config.doclingUrl && config.apiKey
+  postgres && config.doclingUrl && embed
     ? new DocumentLibrary(
         workspace,
         new PgChunkIndex(postgres),
-        openAiEmbeddings({
-          apiKey: config.apiKey,
-          baseUrl: config.baseUrl,
-          model: config.embeddingModel ?? DEFAULT_EMBEDDING_MODEL,
-        }),
+        embed,
         config.documentsDir ?? join(dirname(database), 'documents'),
         () => ingestor?.wake(),
         new DocumentEnricher(json(config.enrichmentModel ?? config.model)),
@@ -133,6 +139,16 @@ engine.backfillTerminal(store.tasks(), (task) =>
 );
 const plugins = new PluginService(store.database);
 const skillsDir = process.env.SKILLS_DIR ?? join(dirname(database), 'skills');
+const actionItems =
+  postgres && embed
+    ? new ActionItemService(
+        new ActionItemStore(store.database),
+        new PgActionItemIndex(postgres),
+        embed,
+        workspace,
+        json(config.rerankModel ?? config.model),
+      )
+    : undefined;
 const platform = new Platform(store, workspace, config, {
   memory,
   documents,
@@ -140,6 +156,7 @@ const platform = new Platform(store, workspace, config, {
   engine,
   plugins,
   skillsDir,
+  actionItems,
 });
 workspace.pages.onUpdated = (page) =>
   deliverInternal(engine, workspace, 'page.updated', {
@@ -235,6 +252,7 @@ const app = createApp({
   work,
   plugins,
   skillsDir,
+  actionItems,
 });
 app.use('*', async (c, next) => {
   c.header('X-Content-Type-Options', 'nosniff');
@@ -253,6 +271,13 @@ const server = serve({ fetch: app.fetch, hostname: host, port }, (info) => {
   runner.start();
   ingestor?.start();
   void platform.start();
+  void actionItems
+    ?.reindexStale(500)
+    .catch(() =>
+      console.error(
+        'Action item search index is behind; it will catch up on the next search.',
+      ),
+    );
 });
 const shutdown = createShutdown({
   stopRunner: () => runner.stop(),

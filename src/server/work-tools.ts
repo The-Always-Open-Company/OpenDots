@@ -7,6 +7,7 @@ import {
   type ExecutionContext,
 } from './authorize.js';
 import type { ExecutionEngine } from './execution-engine.js';
+import { ACTION_ITEM_PROMPT } from './action-item-tools.js';
 import { runWithOperation } from './effect-context.js';
 import type { MemoryProvider } from './memory.js';
 import type { PluginService } from './plugins.js';
@@ -26,12 +27,19 @@ import type { Store } from './store.js';
 import type { WorkspaceStore } from './workspace.js';
 
 const MASCOTS = ['blue', 'mint', 'orange', 'purple'] as const;
+const ACTION_ITEM_EFFECTS = new Set([
+  'create_action_items',
+  'update_action_item',
+  'add_action_item_note',
+  'merge_entities',
+]);
 const EFFECTS = new Set([
   'create_space_page',
   'edit_space_page',
   'remember',
   'update_note',
   'forget',
+  ...ACTION_ITEM_EFFECTS,
 ]);
 
 export interface WorkDeps {
@@ -79,7 +87,8 @@ export function effectIdempotent(
     name === 'create_space_page' ||
     name === 'edit_space_page' ||
     name === 'remember' ||
-    name === 'update_note'
+    name === 'update_note' ||
+    ACTION_ITEM_EFFECTS.has(name)
   )
     return true;
   return name.startsWith('plugin_') && plugins.idempotent(name);
@@ -226,6 +235,7 @@ export function capabilityPrompt(input: {
   latestUser: string;
   skillsDir: string;
   inWork?: boolean;
+  actionItems?: boolean;
 }) {
   const policy = input.engine.policy(input.dot.id);
   const skills = loadSkills(input.skillsDir).filter((skill) =>
@@ -280,6 +290,7 @@ export function capabilityPrompt(input: {
     input.inWork
       ? 'This run has about 90 seconds. End it with a written summary of what you found, and call complete_work or fail_work when the objective is settled.'
       : 'A chat reply has about 90 seconds. When a request needs broad research, many pages, or several checks, tell the owner the plan in a sentence and call start_objective instead of doing it all in this reply. Always end a reply with an answer, even a partial one.',
+    input.actionItems ? ACTION_ITEM_PROMPT : '',
     `Wake window: at least ${Math.round(policy.minWakeIntervalMs / 60_000)} minutes and at most ${Math.round(policy.maxWakeHorizonMs / 86_400_000)} days. An earlier wake is rejected.`,
     'If a tool returns status pending, that action is stored for the owner. Do not call it again. A pending result from an earlier turn is not still waiting when a later message says the owner already approved it.',
     'To retry an effect that already started, pass its operationId. A new call without that id is a new operation.',

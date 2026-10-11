@@ -79,6 +79,80 @@ export interface Skill {
   /** Dots allowed to load this skill. */
   dotIds: string[];
 }
+export const ACTION_ITEM_STATUSES = [
+  'open',
+  'waiting',
+  'done',
+  'dropped',
+] as const;
+export type ActionItemStatus = (typeof ACTION_ITEM_STATUSES)[number];
+export const ACTION_ITEM_PRIORITIES = [
+  'low',
+  'normal',
+  'high',
+  'urgent',
+] as const;
+export type ActionItemPriority = (typeof ACTION_ITEM_PRIORITIES)[number];
+export const ENTITY_KINDS = [
+  'organization',
+  'person',
+  'project',
+  'topic',
+] as const;
+export type EntityKind = (typeof ENTITY_KINDS)[number];
+/** owner: who has to do it (none means the owner of OpenDots); requester: who asked; about: anything else it concerns. */
+export const ENTITY_ROLES = ['owner', 'requester', 'about'] as const;
+export type EntityRole = (typeof ENTITY_ROLES)[number];
+export interface Entity {
+  id: string;
+  kind: EntityKind;
+  name: string;
+  aliases: string[];
+}
+export interface ActionItemEntity {
+  id: string;
+  kind: EntityKind;
+  name: string;
+  role: EntityRole;
+}
+export interface ActionItemSource {
+  kind: 'document' | 'page' | 'conversation' | 'owner';
+  /** Document or page ID. */
+  id: string | null;
+  /** Passage ref (documentId#ordinal) or the page's Space ID. */
+  ref: string | null;
+  title: string | null;
+  /** Saved copy of the quoted text, kept when the source changes. */
+  excerpt: string;
+  /** When the source happened, e.g. the meeting date, as YYYY-MM-DD. */
+  date: string | null;
+  threadId: string | null;
+}
+export interface ActionItem {
+  id: string;
+  statement: string;
+  details: string;
+  context: string;
+  status: ActionItemStatus;
+  priority: ActionItemPriority;
+  dueAt: number | null;
+  remindAt: number | null;
+  labels: string[];
+  /** Dot ID, or "owner" for items added through the API. */
+  createdBy: string;
+  source: ActionItemSource;
+  entities: ActionItemEntity[];
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+}
+export interface ActionItemEvent {
+  id: string;
+  kind: 'created' | 'note' | 'update' | 'reminded';
+  text: string;
+  actor: string;
+  createdAt: number;
+}
 export interface WorkView {
   workItem: {
     id: string;
