@@ -50,7 +50,12 @@ const OPEN: ActionItemStatus[] = ['open', 'waiting'];
 export const entityInput = z.object({
   name: z.string().trim().min(1).max(120),
   kind: z.enum(ENTITY_KINDS),
-  role: z.enum(ENTITY_ROLES).default('about'),
+  role: z
+    .enum(ENTITY_ROLES)
+    .default('about')
+    .describe(
+      'owner: someone else who must do it (never the person you work for); requester: who asked; about: anything else it concerns.',
+    ),
   entityId: z
     .string()
     .optional()

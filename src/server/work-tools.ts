@@ -121,11 +121,14 @@ export function guardTools(
         const workItemId = ctx.workItemId || deps.ensureWork();
         ctx = { ...ctx, workItemId };
         const idempotent = deps.idempotent(tool.name, args);
+        // Models sometimes invent an operationId on a first call; for an
+        // idempotent tool that is safe to run under the id they chose.
         const begun = deps.engine.beginEffect(
           workItemId,
           ctx.executionId || null,
           tool.name,
           args,
+          idempotent,
           idempotent,
         );
         if (begun.action === 'return') return begun.result;

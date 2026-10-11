@@ -6,6 +6,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { ExecutionEngine } from '../src/server/execution-engine.js';
 import { Store } from '../src/server/store.js';
 import { decide, type ExecutionContext } from '../src/server/authorize.js';
+import { guardTools } from '../src/server/work-tools.js';
+import type { ToolDefinition } from '@copilotkit/runtime/v2';
 
 const resources: { close: () => void; dir: string }[] = [];
 function open() {
@@ -325,6 +327,73 @@ describe('execution engine', () => {
       operationId: first.operationId,
       result: { invoice: 'inv-1' },
     });
+  });
+
+  it('runs an idempotent effect under an invented operation id', async () => {
+    const { engine } = open();
+    const workItemId = String(
+      engine.createWorkItem({
+        actorId: 'dot-a',
+        title: 'Conversation',
+        objective: 'Work started from the conversation.',
+        source: 'owner',
+      }).id,
+    );
+    let runs = 0;
+    const tool = (name: string) =>
+      ({
+        name,
+        execute: async (args: Record<string, unknown>) => {
+          runs += 1;
+          return { filed: args.items };
+        },
+      }) as unknown as ToolDefinition;
+    const guard = (name: string, idempotent: boolean) =>
+      guardTools([tool(name)], {
+        engine,
+        context: () => ({
+          actorId: 'dot-a',
+          ownerId: 'owner',
+          executionId: '',
+          threadId: 'thread',
+          mode: 'interactive',
+          cause: 'model',
+        }),
+        snapshot: () => ({
+          paused: false,
+          cancelled: false,
+          consultation: false,
+          researchAllowed: true,
+          memoryAllowed: true,
+          spaceAllowed: () => true,
+          documentAllowed: () => true,
+          pluginAllowed: () => true,
+          skillAllowed: () => true,
+          blockedOnConsultation: new Set<string>(),
+        }),
+        ensureWork: () => workItemId,
+        idempotent: () => idempotent,
+      })[0].execute!;
+    const create = guard('create_action_items', true);
+    const call = { items: ['a'], operationId: 'create-action-items-meeting' };
+    expect(await create(call as never)).toEqual({ filed: ['a'] });
+    expect(await create(call as never)).toEqual({ filed: ['a'] });
+    expect(runs).toBe(1);
+    // The same invented id on a different batch is a new operation.
+    expect(await create({ ...call, items: ['b'] } as never)).toEqual({
+      filed: ['b'],
+    });
+    expect(runs).toBe(2);
+    await expect(
+      guard(
+        'plugin_billing_create',
+        false,
+      )({
+        amount: 10,
+        operationId: 'made-up',
+      } as never),
+    ).rejects.toThrow('Unknown operation id.');
+    expect(runs).toBe(2);
   });
 
   it('does not replay an uncertain non-idempotent operation', () => {

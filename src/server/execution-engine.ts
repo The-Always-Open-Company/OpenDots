@@ -822,7 +822,11 @@ export class ExecutionEngine {
     });
     return executionId;
   }
-  /** Begins an effect. Same operation id retries; a new call mints a new id. */
+  /**
+   * Begins an effect. Same operation id retries; a new call mints a new id.
+   * With acceptNewId, an unknown id starts a new operation under that id, and
+   * a known id sent with different arguments starts one under a fresh id.
+   */
   beginEffect(
     workItemId: string,
     executionId: string | null,
@@ -834,13 +838,23 @@ export class ExecutionEngine {
     | { action: 'run'; operationId: string; arguments: Record<string, unknown> }
     | { action: 'return'; operationId: string; result: unknown } {
     const { operationId: supplied, ...rest } = args;
-    const operationId =
+    const lookup = (id: string) =>
+      this.db
+        .prepare(
+          'SELECT * FROM tool_invocations WHERE workItemId=? AND toolName=? AND idempotencyKey=?',
+        )
+        .get(workItemId, toolName, id) as Row | undefined;
+    let operationId =
       typeof supplied === 'string' && supplied ? supplied : randomUUID();
-    const known = this.db
-      .prepare(
-        'SELECT * FROM tool_invocations WHERE workItemId=? AND toolName=? AND idempotencyKey=?',
-      )
-      .get(workItemId, toolName, operationId) as Row | undefined;
+    let known = lookup(operationId);
+    if (
+      acceptNewId &&
+      known &&
+      String(known.argumentsJson) !== JSON.stringify(rest)
+    ) {
+      operationId = randomUUID();
+      known = undefined;
+    }
     if (typeof supplied === 'string' && supplied && !known && !acceptNewId)
       throw new Error('Unknown operation id.');
     if (known?.status === 'succeeded' || known?.status === 'reconciled')

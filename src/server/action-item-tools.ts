@@ -69,15 +69,6 @@ const matchView = (match: PossibleEntityMatch) => ({
   existing: match.candidates.map(entityView),
 });
 
-const operation = {
-  operationId: z
-    .string()
-    .min(1)
-    .max(80)
-    .optional()
-    .describe('Pass this only when retrying the same call.'),
-};
-
 export function actionItemTools(
   service: ActionItemService,
   deps: {
@@ -108,7 +99,6 @@ export function actionItemTools(
           .array(actionItemInput.extend({ source: sourceInput }))
           .min(1)
           .max(20),
-        ...operation,
       }),
       execute: async ({ items }) => {
         deps.check();
@@ -188,7 +178,7 @@ export function actionItemTools(
       name: 'update_action_item',
       description:
         'Change an action item: status (done, dropped, waiting, open), wording, context, priority, due date, reminder, labels, or the entities it concerns. Send null to clear a date.',
-      parameters: actionItemPatch.extend({ id: z.string(), ...operation }),
+      parameters: actionItemPatch.extend({ id: z.string() }),
       execute: async ({ id, ...patch }) => {
         deps.check();
         const { item, possibleEntityMatches } = await service.update(
@@ -212,7 +202,6 @@ export function actionItemTools(
       parameters: z.object({
         id: z.string(),
         note: z.string().trim().min(1).max(4000),
-        ...operation,
       }),
       execute: async ({ id, note }) => {
         deps.check();
@@ -255,7 +244,6 @@ export function actionItemTools(
       parameters: z.object({
         fromEntityId: z.string().describe('The entity that goes away.'),
         intoEntityId: z.string().describe('The entity that stays.'),
-        ...operation,
       }),
       execute: async ({ fromEntityId, intoEntityId }) => {
         deps.check();
@@ -272,7 +260,7 @@ export function actionItemTools(
 
 export const ACTION_ITEM_PROMPT = [
   "Action items: you keep the owner's to-do list. Whenever content the owner shares or discusses (documents, notes, emails, pages, chats) contains something the owner has to do, or something someone owes the owner, file it with create_action_items without being asked, one batch per source.",
-  'For each item: write the statement so it makes sense on its own months later; put the situation in context (which company, topic, meeting or document, and why it matters); tag organizations, people, projects and topics with a role (owner is who must do it, left out when it is the owner; requester is who asked; about is everything else); quote the source line; set a due date only when one is stated or clearly implied.',
+  'For each item: write the statement so it makes sense on its own months later; put the situation in context (which company, topic, meeting or document, and why it matters); tag organizations, people, projects and topics with a role (owner is someone else who must do it; requester is who asked; about is everything else). When the person you work for must do it, give it no owner and never tag them as an entity, even when the notes use their name; quote the source line; set a due date only when one is stated or clearly implied.',
   'Then tell the owner briefly what you filed, what matched existing items, and what you were unsure about.',
   'When a result is possible_duplicate, add what is new to the existing item with add_action_item_note; refile with force only if it is really a different item.',
   'When a result lists possibleEntityMatches, ask the owner whether those are the same before calling merge_entities.',
