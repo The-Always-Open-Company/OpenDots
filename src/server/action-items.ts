@@ -15,6 +15,7 @@ import {
   entityKey,
   type ActionItemPatch,
   type ActionItemStore,
+  type ItemOwnership,
 } from './action-item-store.js';
 import type { Embed } from './embeddings.js';
 import { completeWith, withTimeout, type CompleteJson } from './model-json.js';
@@ -31,6 +32,8 @@ export interface ActionItemOptions {
   reindexBeforeSearch: number;
   dueSoonMs: number;
   staleMs: number;
+  /** Names the owner goes by; entities with these names are left off items. */
+  ownerNames: () => string[];
 }
 
 export const DEFAULT_ACTION_ITEM_OPTIONS: ActionItemOptions = {
@@ -40,12 +43,14 @@ export const DEFAULT_ACTION_ITEM_OPTIONS: ActionItemOptions = {
   reindexBeforeSearch: 20,
   dueSoonMs: 3 * 86_400_000,
   staleMs: 14 * 86_400_000,
+  ownerNames: () => [],
 };
 
 const SEARCH_POOL = 30;
 const RERANK_POOL = 20;
 const NOTES_INDEXED = 5;
 const OPEN: ActionItemStatus[] = ['open', 'waiting'];
+const OWNERSHIPS: ItemOwnership[] = ['me', 'owed', 'others'];
 
 export const entityInput = z.object({
   name: z.string().trim().min(1).max(120),
@@ -54,7 +59,7 @@ export const entityInput = z.object({
     .enum(ENTITY_ROLES)
     .default('about')
     .describe(
-      'owner: someone else who must do it (never the person you work for); requester: who asked; about: anything else it concerns.',
+      'assignee: someone else who must do it (never the owner); requester: who asked, when it was not the owner; about: anything else it concerns.',
     ),
   entityId: z
     .string()
@@ -163,13 +168,13 @@ export const searchInput = z.object({
     .describe(
       'Names of organizations, people, projects or topics the items must all concern.',
     ),
-  owner: z
+  assignee: z
     .string()
     .trim()
     .max(120)
     .optional()
     .describe(
-      '"me" for the owner\'s own items, "others" for items others owe the owner, or a person\'s name.',
+      '"me" for the owner\'s own items, "owed" for items someone owes the owner, "others" for items between other people, or the name of who must do it.',
     ),
   requester: z.string().trim().max(120).optional(),
   statuses: z.array(z.enum(ACTION_ITEM_STATUSES)).max(4).optional(),
@@ -380,6 +385,45 @@ export class ActionItemService {
     };
   }
 
+  /** Existing entities that are the owner under one of their names or aliases. */
+  private ownerEntityIds() {
+    return new Set(
+      this.options
+        .ownerNames()
+        .map((name) => this.store.findEntity(name, 'person')?.id)
+        .filter((id): id is string => !!id),
+    );
+  }
+
+  /**
+   * Drops entities that are the owner: no assignee means the item is the
+   * owner's, and no requester on someone else's item means the owner asked.
+   */
+  private withoutOwner<T extends EntityInput>(entities: T[] | undefined) {
+    const names = this.options.ownerNames();
+    if (!entities?.length || !names.length) return entities;
+    const keys = new Set(names.map((name) => entityKey('person', name)));
+    const ids = this.ownerEntityIds();
+    return entities.filter((entity) => {
+      if (entity.entityId) return !ids.has(entity.entityId);
+      if (keys.has(entityKey('person', entity.name))) return false;
+      const known = this.store.findEntity(entity.name, 'person');
+      return !known || !ids.has(known.id);
+    });
+  }
+
+  /** Takes the owner off items filed before their names were known. */
+  async recogniseOwner(actor: Actor, signal?: AbortSignal) {
+    const ids = [...this.ownerEntityIds()];
+    const names = ids.map((id) => this.store.entity(id)!.name).join(', ');
+    const items = this.store.unlinkEverywhere(ids);
+    for (const item of items)
+      this.store.event(item, 'update', `Recognised ${names} as you.`, actor.id);
+    if (items.length)
+      await this.reindexStale(items.length, signal).catch(() => undefined);
+    return items.length;
+  }
+
   /** Links an entity by ID, by exact name, or as a new one; reports near matches for people and organizations. */
   private resolveEntity(input: EntityInput) {
     if (input.entityId) {
@@ -449,12 +493,16 @@ export class ActionItemService {
     signal?: AbortSignal,
   ): Promise<{ results: CreateResult[]; warnings: string[] }> {
     const timeZone = actor.timeZone ?? 'UTC';
-    const parsed = inputs.map((input) => ({
-      ...actionItemInput.parse(input),
-      source: this.resolveSource(input.source, actor),
-      dueAt: parseWhen(input.due, timeZone, END_OF_DAY) ?? null,
-      remindAt: parseWhen(input.remindAt, timeZone, MORNING) ?? null,
-    }));
+    const parsed = inputs.map((input) => {
+      const item = actionItemInput.parse(input);
+      return {
+        ...item,
+        entities: this.withoutOwner(item.entities),
+        source: this.resolveSource(input.source, actor),
+        dueAt: parseWhen(input.due, timeZone, END_OF_DAY) ?? null,
+        remindAt: parseWhen(input.remindAt, timeZone, MORNING) ?? null,
+      };
+    });
     const drafts = parsed.map((input) =>
       searchText(
         {
@@ -571,7 +619,7 @@ export class ActionItemService {
     const possibleEntityMatches: PossibleEntityMatch[] = [];
     for (const removal of patch.removeEntities ?? [])
       this.store.unlink(id, removal.entityId, removal.role);
-    for (const entry of patch.addEntities ?? []) {
+    for (const entry of this.withoutOwner(patch.addEntities) ?? []) {
       const { entity, match } = this.resolveEntity(entry);
       if (match) possibleEntityMatches.push(match);
       this.store.link(id, entity.id, entry.role ?? 'about');
@@ -705,21 +753,18 @@ export class ActionItemService {
       unresolved.push(...resolved.unresolved);
       return resolved.ids;
     };
-    const ownerMode =
-      params.owner === 'me' || params.owner === 'others'
-        ? params.owner
-        : undefined;
-    const ownerIds = ownerMode ? undefined : person(params.owner);
+    const ownership = OWNERSHIPS.find((mode) => mode === params.assignee);
+    const assigneeIds = ownership ? undefined : person(params.assignee);
     const requesterIds = person(params.requester);
     const missingPerson =
-      (params.owner && !ownerMode && !ownerIds?.length) ||
+      (params.assignee && !ownership && !assigneeIds?.length) ||
       (params.requester && !requesterIds?.length);
     const candidates = missingPerson
       ? []
       : this.store.filter({
           statuses: params.statuses?.length ? params.statuses : OPEN,
-          owner: ownerMode,
-          ownerIds,
+          ownership,
+          assigneeIds,
           requesterIds,
           entityIds: named.ids,
           labels: cleanLabels(params.labels),

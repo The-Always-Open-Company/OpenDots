@@ -4,7 +4,14 @@ export const DUE_SOON_MS = 3 * 86_400_000;
 const DAY_MS = 86_400_000;
 
 export type ActionItemGroupKey =
-  'overdue' | 'dueSoon' | 'upcoming' | 'noDate' | 'waiting' | 'owed' | 'closed';
+  | 'overdue'
+  | 'dueSoon'
+  | 'upcoming'
+  | 'noDate'
+  | 'waiting'
+  | 'owed'
+  | 'others'
+  | 'closed';
 
 export const GROUP_LABELS: Record<ActionItemGroupKey, string> = {
   overdue: 'Overdue',
@@ -13,19 +20,29 @@ export const GROUP_LABELS: Record<ActionItemGroupKey, string> = {
   noDate: 'No due date',
   waiting: 'Waiting',
   owed: 'Owed to you',
+  others: 'Between others',
   closed: 'Done and dropped',
 };
 
 const ORDER = Object.keys(GROUP_LABELS) as ActionItemGroupKey[];
 
-/** Items with no owner entity are the owner's own. */
-export const isMine = (item: ActionItem) =>
-  !item.entities.some((entity) => entity.role === 'owner');
+const named = (item: ActionItem, role: EntityRole) =>
+  item.entities.filter((entity) => entity.role === role);
+
+/**
+ * The owner is never tagged, so no assignee means the item is the owner's, and
+ * no requester on someone else's item means the owner asked for it.
+ */
+export function ownershipOf(item: ActionItem): 'me' | 'owed' | 'others' {
+  if (!named(item, 'assignee').length) return 'me';
+  return named(item, 'requester').length ? 'others' : 'owed';
+}
 
 export function groupOf(item: ActionItem, now: number): ActionItemGroupKey {
   if (item.status === 'done' || item.status === 'dropped') return 'closed';
   if (item.status === 'waiting') return 'waiting';
-  if (!isMine(item)) return 'owed';
+  const ownership = ownershipOf(item);
+  if (ownership !== 'me') return ownership;
   if (item.dueAt == null) return 'noDate';
   if (item.dueAt < now) return 'overdue';
   if (item.dueAt < now + DUE_SOON_MS) return 'dueSoon';
@@ -46,13 +63,21 @@ export function groupActionItems(items: ActionItem[], now: number) {
   }));
 }
 
-export function ownerLabel(item: ActionItem) {
-  const owners = item.entities.filter((entity) => entity.role === 'owner');
-  return owners.length ? owners.map((entity) => entity.name).join(', ') : 'You';
+const names = (item: ActionItem, role: EntityRole) =>
+  named(item, role)
+    .map((entity) => entity.name)
+    .join(', ');
+
+/** "You", "Person J owes you", or "Person J, for Person K". */
+export function assigneeText(item: ActionItem) {
+  const ownership = ownershipOf(item);
+  if (ownership === 'me') return 'You';
+  if (ownership === 'owed') return `${names(item, 'assignee')} owes you`;
+  return `${names(item, 'assignee')}, for ${names(item, 'requester')}`;
 }
 
 export const ROLE_LABELS: Record<EntityRole, string> = {
-  owner: 'owes it',
+  assignee: 'owes it',
   requester: 'asked for it',
   about: 'concerns',
 };

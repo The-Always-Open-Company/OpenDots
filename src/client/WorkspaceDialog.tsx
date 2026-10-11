@@ -40,6 +40,9 @@ export function WorkspaceDialog({
       ? (dialog.dot?.memoryAllowed ?? true)
       : state.settings.memoryAllowed,
   );
+  const [ownerNames, setOwnerNames] = useState(
+    state.settings.ownerNames.join(', '),
+  );
   const [consultable, setConsultable] = useState(
     dialog.type === 'dot' ? (dialog.dot?.consultable ?? true) : true,
   );
@@ -153,7 +156,14 @@ export function WorkspaceDialog({
             if (dialog.type === 'settings') {
               path = '/settings';
               method = 'PATCH';
-              body = { researchAllowed: research, memoryAllowed: memory };
+              body = {
+                researchAllowed: research,
+                memoryAllowed: memory,
+                ownerNames: ownerNames
+                  .split(',')
+                  .map((value) => value.trim())
+                  .filter(Boolean),
+              };
             }
             if (dialog.type === 'memory') {
               path = dialog.memory
@@ -290,6 +300,24 @@ export function WorkspaceDialog({
                   ))}
               </select>
             </fieldset>
+          )}
+          {dialog.type === 'settings' && (
+            <>
+              <label className="field-label" htmlFor="owner-names">
+                Names you go by
+              </label>
+              <input
+                id="owner-names"
+                value={ownerNames}
+                maxLength={400}
+                placeholder="Andre Smart, Andre"
+                onChange={(event) => setOwnerNames(event.target.value)}
+              />
+              <p className="muted">
+                Separate names with commas. When notes or documents use one of
+                these names, Dots know it means you, so those tasks are yours.
+              </p>
+            </>
           )}
           {(dialog.type === 'dot' || dialog.type === 'settings') && (
             <>

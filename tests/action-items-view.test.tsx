@@ -50,7 +50,7 @@ it('renders urgency groups with owners, due dates, entity and label chips', () =
         actionItem({
           statement: 'Share the security questionnaire',
           entities: [
-            { id: 'j', kind: 'person', name: 'Person J', role: 'owner' },
+            { id: 'j', kind: 'person', name: 'Person J', role: 'assignee' },
           ],
         }),
       ]}
@@ -97,7 +97,7 @@ it('builds the list query from filters', () => {
         ...EMPTY_FILTERS,
         query: ' security ',
         entities: ['Company A', 'Person J'],
-        owner: 'others',
+        assignee: 'owed',
         showCompleted: true,
         dueBefore: '2026-10-31',
       },
@@ -106,7 +106,7 @@ it('builds the list query from filters', () => {
   );
   expect(query.get('q')).toBe('security');
   expect(query.getAll('entity')).toEqual(['Company A', 'Person J']);
-  expect(query.get('owner')).toBe('others');
+  expect(query.get('assignee')).toBe('owed');
   expect(query.get('status')).toBe('open,waiting,done,dropped');
   expect(query.get('dueBefore')).toBe('2026-10-31');
   expect(query.get('limit')).toBe('200');

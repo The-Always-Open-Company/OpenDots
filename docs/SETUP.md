@@ -139,35 +139,37 @@ Back up `DOCUMENTS_DIR` together with the SQLite database. The Postgres data can
 
 Dots keep a list of things to follow up on: what you need to do, and what others owe you. Action items need `DATABASE_URL` and `OPENAI_API_KEY`; without them the tools, API and screen are not available.
 
-Open **Action items** on the icon rail to see them. Its badge counts your items that are overdue or due within three days. The list is grouped into overdue, due soon, upcoming, no due date, waiting, and owed to you; turn on **Show completed** to include done and dropped items. Type in the search box to rank items by meaning instead, and filter by who owes it, status, person or organization, label and due dates. Clicking a person, organization or label on an item filters by it. Select an item to see its context, the people involved and their roles, the quoted source with a link back to the document, page or conversation, and its history. From there you can mark it done, waiting or dropped, reopen it, change its priority, due date or reminder date, add a note, or delete it. Dates you pick are read in your browser's timezone.
+Open **Action items** on the icon rail to see them. Its badge counts your items that are overdue or due within three days. The list is grouped into overdue, due soon, upcoming, no due date, waiting, owed to you, and between others (someone else's task for a third person); turn on **Show completed** to include done and dropped items. Type in the search box to rank items by meaning instead, and filter by who owes it, status, person or organization, label and due dates. Clicking a person, organization or label on an item filters by it. Select an item to see its context, the people involved and their roles, the quoted source with a link back to the document, page or conversation, and its history. From there you can mark it done, waiting or dropped, reopen it, change its priority, due date or reminder date, add a note, or delete it. Dates you pick are read in your browser's timezone.
 
 When a Dot reads something with commitments in it (meeting notes, an email thread, a document, or your own message), it files them with `create_action_items` and tells you what it filed. Each item keeps:
 
 - a statement that makes sense on its own, the surrounding context, and optional details;
 - status (open, waiting, done, dropped), priority, due date, reminder date and labels;
-- the people, organizations, projects and topics involved, each with a role: who must do it (no owner means you), who asked for it, and what it is about;
+- the people, organizations, projects and topics involved, each with a role: `assignee` (who must do it), `requester` (who asked for it), or `about`. You are never tagged: no assignee means the item is yours, and an assignee with no requester means it is owed to you;
 - where it came from: the document and passage, the page, or the conversation, with a short quote;
 - a history of notes, changes and reminders.
 
+Meeting notes usually name you like anyone else ("Andre to send the matrix"). So that those items are filed as yours, open workspace settings and enter the **Names you go by**, separated by commas, for example `Andre Smart, Andre`. Dots are told these names mean you, and the server leaves any person with one of these names (or an alias merged into them) off the items it saves. Saving the names also takes you off items filed earlier, and each one records the change in its history.
+
 Names are matched ignoring case, accents, punctuation and suffixes such as "Inc." or "Ltd", so "Company A, Inc." and "company a" are the same organization. A close but different name (one misspelt word, or extra words) creates a new entry; the Dot merges it with `merge_entities` when they are clearly the same and asks you when it is unsure. A new item that closely matches an open one is reported as a possible duplicate instead of being filed twice.
 
-Search filters by status, people and organizations, owner, requester, labels and due dates first, then ranks what is left by keyword and meaning together, and the search model drops weak matches. So "the Company A security work" finds the security item from one document and not the Company A pricing item from another. A date without a time is read in the Dot's timezone; due dates mean the end of that day and reminders 9:00. The timezone defaults to UTC; set it with `PUT /api/dots/<id>/policy` and `{ "timezone": "America/New_York" }`. API calls can pass `timezone` instead.
+Search filters by status, people and organizations, assignee, requester, labels and due dates first, then ranks what is left by keyword and meaning together, and the search model drops weak matches. So "the Company A security work" finds the security item from one document and not the Company A pricing item from another. A date without a time is read in the Dot's timezone; due dates mean the end of that day and reminders 9:00. The timezone defaults to UTC; set it with `PUT /api/dots/<id>/policy` and `{ "timezone": "America/New_York" }`. API calls can pass `timezone` instead.
 
 `review_action_items` lists overdue items, items due within three days, reminders that have come due, overdue items others owe you, and items untouched for two weeks. To be reminded regularly, ask a Dot to "review my action items every weekday at 9" and approve the schedule it proposes; scheduled runs record each reminder so it is not repeated.
 
 The same operations are available over HTTP. Send `Content-Type: application/json` on every request that is not a GET.
 
-| Method and path                    | Purpose                                                                                                                                                             |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/action-items`            | Search or list. Query: `q`, `entity` (repeatable), `owner` (`me`, `others` or a name), `requester`, `status`, `label`, `dueBefore`, `dueAfter`, `limit`, `timezone` |
-| `GET /api/action-items/review`     | The review lists. `?markReminded=true` records reminders as given                                                                                                   |
-| `GET /api/action-items/:id`        | One item with its history                                                                                                                                           |
-| `POST /api/action-items`           | Create one item, or `{ "items": [...] }`. Set `"force": true` to file a possible duplicate                                                                          |
-| `PATCH /api/action-items/:id`      | Change fields, `addEntities` or `removeEntities`                                                                                                                    |
-| `POST /api/action-items/:id/notes` | Add a note `{ "note": "..." }`                                                                                                                                      |
-| `DELETE /api/action-items/:id`     | Delete an item                                                                                                                                                      |
-| `GET /api/entities`                | List people, organizations, projects and topics. Query: `q`, `kind`                                                                                                 |
-| `POST /api/entities/merge`         | Merge `{ "fromEntityId": "...", "intoEntityId": "..." }`                                                                                                            |
+| Method and path                    | Purpose                                                                                                                                                                        |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /api/action-items`            | Search or list. Query: `q`, `entity` (repeatable), `assignee` (`me`, `owed`, `others` or a name), `requester`, `status`, `label`, `dueBefore`, `dueAfter`, `limit`, `timezone` |
+| `GET /api/action-items/review`     | The review lists. `?markReminded=true` records reminders as given                                                                                                              |
+| `GET /api/action-items/:id`        | One item with its history                                                                                                                                                      |
+| `POST /api/action-items`           | Create one item, or `{ "items": [...] }`. Set `"force": true` to file a possible duplicate                                                                                     |
+| `PATCH /api/action-items/:id`      | Change fields, `addEntities` or `removeEntities`                                                                                                                               |
+| `POST /api/action-items/:id/notes` | Add a note `{ "note": "..." }`                                                                                                                                                 |
+| `DELETE /api/action-items/:id`     | Delete an item                                                                                                                                                                 |
+| `GET /api/entities`                | List people, organizations, projects and topics. Query: `q`, `kind`                                                                                                            |
+| `POST /api/entities/merge`         | Merge `{ "fromEntityId": "...", "intoEntityId": "..." }`                                                                                                                       |
 
 ```sh
 curl -X POST localhost:4310/api/action-items -H 'Content-Type: application/json' -d '{

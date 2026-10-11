@@ -16,7 +16,8 @@ import {
   dueText,
   dueTone,
   groupActionItems,
-  ownerLabel,
+  assigneeText,
+  ownershipOf,
   ROLE_LABELS,
 } from './action-item-groups';
 
@@ -37,7 +38,7 @@ interface Review {
 
 export interface ActionItemFilters {
   query: string;
-  owner: '' | 'me' | 'others';
+  assignee: '' | 'me' | 'owed' | 'others';
   status: '' | ActionItemStatus;
   showCompleted: boolean;
   entities: string[];
@@ -48,7 +49,7 @@ export interface ActionItemFilters {
 
 export const EMPTY_FILTERS: ActionItemFilters = {
   query: '',
-  owner: '',
+  assignee: '',
   status: '',
   showCompleted: false,
   entities: [],
@@ -76,7 +77,7 @@ export function actionItemQuery(filters: ActionItemFilters, timeZone: string) {
   const params = new URLSearchParams();
   if (filters.query.trim()) params.set('q', filters.query.trim());
   for (const name of filters.entities) params.append('entity', name);
-  if (filters.owner) params.set('owner', filters.owner);
+  if (filters.assignee) params.set('assignee', filters.assignee);
   const statuses = filters.status
     ? [filters.status]
     : filters.showCompleted
@@ -203,7 +204,7 @@ export function ActionItems({
   ].sort();
   const filtered =
     searching ||
-    filters.owner ||
+    filters.assignee ||
     filters.status ||
     filters.entities.length ||
     filters.label ||
@@ -244,15 +245,18 @@ export function ActionItems({
         <div className="document-filters">
           <select
             aria-label="Filter by who owes it"
-            value={filters.owner}
+            value={filters.assignee}
             disabled={!available}
             onChange={(event) =>
-              set({ owner: event.target.value as ActionItemFilters['owner'] })
+              set({
+                assignee: event.target.value as ActionItemFilters['assignee'],
+              })
             }
           >
             <option value="">Anyone owes it</option>
             <option value="me">You owe it</option>
-            <option value="others">Others owe you</option>
+            <option value="owed">Others owe you</option>
+            <option value="others">Between others</option>
           </select>
           <select
             aria-label="Filter by status"
@@ -527,9 +531,12 @@ function ActionItemRow({
   onEntity: (name: string) => void;
   onLabel: (label: string) => void;
 }) {
-  const owner = ownerLabel(item);
+  const between = ownershipOf(item) === 'others';
   const closed = item.status === 'done' || item.status === 'dropped';
-  const tags = item.entities.filter((entity) => entity.role !== 'owner');
+  const tags = item.entities.filter(
+    (entity) =>
+      entity.role !== 'assignee' && !(between && entity.role === 'requester'),
+  );
   return (
     <li
       className={`action-item-row ${selected ? 'selected' : ''} ${closed ? 'closed' : ''}`}
@@ -541,7 +548,7 @@ function ActionItemRow({
       >
         <strong>{item.statement}</strong>
         <span className="action-item-meta">
-          <span>{owner === 'You' ? 'You' : `${owner} owes you`}</span>
+          <span>{assigneeText(item)}</span>
           {closed ? (
             <span>{STATUS_LABELS[item.status]}</span>
           ) : (

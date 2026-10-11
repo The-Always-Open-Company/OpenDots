@@ -11,6 +11,8 @@ export interface Settings {
   paused: boolean;
   researchAllowed: boolean;
   memoryAllowed: boolean;
+  /** Names the owner goes by in notes and documents, e.g. ["Andre Smart", "Andre"]. */
+  ownerNames: string[];
 }
 export interface Task {
   id: string;
@@ -100,8 +102,8 @@ export const ENTITY_KINDS = [
   'topic',
 ] as const;
 export type EntityKind = (typeof ENTITY_KINDS)[number];
-/** owner: who has to do it (none means the owner of OpenDots); requester: who asked; about: anything else it concerns. */
-export const ENTITY_ROLES = ['owner', 'requester', 'about'] as const;
+/** assignee: someone else who has to do it (none means the owner of OpenDots); requester: who asked; about: anything else it concerns. */
+export const ENTITY_ROLES = ['assignee', 'requester', 'about'] as const;
 export type EntityRole = (typeof ENTITY_ROLES)[number];
 export interface Entity {
   id: string;

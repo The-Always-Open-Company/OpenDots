@@ -327,6 +327,22 @@ it('tells the model the current time so scheduled runs do not invent one', async
   }
 });
 
+it('tells the model which names in notes mean the owner', async () => {
+  const f = fixture();
+  f.store.updateSettings({ ownerNames: ['Andre Smart', 'Andre'] });
+  const network = vi
+    .spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(completion({ role: 'assistant', content: 'Done.' }));
+  await lastValueFrom(f.agent.run(f.input).pipe(toArray()));
+  const request = JSON.parse(String(network.mock.calls[0][1]?.body));
+  const system = request.messages.find(
+    (message: { role: string }) => message.role === 'system',
+  );
+  expect(system.content).toContain(
+    'You work for the owner, who goes by Andre Smart, Andre.',
+  );
+});
+
 it('notifies the owner when an interactive reply finishes', async () => {
   const database = new Store(':memory:');
   databases.push(database);

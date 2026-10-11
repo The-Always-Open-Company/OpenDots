@@ -7,6 +7,7 @@ const settings: Settings = {
   paused: false,
   researchAllowed: true,
   memoryAllowed: true,
+  ownerNames: [],
 };
 const task: Task = {
   id: 'one',

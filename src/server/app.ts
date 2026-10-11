@@ -339,12 +339,21 @@ export function createApp({
         paused: z.boolean().optional(),
         researchAllowed: z.boolean().optional(),
         memoryAllowed: z.boolean().optional(),
+        ownerNames: z
+          .array(z.string().trim().min(1).max(80))
+          .max(10)
+          .transform((names) => [...new Set(names)])
+          .optional(),
       })
       .strict()
       .safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'Invalid settings.' }, 400);
     const previous = store.settings();
     const settings = store.updateSettings(parsed.data);
+    if (parsed.data.ownerNames)
+      await actionItems
+        ?.recogniseOwner({ id: 'owner' }, c.req.raw.signal)
+        .catch(() => undefined);
     if (
       settings.paused ||
       !settings.researchAllowed ||

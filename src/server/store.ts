@@ -19,6 +19,7 @@ const defaults: Settings = {
   paused: false,
   researchAllowed: true,
   memoryAllowed: true,
+  ownerNames: [],
 };
 export class Store {
   private db: DatabaseSync;
@@ -73,7 +74,7 @@ export class Store {
     const row = this.db
       .prepare('SELECT value FROM settings WHERE id=1')
       .get() as { value: string };
-    return JSON.parse(row.value) as Settings;
+    return { ...defaults, ...(JSON.parse(row.value) as Partial<Settings>) };
   }
   updateSettings(patch: Partial<Settings>): Settings {
     return this.transaction(() => {
@@ -211,7 +212,8 @@ export class Store {
       if (this.engineFlag('cutover') === '1') return null;
       const settings = this.settings();
       if (settings.paused || !settings.researchAllowed) return null;
-      const recurringStopped = this.engineFlag('legacyRecurringStopped') === '1';
+      const recurringStopped =
+        this.engineFlag('legacyRecurringStopped') === '1';
       const expired = this.db
         .prepare("SELECT * FROM tasks WHERE status='running' AND leaseUntil<=?")
         .all(now) as unknown as Task[];
@@ -223,7 +225,7 @@ export class Store {
         );
       const task = this.db
         .prepare(
-            `SELECT * FROM tasks WHERE (status='queued' OR (status='completed' AND nextRunAt IS NOT NULL AND nextRunAt<=?)) ${recurringStopped ? 'AND intervalSeconds IS NULL' : ''} ORDER BY createdAt LIMIT 1`,
+          `SELECT * FROM tasks WHERE (status='queued' OR (status='completed' AND nextRunAt IS NOT NULL AND nextRunAt<=?)) ${recurringStopped ? 'AND intervalSeconds IS NULL' : ''} ORDER BY createdAt LIMIT 1`,
         )
         .get(now) as unknown as Task | undefined;
       if (!task) return null;

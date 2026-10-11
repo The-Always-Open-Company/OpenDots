@@ -29,7 +29,9 @@ export function itemView(
   item: ActionItem & { remindersGiven?: number },
   timeZone: string,
 ) {
-  const owners = item.entities.filter((entity) => entity.role === 'owner');
+  const assignees = item.entities.filter(
+    (entity) => entity.role === 'assignee',
+  );
   return {
     id: item.id,
     statement: item.statement,
@@ -37,8 +39,8 @@ export function itemView(
     ...(item.details ? { details: clip(item.details, 800) } : {}),
     status: item.status,
     priority: item.priority,
-    owner: owners.length
-      ? owners.map((entity) => entity.name).join(', ')
+    assignee: assignees.length
+      ? assignees.map((entity) => entity.name).join(', ')
       : 'you',
     due: localTime(item.dueAt, timeZone),
     remindAt: localTime(item.remindAt, timeZone),
@@ -141,7 +143,7 @@ export function actionItemTools(
     defineTool({
       name: 'search_action_items',
       description:
-        "Find the owner's action items by meaning and keywords within filters: entities they concern, who owes them, who asked, status, labels and due dates. Open and waiting items are searched unless statuses are given.",
+        "Find the owner's action items by meaning and keywords within filters: entities they concern, who must do them, who asked, status, labels and due dates. Open and waiting items are searched unless statuses are given.",
       parameters: searchInput.extend({
         limit: z.number().int().min(1).max(50).optional(),
       }),
@@ -260,7 +262,7 @@ export function actionItemTools(
 
 export const ACTION_ITEM_PROMPT = [
   "Action items: you keep the owner's to-do list. Whenever content the owner shares or discusses (documents, notes, emails, pages, chats) contains something the owner has to do, or something someone owes the owner, file it with create_action_items without being asked, one batch per source.",
-  'For each item: write the statement so it makes sense on its own months later; put the situation in context (which company, topic, meeting or document, and why it matters); tag organizations, people, projects and topics with a role (owner is someone else who must do it; requester is who asked; about is everything else). When the person you work for must do it, give it no owner and never tag them as an entity, even when the notes use their name; quote the source line; set a due date only when one is stated or clearly implied.',
+  'For each item: write the statement so it makes sense on its own months later; put the situation in context (which company, topic, meeting or document, and why it matters); tag organizations, people, projects and topics with a role (assignee is someone else who must do it; requester is who asked, when it was not the owner; about is everything else). Never tag the owner as an entity under any of their names: leave out the assignee when the owner must do it, and leave out the requester when the owner asked. Quote the source line; set a due date only when one is stated or clearly implied.',
   'Then tell the owner briefly what you filed, what matched existing items, and what you were unsure about.',
   'When a result is possible_duplicate, add what is new to the existing item with add_action_item_note; refile with force only if it is really a different item.',
   'When a result lists possibleEntityMatches, merge them with merge_entities when they are clearly the same, and ask the owner only when you are unsure.',

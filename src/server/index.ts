@@ -151,6 +151,7 @@ const actionItems =
         embed,
         workspace,
         json(config.rerankModel ?? config.model),
+        { ownerNames: () => store.settings().ownerNames },
       )
     : undefined;
 const notifications = new NotificationService(store.database);
@@ -300,7 +301,8 @@ const server = serve({ fetch: app.fetch, hostname: host, port }, (info) => {
   settleHandoffs();
   void platform.start();
   void actionItems
-    ?.reindexStale(500)
+    ?.recogniseOwner({ id: 'owner' })
+    .then(() => actionItems.reindexStale(500))
     .catch(() =>
       console.error(
         'Action item search index is behind; it will catch up on the next search.',

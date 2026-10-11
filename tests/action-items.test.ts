@@ -90,6 +90,7 @@ function setup(complete?: CompleteJson) {
   const f = fixture();
   const itemIndex = new MemoryIndex();
   const embedded: string[] = [];
+  const ownerNames: string[] = [];
   const service = new ActionItemService(
     new ActionItemStore(f.store.database),
     itemIndex,
@@ -99,9 +100,10 @@ function setup(complete?: CompleteJson) {
     },
     f.workspace,
     complete,
+    { ownerNames: () => [...ownerNames, ...f.store.settings().ownerNames] },
   );
   const owner: Actor = { id: 'owner', timeZone: 'UTC' };
-  return { ...f, itemIndex, service, owner, embedded };
+  return { ...f, itemIndex, service, owner, embedded, ownerNames };
 }
 
 const chat: SourceInput = {
@@ -136,7 +138,7 @@ const owedByPersonJ: ActionItemInput & { source: SourceInput } = {
   context: 'Company F renewal on topic G; Person J promised the redlines.',
   due: '2025-10-01',
   entities: [
-    { name: 'Person J', kind: 'person', role: 'owner' },
+    { name: 'Person J', kind: 'person', role: 'assignee' },
     { name: 'Company F', kind: 'organization', role: 'about' },
     { name: 'Topic G', kind: 'topic', role: 'about' },
   ],
@@ -164,6 +166,40 @@ describe('entity names', () => {
     expect(nearKeys('acme', 'acme holdings')).toBe(true);
     expect(nearKeys('john smith', 'jon smith')).toBe(true);
     expect(nearKeys('acme', 'globex')).toBe(false);
+  });
+
+  it('renames the old owner role to assignee', () => {
+    const f = fixture();
+    const store = new ActionItemStore(f.store.database);
+    const item = store.create({
+      statement: 'Person J owes the redlines',
+      details: '',
+      context: 'Renewal',
+      status: 'open',
+      priority: 'normal',
+      dueAt: null,
+      remindAt: null,
+      labels: [],
+      createdBy: 'owner',
+      source: {
+        kind: 'owner',
+        id: null,
+        ref: null,
+        title: null,
+        excerpt: '',
+        date: null,
+        threadId: null,
+      },
+      links: [],
+    });
+    const person = store.createEntity('person', 'Person J');
+    f.store.database
+      .prepare("INSERT INTO action_item_entities VALUES (?, ?, 'owner')")
+      .run(item.id, person.id);
+    new ActionItemStore(f.store.database);
+    expect(store.get(item.id)?.entities).toEqual([
+      expect.objectContaining({ name: 'Person J', role: 'assignee' }),
+    ]);
   });
 });
 
@@ -204,16 +240,16 @@ describe('action items', () => {
       owner,
     );
     expect(fAndJ.items.map((item) => item.id)).toEqual([redlines.id]);
-    expect((await service.search({ owner: 'others' }, owner)).items).toEqual([
+    expect((await service.search({ assignee: 'owed' }, owner)).items).toEqual([
       expect.objectContaining({ id: redlines.id }),
     ]);
     expect(
-      (await service.search({ owner: 'Person J' }, owner)).items.map(
+      (await service.search({ assignee: 'Person J' }, owner)).items.map(
         (item) => item.id,
       ),
     ).toEqual([redlines.id]);
     expect(
-      (await service.search({ owner: 'me' }, owner)).items.map(
+      (await service.search({ assignee: 'me' }, owner)).items.map(
         (item) => item.id,
       ),
     ).toEqual([pricing.id, security.id]);
@@ -409,6 +445,89 @@ describe('action items', () => {
     );
   });
 
+  it("leaves the owner off items under any of the owner's names", async () => {
+    const { service, owner, ownerNames } = setup();
+    ownerNames.push('Andre Smart', 'Andre');
+    const andre = { name: 'andre', kind: 'person' as const };
+    const filed = await service.create(
+      [
+        {
+          ...owedByPersonJ,
+          statement: 'Andre to deliver the capacity matrix for topic G',
+          entities: [
+            { ...andre, role: 'assignee' },
+            { name: 'Topic G', kind: 'topic', role: 'about' },
+          ],
+        },
+        {
+          ...companyAPricing,
+          statement: 'Person J to send the redlines Andre asked for',
+          entities: [
+            { name: 'Person J', kind: 'person', role: 'assignee' },
+            { name: 'Andre Smart', kind: 'person', role: 'requester' },
+          ],
+        },
+        {
+          ...companyASecurity,
+          statement: 'Person K to review the grant letter for Person L',
+          entities: [
+            { name: 'Person K', kind: 'person', role: 'assignee' },
+            { name: 'Person L', kind: 'person', role: 'requester' },
+          ],
+        },
+      ],
+      owner,
+    );
+    const [mine, owed, between] = filed.results.map(
+      (_, position) => created(filed, position).item,
+    );
+    expect(mine.entities.map((entity) => entity.name)).toEqual(['Topic G']);
+    expect(owed.entities.map((entity) => entity.role)).toEqual(['assignee']);
+    const ids = async (assignee: string) =>
+      (await service.search({ assignee }, owner)).items.map((item) => item.id);
+    expect(await ids('me')).toEqual([mine.id]);
+    expect(await ids('owed')).toEqual([owed.id]);
+    expect(await ids('others')).toEqual([between.id]);
+    const updated = await service.update(
+      between.id,
+      { addEntities: [{ ...andre, role: 'about' }] },
+      owner,
+    );
+    expect(updated.item.entities).toHaveLength(2);
+  });
+
+  it('recognises the owner on items filed before their names were known', async () => {
+    const { service, owner, ownerNames, itemIndex } = setup();
+    const filed = created(
+      await service.create(
+        [
+          {
+            ...owedByPersonJ,
+            statement: 'Andre to confirm access to the dev environment',
+            entities: [{ name: 'Andre', kind: 'person', role: 'assignee' }],
+          },
+        ],
+        owner,
+      ),
+    ).item;
+    expect((await service.search({ assignee: 'owed' }, owner)).items).toEqual([
+      expect.objectContaining({ id: filed.id }),
+    ]);
+    ownerNames.push('Andre');
+    expect(await service.recogniseOwner(owner)).toBe(1);
+    const item = service.detail(filed.id)!;
+    expect(item.entities).toEqual([]);
+    expect(item.events.at(-1)).toMatchObject({
+      kind: 'update',
+      text: 'Recognised Andre as you.',
+    });
+    expect(itemIndex.rows.get(filed.id)?.updatedAt).toBe(item.updatedAt);
+    expect((await service.search({ assignee: 'me' }, owner)).items).toEqual([
+      expect.objectContaining({ id: filed.id }),
+    ]);
+    expect(await service.recogniseOwner(owner)).toBe(0);
+  });
+
   it('only lets a Dot cite documents it can read', async () => {
     const f = setup();
     const documentId = await indexed(f, 'Company A sync', {
@@ -485,7 +604,7 @@ describe('action item tools', () => {
     } as never)) as {
       items: { owner: string; due: string | null }[];
     };
-    expect(found.items[0]).toMatchObject({ owner: 'you', due: null });
+    expect(found.items[0]).toMatchObject({ assignee: 'you', due: null });
     const parameters = (search as unknown as { parameters: z.ZodType })
       .parameters;
     expect(parameters.safeParse({ limit: 50 }).success).toBe(true);
@@ -606,5 +725,36 @@ describe('action item API', () => {
       (await send(`/api/action-items/${id}`, 'PATCH', { status: 'open' }))
         .status,
     ).toBe(404);
+  });
+
+  it("recognises the owner's names saved in settings", async () => {
+    const { service, store, owner } = setup();
+    const app = createApp({
+      store,
+      runner: new Runner(store, { mode: 'sample', baseUrl: '' }),
+      config: { mode: 'sample', baseUrl: '' },
+      actionItems: service,
+    });
+    await service.create(
+      [
+        {
+          ...owedByPersonJ,
+          entities: [{ name: 'Andre', kind: 'person', role: 'assignee' }],
+        },
+      ],
+      owner,
+    );
+    const saved = await app.request('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ownerNames: ['Andre Smart', 'Andre', 'Andre'] }),
+    });
+    expect(await saved.json()).toMatchObject({
+      ownerNames: ['Andre Smart', 'Andre'],
+    });
+    const mine = (await (
+      await app.request('/api/action-items?assignee=me')
+    ).json()) as { items: { entities: unknown[] }[] };
+    expect(mine.items).toEqual([expect.objectContaining({ entities: [] })]);
   });
 });

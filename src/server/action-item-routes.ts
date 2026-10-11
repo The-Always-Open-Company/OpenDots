@@ -66,7 +66,7 @@ export function actionItemRoutes(app: Hono, service: ActionItemService) {
           {
             query: c.req.query('q'),
             entities: c.req.queries('entity'),
-            owner: c.req.query('owner'),
+            assignee: c.req.query('assignee'),
             requester: c.req.query('requester'),
             statuses: statuses.length
               ? z.array(z.enum(ACTION_ITEM_STATUSES)).parse(statuses)

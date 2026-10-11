@@ -117,11 +117,13 @@ export type ActionItemPatch = Partial<
   >
 >;
 
+/** Whose an item is: the owner's own, owed to the owner, or between other people. */
+export type ItemOwnership = 'me' | 'owed' | 'others';
+
 export interface ActionItemFilter {
   statuses?: ActionItemStatus[];
-  /** "me": no one else owns it; "others": someone else owes it. */
-  owner?: 'me' | 'others';
-  ownerIds?: string[];
+  ownership?: ItemOwnership;
+  assigneeIds?: string[];
   requesterIds?: string[];
   /** Every one of these entities must be linked, in any role. */
   entityIds?: string[];
@@ -137,8 +139,14 @@ type Row = Record<string, SQLInputValue>;
 const PRIORITY_RANK =
   "CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END";
 const OPEN = "status IN ('open','waiting')";
-const HAS_OWNER =
-  "EXISTS (SELECT 1 FROM action_item_entities l WHERE l.itemId=a.id AND l.role='owner')";
+const hasRole = (role: EntityRole) =>
+  `EXISTS (SELECT 1 FROM action_item_entities l WHERE l.itemId=a.id AND l.role='${role}')`;
+/** The owner never appears as an entity, so no requester on someone else's item means the owner asked. */
+const OWNERSHIP: Record<ItemOwnership, string> = {
+  me: `NOT ${hasRole('assignee')}`,
+  owed: `${hasRole('assignee')} AND NOT ${hasRole('requester')}`,
+  others: `${hasRole('assignee')} AND ${hasRole('requester')}`,
+};
 
 /** Action items, their entities, and their history. The source of truth; search copies live elsewhere. */
 export class ActionItemStore {
@@ -150,7 +158,9 @@ export class ActionItemStore {
       CREATE TABLE IF NOT EXISTS action_item_entities(itemId TEXT NOT NULL, entityId TEXT NOT NULL, role TEXT NOT NULL, PRIMARY KEY(itemId, entityId, role));
       CREATE INDEX IF NOT EXISTS action_item_entities_entity ON action_item_entities(entityId, role);
       CREATE TABLE IF NOT EXISTS action_item_events(id TEXT PRIMARY KEY, itemId TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, actor TEXT NOT NULL, createdAt INTEGER NOT NULL);
-      CREATE INDEX IF NOT EXISTS action_item_events_item ON action_item_events(itemId, createdAt);`);
+      CREATE INDEX IF NOT EXISTS action_item_events_item ON action_item_events(itemId, createdAt);
+      UPDATE OR IGNORE action_item_entities SET role='assignee' WHERE role='owner';
+      DELETE FROM action_item_entities WHERE role='owner';`);
   }
 
   private transaction<T>(work: () => T): T {
@@ -384,10 +394,9 @@ export class ActionItemStore {
       where.push(`a.status IN (${filter.statuses.map(() => '?').join(',')})`);
       params.push(...filter.statuses);
     }
-    if (filter.owner === 'me') where.push(`NOT ${HAS_OWNER}`);
-    if (filter.owner === 'others') where.push(HAS_OWNER);
+    if (filter.ownership) where.push(OWNERSHIP[filter.ownership]);
     for (const [role, ids] of [
-      ['owner', filter.ownerIds],
+      ['assignee', filter.assigneeIds],
       ['requester', filter.requesterIds],
     ] as const)
       if (ids?.length) {
@@ -440,16 +449,16 @@ export class ActionItemStore {
           .all(...params) as Row[]
       ).map((row) => String(row.id));
     return {
-      overdue: ids(`a.dueAt < ? AND NOT ${HAS_OWNER}`, now),
+      overdue: ids(`a.dueAt < ? AND ${OWNERSHIP.me}`, now),
       dueSoon: ids(
-        `a.dueAt >= ? AND a.dueAt <= ? AND NOT ${HAS_OWNER}`,
+        `a.dueAt >= ? AND a.dueAt <= ? AND ${OWNERSHIP.me}`,
         now,
         now + soonMs,
       ),
       reminders: ids('a.remindAt IS NOT NULL AND a.remindAt <= ?', now),
-      owedToYouOverdue: ids(`a.dueAt < ? AND ${HAS_OWNER}`, now),
+      owedToYouOverdue: ids(`a.dueAt < ? AND ${OWNERSHIP.owed}`, now),
       stale: ids(
-        `a.updatedAt < ? AND (a.dueAt IS NULL OR a.dueAt >= ?) AND NOT ${HAS_OWNER}`,
+        `a.updatedAt < ? AND (a.dueAt IS NULL OR a.dueAt >= ?) AND ${OWNERSHIP.me}`,
         now - staleMs,
         now,
       ),
@@ -592,6 +601,28 @@ export class ActionItemStore {
         )
         .all(entityId) as Row[]
     ).map((row) => String(row.itemId));
+  }
+
+  /** Takes these entities off every item. Returns the affected items. */
+  unlinkEverywhere(entityIds: string[], now = Date.now()) {
+    if (!entityIds.length) return [];
+    const marks = entityIds.map(() => '?').join(',');
+    return this.transaction(() => {
+      const items = (
+        this.db
+          .prepare(
+            `SELECT DISTINCT itemId FROM action_item_entities WHERE entityId IN (${marks})`,
+          )
+          .all(...entityIds) as Row[]
+      ).map((row) => String(row.itemId));
+      this.db
+        .prepare(
+          `DELETE FROM action_item_entities WHERE entityId IN (${marks})`,
+        )
+        .run(...entityIds);
+      for (const item of items) this.touch(item, now);
+      return items;
+    });
   }
 
   /** Folds `fromId` into `intoId`: links, aliases, and its name move over. Returns the affected items. */

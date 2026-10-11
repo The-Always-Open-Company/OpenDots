@@ -6,7 +6,7 @@ import {
   dueText,
   dueTone,
   groupActionItems,
-  ownerLabel,
+  assigneeText,
 } from '../src/client/action-item-groups';
 
 // Local noon, so day arithmetic holds in any timezone.
@@ -18,7 +18,13 @@ const personJ: ActionItemEntity = {
   id: 'j',
   kind: 'person',
   name: 'Person J',
-  role: 'owner',
+  role: 'assignee',
+};
+const personK: ActionItemEntity = {
+  id: 'k',
+  kind: 'person',
+  name: 'Person K',
+  role: 'requester',
 };
 
 describe('groupActionItems', () => {
@@ -30,6 +36,7 @@ describe('groupActionItems', () => {
       actionItem({ statement: 'yesterday', dueAt: at(-1) }),
       actionItem({ statement: 'waiting', status: 'waiting', dueAt: at(-3) }),
       actionItem({ statement: 'owed', entities: [personJ], dueAt: at(-2) }),
+      actionItem({ statement: 'between', entities: [personJ, personK] }),
       actionItem({ statement: 'done', status: 'done' }),
       actionItem({ statement: 'dropped', status: 'dropped' }),
     ];
@@ -45,6 +52,7 @@ describe('groupActionItems', () => {
       ['No due date', ['no date']],
       ['Waiting', ['waiting']],
       ['Owed to you', ['owed']],
+      ['Between others', ['between']],
       ['Done and dropped', ['done', 'dropped']],
     ]);
   });
@@ -61,16 +69,21 @@ describe('groupActionItems', () => {
     expect(groups[0].items.map((item) => item.statement)).toEqual(['b', 'a']);
   });
 
-  it('treats requesters and topics as context, not owners', () => {
+  it('treats requesters and topics on your items as context', () => {
     const item = actionItem({
       entities: [
         { id: 'a', kind: 'organization', name: 'Company A', role: 'about' },
-        { id: 'k', kind: 'person', name: 'Person K', role: 'requester' },
+        personK,
       ],
     });
     expect(groupActionItems([item], now)[0].key).toBe('noDate');
-    expect(ownerLabel(item)).toBe('You');
-    expect(ownerLabel(actionItem({ entities: [personJ] }))).toBe('Person J');
+    expect(assigneeText(item)).toBe('You');
+    expect(assigneeText(actionItem({ entities: [personJ] }))).toBe(
+      'Person J owes you',
+    );
+    expect(assigneeText(actionItem({ entities: [personJ, personK] }))).toBe(
+      'Person J, for Person K',
+    );
   });
 });
 
