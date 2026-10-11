@@ -81,6 +81,71 @@ export interface Skill {
   /** Dots allowed to load this skill. */
   dotIds: string[];
 }
+export type PluginKind = 'mcp' | 'google-calendar';
+export type PluginAuthMode = 'none' | 'env' | 'stored' | 'secret_url' | 'oauth';
+export type PluginAccess = 'read' | 'write' | 'destructive';
+/** `deny` is stored as Off; a missing grant is also Off. */
+export type PluginGrantMode = 'allow' | 'ask' | 'deny';
+/** Parameter name to the values a Dot may pass. One value pins it. */
+export type PluginConstraints = Record<string, string[]>;
+export interface PluginToolParameter {
+  name: string;
+  type: string;
+  description?: string;
+  enum?: string[];
+  required: boolean;
+}
+export interface PluginTool {
+  name: string;
+  description: string;
+  access: PluginAccess;
+  /** True when the owner chose the class instead of the server's hints. */
+  accessOverridden: boolean;
+  parameters: PluginToolParameter[];
+}
+export interface PluginGrant {
+  dotId: string;
+  toolName: string;
+  mode: PluginGrantMode;
+  constraints: PluginConstraints;
+}
+export interface PluginActivity {
+  id: string;
+  dotId: string;
+  toolName: string;
+  arguments: unknown;
+  status: string;
+  at: number;
+  source: 'call' | 'approval';
+}
+export interface Plugin {
+  id: string;
+  name: string;
+  kind: PluginKind;
+  preset: string | null;
+  /** Shown to the owner; for a secret URL this is only its origin. */
+  url: string;
+  authMode: PluginAuthMode;
+  tokenEnv: string;
+  /** Whether the credential this plugin needs is available on the server. */
+  secretConfigured: boolean;
+  accountLabel: string | null;
+  config: Record<string, unknown>;
+  oauth: { clientId: string; scopes: string[]; grantedScopes: string[] } | null;
+  status: 'connected' | 'unchecked' | 'stale' | 'error';
+  error: string | null;
+  skipped: { name: string; reason: string }[];
+  createdAt: number | null;
+  checkedAt: number | null;
+  tools: PluginTool[];
+  grants: PluginGrant[];
+  activity: PluginActivity[];
+}
+export interface PluginsResponse {
+  plugins: Plugin[];
+  /** PLUGIN_SECRET_KEY is set, so tokens can be stored from the UI. */
+  secretStorage: boolean;
+}
 export const ACTION_ITEM_STATUSES = [
   'open',
   'waiting',
@@ -204,6 +269,7 @@ export interface State {
   work?: WorkView[];
   actions?: PendingAction[];
   rules?: { id: string; text: string; mode: string; toolNames: string[] }[];
+  plugins?: Omit<Plugin, 'tools' | 'grants' | 'activity'>[];
   /** Unread, newest first. */
   notifications?: AppNotification[];
 }

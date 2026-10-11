@@ -221,6 +221,47 @@ npm run browser
 
 Use the same secret on the app and browser processes. Browser navigation is read-only with JavaScript disabled. Private addresses, redirects, and authenticated pages are unsupported; provide a canonical public URL. This is a bounded research tool, not a general desktop or shell.
 
+## Plugins
+
+Plugins give Dots access to external systems. Open **Plugins** on the icon rail, choose an integration, and then decide what each Dot may do with it. Google Calendar is a native integration built into OpenDots. Linear, Zoho and any custom server connect over remote MCP (streamable HTTP).
+
+Set `PLUGIN_SECRET_KEY` (32 bytes, base64: `openssl rand -base64 32`) to save credentials from the Plugins page. They are encrypted with AES-256-GCM, never returned to the browser, and redacted from tool results and errors. Keep the key stable: changing it makes saved credentials unreadable. Without the key, an MCP plugin can still read its token from a server environment variable.
+
+### Permissions
+
+Each layer can only narrow the one before it, and all of them are enforced on the server:
+
+1. **Provider credential.** The outer limit, chosen at setup: a read-only or team-scoped Linear key, the tools you add to a Zoho MCP server, or the Google scopes you request.
+2. **Pinned tools.** OpenDots records each tool's definition, including its read-only and destructive hints. If the server changes any of them, the plugin stops until you choose **Review and accept**. Dots keep access only to tools that did not change, and new tools start off for every Dot. Each tool is classed as Read, Write or Destructive; a tool without hints counts as Write, and you can override the class.
+3. **Per-Dot access.** Each tool is Off, Ask first or Allowed for each Dot. Ask first holds every call, including background work and polls, until you approve it. **Allow read tools** and **All tools, ask before writes** set a Dot's access in one step.
+4. **Limits.** For any text parameter, pin one value or list the values a Dot may pass, such as a Linear `teamId` or a Calendar `calendarId`. A pinned value is filled in when the model leaves it out; any other value is refused before the call leaves OpenDots.
+5. **Runtime guards.** Pausing stops plugin calls, consulted Dots cannot use plugin tools, and results are passed to the model as untrusted data.
+
+Each plugin card lists recent calls and approvals, with secrets redacted. Deleting a plugin removes every Dot's access and stops watches that poll it.
+
+### Google Calendar
+
+1. In Google Cloud, enable the Google Calendar API for a project.
+2. Configure the OAuth consent screen. Add `calendar.readonly` for read-only access, or `calendar.events` and `calendar.calendarlist.readonly` to let Dots create and change events.
+3. Create an OAuth client of type **Web application**. Add `<APP_ORIGIN>/oauth/callback` as a redirect URI, using the first origin in `APP_ORIGIN`. With `npm run dev` this is `http://localhost:5173/oauth/callback`.
+4. In Plugins, add Google Calendar, choose the access level, paste the client id and secret, and save. Then choose **Connect** and sign in with the account the Dots should use.
+
+The integration's own settings limit which calendars Dots may use (default `primary`) and which attendee domains they may invite (default: the connected account's domain). They also set whether Google emails attendees about changes (default: never) and whether deletes are allowed (default: off). OpenDots refreshes the access token automatically. If Google revokes access, the card asks you to reconnect.
+
+Google also offers a Calendar MCP server, but it is in Developer Preview. OpenDots will reconsider it once it is generally available.
+
+### Linear
+
+Linear's hosted MCP server accepts an API key. In Linear, open **Settings → Security & access**, create a dedicated key, and give it only the permissions and teams the Dots need. Add the Linear plugin and paste the key. Choose the read-only endpoint (`https://mcp.linear.app/mcp/readonly`) for Dots that should never change anything. To let some Dots write while others only read, add a second Linear plugin with its own key.
+
+### Zoho
+
+Create a server at [mcp.zoho.com](https://mcp.zoho.com), or your region's domain (`.eu`, `.in`, `.com.au`, `.jp`), and add only the tools the Dots need. Under **Connection**, choose **Authorization via Connection** and authorize it. The default Authorization on Demand needs a browser sign-in during the first tool call, which background work cannot complete. Copy the server URL from **Connect** and paste it into the Zoho plugin. The URL contains an API key, so OpenDots stores it encrypted and shows only its host. If it leaks, use **Regenerate API Key** in Zoho and paste the new URL.
+
+### Custom MCP servers
+
+Any remote MCP server over streamable HTTP works with no authentication, a pasted bearer token, or a token read from an environment variable. Plugin URLs must use HTTPS and resolve to public addresses. `http://127.0.0.1` is allowed outside production for local testing. Tools whose full name (`plugin_<id>_<tool>`) would be longer than 64 characters or contain other characters are skipped and listed on the card.
+
 ## Persistent Dot computers
 
 For a separate browser, persistent files, and optional shell for each specialist, follow [Computer setup](COMPUTERS.md). This uses pinned OpenBot computer/supervisor services and per-Dot permissions. Parallel research tools remain available alongside configured computer tools. With the browser provider selected, Dots use their computer tools in place of the read-only public-page tool; enable each Dot's required capabilities before use.

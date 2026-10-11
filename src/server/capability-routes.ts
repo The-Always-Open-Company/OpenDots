@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { approvalDenied } from './approved-actions.js';
 import type { ExecutionEngine } from './execution-engine.js';
 import type { Platform } from './platform.js';
+import { secretStorageAvailable } from './plugin-secrets.js';
 import type { PluginService } from './plugins.js';
 import { initialRunAt, parseSchedule } from './schedule-time.js';
 import {
@@ -37,6 +38,8 @@ export function capabilityRoutes(
     platform?: Platform;
     plugins: PluginService;
     skillsDir: string;
+    /** Public origin for OAuth redirects; defaults to the request's origin. */
+    appOrigin?: string;
   },
 ) {
   const { engine, store, runner, work, platform, plugins, skillsDir } = options;
@@ -278,23 +281,83 @@ export function capabilityRoutes(
       );
     }
   });
+  const failure = (error: unknown, fallback: string) =>
+    error instanceof Error ? error.message : fallback;
+  app.get('/api/plugins', (c) =>
+    c.json({
+      plugins: plugins.details(),
+      secretStorage: secretStorageAvailable(),
+    }),
+  );
   app.post('/api/plugins', async (c) => {
     const parsed = z
       .object({
         id: z.string(),
         name: z.string().trim().min(1).max(80),
-        url: z.string().url(),
-        tokenEnv: z.string(),
+        kind: z.enum(['mcp', 'google-calendar']).optional(),
+        preset: z.string().max(40).nullable().optional(),
+        url: z.string().max(2000).optional(),
+        authMode: z
+          .enum(['none', 'env', 'stored', 'secret_url', 'oauth'])
+          .optional(),
+        token: z.string().max(4000).optional(),
+        tokenEnv: z.string().max(120).optional(),
+        config: z.record(z.string(), z.unknown()).optional(),
+        oauth: z
+          .object({
+            clientId: z.string().trim().min(1).max(400),
+            clientSecret: z.string().max(400).optional(),
+            scopes: z.array(z.string().min(1).max(300)).min(1).max(20),
+            authorizeUrl: z.string().max(2000).optional(),
+            tokenUrl: z.string().max(2000).optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'Invalid plugin.' }, 400);
     try {
-      return c.json(plugins.save(parsed.data), 201);
+      return c.json(plugins.view(plugins.save(parsed.data)), 201);
     } catch (error) {
-      return c.json(
-        { error: error instanceof Error ? error.message : 'Invalid plugin.' },
-        400,
+      return c.json({ error: failure(error, 'Invalid plugin.') }, 400);
+    }
+  });
+  app.delete('/api/plugins/:id', (c) =>
+    plugins.remove(c.req.param('id'))
+      ? c.json({ deleted: true })
+      : c.json({ error: 'Plugin not found.' }, 404),
+  );
+  app.post('/api/plugins/:id/oauth/start', (c) => {
+    const origin = options.appOrigin ?? new URL(c.req.url).origin;
+    try {
+      return c.json({
+        url: plugins.oauthStart(c.req.param('id'), `${origin}/oauth/callback`),
+      });
+    } catch (error) {
+      return c.json({ error: failure(error, 'Could not start sign-in.') }, 400);
+    }
+  });
+  // Outside /api: the provider redirects the browser here without the owner
+  // token, so the single-use state is what authenticates this request.
+  app.get('/oauth/callback', async (c) => {
+    const back = (query: string) => c.redirect(`/#/plugins?${query}`, 302);
+    const state = c.req.query('state') ?? '';
+    const code = c.req.query('code') ?? '';
+    const denied = c.req.query('error');
+    if (!state) return back('oauth_error=Missing%20sign-in%20state.');
+    if (denied || !code) {
+      plugins.oauth.claim(state);
+      return back(
+        `oauth_error=${encodeURIComponent(denied ? `Sign-in was cancelled (${denied}).` : 'Sign-in returned no code.')}`,
+      );
+    }
+    try {
+      const id = await plugins.oauthComplete(state, code);
+      return back(`oauth=${encodeURIComponent(id)}`);
+    } catch (error) {
+      return back(
+        `oauth_error=${encodeURIComponent(failure(error, 'Sign-in failed.'))}`,
       );
     }
   });
@@ -330,28 +393,62 @@ export function capabilityRoutes(
     const parsed = z
       .object({
         dotId: z.string(),
-        toolName: z.string().min(1),
-        mode: z.enum(['allow', 'deny']),
+        toolName: z.string().min(1).optional(),
+        toolNames: z.array(z.string().min(1)).min(1).max(200).optional(),
+        mode: z.enum(['allow', 'ask', 'deny']).optional(),
+        constraints: z
+          .record(z.string(), z.array(z.string().max(200)).max(20))
+          .optional(),
       })
       .strict()
       .safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: 'Invalid plugin grant.' }, 400);
+    if (
+      !parsed.success ||
+      (!parsed.data.toolName && !parsed.data.toolNames?.length)
+    )
+      return c.json({ error: 'Invalid plugin grant.' }, 400);
+    if (platform && !platform.workspace.dot(parsed.data.dotId))
+      return c.json({ error: 'Dot not found.' }, 404);
+    const names = parsed.data.toolNames ?? [parsed.data.toolName!];
     try {
-      plugins.grant(
-        parsed.data.dotId,
+      const modes = names.map((name) =>
+        plugins.grant(
+          parsed.data.dotId,
+          c.req.param('id'),
+          name,
+          parsed.data.mode,
+          parsed.data.constraints,
+        ),
+      );
+      return c.json({ ok: true, modes });
+    } catch (error) {
+      return c.json({ error: failure(error, 'Invalid plugin grant.') }, 400);
+    }
+  });
+  app.delete('/api/plugins/:id/grants/:dotId/:toolName', (c) => {
+    plugins.revoke(
+      c.req.param('dotId'),
+      c.req.param('id'),
+      c.req.param('toolName'),
+    );
+    return c.json({ ok: true });
+  });
+  app.put('/api/plugins/:id/tools/:toolName/access', async (c) => {
+    const parsed = z
+      .object({ access: z.enum(['read', 'write', 'destructive']).nullable() })
+      .strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success)
+      return c.json({ error: 'Choose an access class.' }, 400);
+    try {
+      plugins.setAccess(
         c.req.param('id'),
-        parsed.data.toolName,
-        parsed.data.mode,
+        c.req.param('toolName'),
+        parsed.data.access,
       );
       return c.json({ ok: true });
     } catch (error) {
-      return c.json(
-        {
-          error:
-            error instanceof Error ? error.message : 'Invalid plugin grant.',
-        },
-        400,
-      );
+      return c.json({ error: failure(error, 'Tool not found.') }, 404);
     }
   });
   app.post('/api/watches', async (c) => {

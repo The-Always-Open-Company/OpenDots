@@ -161,7 +161,7 @@ export function createApp({
             work: engine.listWork(),
             actions: engine.pendingActions(),
             rules: engine.rules(),
-            plugins: plugins?.list() ?? [],
+            plugins: plugins?.views() ?? [],
           }
         : {}),
       ...(notifications
@@ -180,6 +180,7 @@ export function createApp({
       platform,
       plugins,
       skillsDir: skillsDir ?? 'skills',
+      appOrigin: Array.isArray(origin) ? origin[0] : origin,
     });
   if (actionItems) actionItemRoutes(app, actionItems);
   app.post('/api/tasks', async (c) => {

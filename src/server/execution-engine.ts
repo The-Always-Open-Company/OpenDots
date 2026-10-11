@@ -163,6 +163,19 @@ export class ExecutionEngine {
     add('inbound_events', 'nextAttemptAt', 'INTEGER');
     add('inbound_events', 'executionId', 'TEXT');
     add('work_items', 'closeRequested', 'INTEGER NOT NULL DEFAULT 0');
+    add('plugins', 'kind', "TEXT NOT NULL DEFAULT 'mcp'");
+    add('plugins', 'preset', 'TEXT');
+    add('plugins', 'configJson', "TEXT NOT NULL DEFAULT '{}'");
+    add('plugins', 'authMode', "TEXT NOT NULL DEFAULT 'env'");
+    add('plugins', 'secretCipher', 'TEXT');
+    add('plugins', 'oauthJson', 'TEXT');
+    add('plugins', 'accountLabel', 'TEXT');
+    add('plugins', 'skippedJson', "TEXT NOT NULL DEFAULT '[]'");
+    add('plugins', 'createdAt', 'INTEGER');
+    add('plugins', 'checkedAt', 'INTEGER');
+    add('plugin_tools', 'annotationsJson', "TEXT NOT NULL DEFAULT '{}'");
+    add('plugin_tools', 'access', 'TEXT');
+    add('plugin_grants', 'constraintsJson', "TEXT NOT NULL DEFAULT '{}'");
     this.db.exec(`
       UPDATE triggers SET enabled=0 WHERE enabled=1 AND workItemId IN
         (SELECT id FROM work_items WHERE status IN ('cancelled','completed','failed'));

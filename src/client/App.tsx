@@ -19,6 +19,7 @@ import {
   Pause,
   PanelLeft,
   Play,
+  Plug,
   Plus,
   Search,
   Settings2,
@@ -54,6 +55,7 @@ import { WorkActivity, WorkDetail } from './WorkActivity';
 import { WorkspaceDialog, type Dialog } from './WorkspaceDialog';
 import { LearnedMemories } from './LearnedMemories';
 import { SkillLibrary } from './SkillLibrary';
+import { PluginLibrary } from './PluginLibrary';
 import { DocumentLibrary } from './DocumentLibrary';
 import { DocumentDetail } from './DocumentDetail';
 import { ActionItems, useActionItemBadge } from './ActionItems';
@@ -88,6 +90,7 @@ export function App() {
     | 'space'
     | 'documents'
     | 'skills'
+    | 'plugins'
     | 'actionItems'
   >('chat');
   const dirtyPage = useRef(false);
@@ -112,6 +115,10 @@ export function App() {
         /^#\/spaces\/([^/]+)(?:\/pages\/([^/]+))?$/,
       );
       const documents = location.hash.match(/^#\/documents(?:\/([^/]+))?$/);
+      if (/^#\/plugins(?:\?.*)?$/.test(location.hash)) {
+        rawSetView('plugins');
+        return;
+      }
       if (!match && !documents) return;
       if (dirtyPage.current && location.hash === acceptedHash) return;
       if (
@@ -544,6 +551,15 @@ export function App() {
           <WandSparkles size={18} />
         </button>
         <button
+          className={view === 'plugins' ? 'active' : ''}
+          aria-label="Open plugins"
+          aria-current={view === 'plugins' ? 'page' : undefined}
+          title="Plugins"
+          onClick={() => railView('plugins')}
+        >
+          <Plug size={18} />
+        </button>
+        <button
           className={`rail-notifications ${notificationsOpen ? 'active' : ''}`}
           aria-label={`Notifications${unreadNotifications ? `, ${unreadNotifications} unread` : ''}`}
           aria-expanded={notificationsOpen}
@@ -732,9 +748,11 @@ export function App() {
                       ? 'Documents'
                       : view === 'skills'
                         ? 'Skills'
-                        : view === 'actionItems'
-                          ? 'Action items'
-                          : 'Memories'}
+                        : view === 'plugins'
+                          ? 'Plugins'
+                          : view === 'actionItems'
+                            ? 'Action items'
+                            : 'Memories'}
             </strong>
           </div>
           <div className="top-actions">
@@ -809,6 +827,8 @@ export function App() {
           />
         ) : view === 'skills' ? (
           <SkillLibrary dots={workspace.dots} />
+        ) : view === 'plugins' ? (
+          <PluginLibrary dots={workspace.dots} />
         ) : view === 'actionItems' ? (
           <ActionItems
             workspace={workspace}

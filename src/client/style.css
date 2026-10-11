@@ -944,6 +944,239 @@ h3 {
   width: 22px;
   height: 22px;
 }
+/* Plugins. */
+.plugin-hint {
+  font-size: 12px;
+  margin: 0 0 16px;
+}
+.plugin-presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.plugin-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  height: auto;
+}
+.plugin-preset:hover {
+  border-color: #438c81;
+}
+.plugin-preset span {
+  font-size: 12px;
+  color: #666;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.plugin-setup {
+  font-size: 12px;
+  margin-bottom: 14px;
+}
+.plugin-setup summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.plugin-setup ol {
+  margin: 8px 0;
+  padding-left: 20px;
+  line-height: 1.6;
+}
+.plugin-setup a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.plugin-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.plugin-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #555;
+}
+.plugin-fields .wide {
+  grid-column: 1 / -1;
+}
+.plugin-fields p.wide {
+  font-size: 12px;
+  margin: 0;
+}
+.plugin-fields .plugin-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.plugin-badge,
+.plugin-status {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  vertical-align: middle;
+  background: #f1f1f3;
+  color: #555;
+}
+.plugin-status.connected {
+  background: #eef6f4;
+  color: #1f4f48;
+}
+.plugin-status.stale,
+.plugin-status.error {
+  background: #fdf0e6;
+  color: #8a4b12;
+}
+.plugin-card h2 svg {
+  vertical-align: -2px;
+}
+.plugin-problem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fdf0e6;
+  color: #8a4b12;
+  font-size: 12px;
+}
+.plugin-bulk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin-top: 14px;
+  font-size: 12px;
+  color: #666;
+}
+.plugin-bulk-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.plugin-bulk-dot .mascot.small {
+  width: 20px;
+  height: 20px;
+}
+.plugin-bulk button {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+.plugin-tool-group h3 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #888;
+  margin: 18px 0 6px;
+}
+.plugin-tool {
+  border-top: 1px solid var(--line);
+  padding: 10px 0;
+}
+.plugin-tool-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.plugin-tool-heading p {
+  font-size: 12px;
+  color: #666;
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+.plugin-tool-heading select {
+  font-size: 11px;
+  max-width: 190px;
+}
+.plugin-tool-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.plugin-tool-dots .skill-dot {
+  cursor: default;
+}
+.plugin-tool-dots select {
+  font-size: 11px;
+  padding: 1px 4px;
+}
+.plugin-tool-dots .icon-button {
+  width: auto;
+  height: auto;
+  padding: 2px 4px;
+  gap: 2px;
+}
+.plugin-limits {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #f7f7f9;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+}
+.plugin-limits p {
+  margin: 0;
+}
+.plugin-limits label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.plugin-limits small {
+  color: #888;
+}
+.plugin-activity {
+  margin-top: 14px;
+  font-size: 12px;
+}
+.plugin-activity summary {
+  cursor: pointer;
+  color: #666;
+}
+.plugin-activity ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plugin-activity li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+}
+.plugin-activity time {
+  color: #888;
+  font-size: 11px;
+}
+.plugin-args {
+  color: #777;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .plugin-fields {
+    grid-template-columns: 1fr;
+  }
+}
 @media (max-width: 700px) {
   .page-heading:has(.skill-heading-actions) {
     flex-direction: column;

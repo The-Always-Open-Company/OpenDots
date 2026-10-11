@@ -73,6 +73,8 @@ export function snapshotFor(
     documentAllowed: (id) => deps.workspace.documents.canRead(actor.id, id),
     pluginAllowed: (pluginId, toolName) =>
       deps.plugins.allowed(actor.id, pluginId, toolName),
+    pluginPolicy: (pluginId, toolName, args) =>
+      deps.plugins.policy(actor.id, pluginId, toolName, args),
     skillAllowed: (name) => deps.engine.skillGranted(actor.id, name),
     blockedOnConsultation: CONSULTATION_BLOCKED_TOOLS,
   };

@@ -35,6 +35,12 @@ export interface AuthSnapshot {
   spaceAllowed: (spaceId: string) => boolean;
   documentAllowed: (id: string) => boolean;
   pluginAllowed: (pluginId: string, toolName: string) => boolean;
+  /** For a granted plugin tool: whether its grant asks first, and why these arguments break its limits. */
+  pluginPolicy?: (
+    pluginId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ) => { ask: boolean; violation: string | null };
   skillAllowed: (name: string) => boolean;
   rules: RuleRow[];
   blockedOnConsultation: ReadonlySet<string>;
@@ -162,6 +168,10 @@ export function decide(
   const plugin = pluginToolName(toolName);
   if (plugin && !snapshot.pluginAllowed(plugin.pluginId, plugin.toolName))
     return { effect: 'block', reason: 'Plugin tool is not granted.' };
+  const policy = plugin
+    ? snapshot.pluginPolicy?.(plugin.pluginId, plugin.toolName, args)
+    : undefined;
+  if (policy?.violation) return { effect: 'block', reason: policy.violation };
   if (toolName === 'load_skill') {
     const name = typeof args.name === 'string' ? args.name : '';
     if (!snapshot.skillAllowed(name))
@@ -172,5 +182,11 @@ export function decide(
     return { effect: 'block', reason: 'Rule blocked this action.' };
   if (rule?.mode === 'ask' && ctx.cause === 'model')
     return { effect: 'pending', ruleId: rule.id };
+  // Unlike rules, an Ask first grant also holds background work and polls.
+  if (plugin && policy?.ask && ctx.cause !== 'approved_action')
+    return {
+      effect: 'pending',
+      ruleId: `grant:${plugin.pluginId}/${plugin.toolName}`,
+    };
   return { effect: 'allow' };
 }
