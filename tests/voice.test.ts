@@ -3,12 +3,38 @@ import { Store } from '../src/server/store.js';
 import { WorkspaceStore } from '../src/server/workspace.js';
 import { VoiceService } from '../src/server/voice.js';
 import type { PlatformConfig } from '../src/server/platform-config.js';
+import {
+  appendPieces,
+  type LiveSocketFactory,
+  type LiveSocketHandlers,
+} from '../src/server/live-call-controller.js';
 const resources: (() => void)[] = [];
 afterEach(() => {
   resources.splice(0).forEach((close) => close());
   vi.useRealTimers();
 });
-function fixture() {
+class FakeSocket {
+  sent: Record<string, unknown>[] = [];
+  closed = false;
+  constructor(
+    readonly url: string,
+    readonly headers: Record<string, string>,
+    readonly handlers: LiveSocketHandlers,
+  ) {}
+  send(data: string) {
+    this.sent.push(JSON.parse(data));
+  }
+  close() {
+    this.closed = true;
+  }
+  emit(event: Record<string, unknown>) {
+    this.handlers.message(JSON.stringify(event));
+  }
+  types() {
+    return this.sent.map((event) => event.type);
+  }
+}
+function fixture(overrides: Partial<PlatformConfig> = {}) {
   const store = new Store(':memory:');
   const workspace = new WorkspaceStore(':memory:', 'owner');
   workspace.bindThread('thread', workspace.dots()[0].id, 'A conversation');
@@ -19,22 +45,53 @@ function fixture() {
   const config: PlatformConfig = {
     baseUrl: 'https://example.com',
     voiceKey: 'test-secret',
+    voiceProvider: 'realtime',
     voiceModel: 'voice-model',
     voiceName: 'marin',
     slackUsers: [],
+    ...overrides,
   };
   const turn = vi.fn(
-    async (_thread: string, _prompt: string, _signal: AbortSignal) =>
-      'Current answer',
+    async (
+      _thread: string,
+      _prompt: string,
+      _signal: AbortSignal,
+      _metadata?: Record<string, unknown>,
+      _options?: { model?: string },
+    ) => 'Current answer',
   );
   const history = vi.fn(async () => 'user: Earlier topic');
+  const historyMessages = vi.fn(async () => [
+    { role: 'user' as const, text: 'Earlier topic' },
+    { role: 'assistant' as const, text: 'Earlier answer' },
+  ]);
   const transport = vi.fn<typeof fetch>(async (url) =>
     String(url).endsWith('/hangup')
       ? new Response(null, { status: 200 })
-      : new Response('v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111', {
-          headers: { location: '/v1/realtime/calls/rtc_test' },
-        }),
+      : String(url).endsWith('/v1/live/sessions')
+        ? Response.json(
+            {
+              session: { id: 'live_test' },
+              transport: { type: 'webrtc', sdp: offer },
+            },
+            { status: 201 },
+          )
+        : new Response(offer, {
+            headers: { location: '/v1/realtime/calls/rtc_test' },
+          }),
   );
+  const sockets: FakeSocket[] = [];
+  let socketBehaviour: 'open' | 'fail' = 'open';
+  const socket: LiveSocketFactory = (url, headers, handlers) => {
+    const fake = new FakeSocket(url, headers, handlers);
+    sockets.push(fake);
+    queueMicrotask(() =>
+      socketBehaviour === 'open'
+        ? handlers.open()
+        : handlers.error(new Error('refused')),
+    );
+    return fake;
+  };
   const voice = new VoiceService(
     {
       workspace,
@@ -42,6 +99,7 @@ function fixture() {
       config,
       turn,
       history,
+      historyMessages,
       requireReady() {},
       setup: () => ({
         voice: true,
@@ -55,8 +113,21 @@ function fixture() {
       }),
     },
     transport,
+    { socket, settleMs: 0, closeTimeoutMs: 50 },
   );
-  return { voice, transport, workspace, store, turn, history };
+  return {
+    voice,
+    transport,
+    workspace,
+    store,
+    turn,
+    history,
+    historyMessages,
+    sockets,
+    failSockets: () => {
+      socketBehaviour = 'fail';
+    },
+  };
 }
 const offer = 'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111';
 it('binds voice history and compute to the existing thread, deduplicates tools and hangs up remotely', async () => {
@@ -89,6 +160,7 @@ it('binds voice history and compute to the existing thread, deduplicates tools a
     expect.stringContaining('Record a short call receipt'),
     expect.any(AbortSignal),
     { opendotsSource: 'voice_receipt' },
+    { model: undefined },
   );
   await expect(f.voice.compute(call.id, 'late', 'Research')).rejects.toThrow(
     'ended',
@@ -328,4 +400,213 @@ it('keeps successful compute turns cached and enforces the six-turn cap', async 
     'six compute-turn limit',
   );
   await f.voice.end(call.id, '');
+});
+
+const live = { voiceProvider: 'live', voiceModel: 'gpt-live-1' } as const;
+const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+it('creates a GPT-Live session with client delegation and seeded history, then attaches', async () => {
+  const f = fixture(live);
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  expect(call.provider).toBe('live');
+  expect(f.workspace.call(call.id).provider).toBe('live');
+  const [url, init] = f.transport.mock.calls[0];
+  expect(String(url)).toBe('https://api.openai.com/v1/live/sessions');
+  const body = JSON.parse(String(init?.body));
+  expect(body.transport).toEqual({ type: 'webrtc', sdp: offer });
+  expect(body.session).toMatchObject({
+    model: 'gpt-live-1',
+    audio: { output: { voice: 'marin' } },
+    delegation: { type: 'client' },
+    input: [
+      {
+        role: 'user',
+        content: [{ type: 'input_text', text: 'Earlier topic' }],
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'output_text', text: 'Earlier answer' }],
+      },
+    ],
+  });
+  expect(f.history).not.toHaveBeenCalled();
+  expect(f.sockets[0].url).toBe(
+    'wss://api.openai.com/v1/live/sessions/live_test/attach',
+  );
+  expect(f.sockets[0].headers.Authorization).toBe('Bearer test-secret');
+  await f.voice.end(call.id, '');
+});
+
+it('answers a delegation once with the task model and speaks the result', async () => {
+  const f = fixture({ ...live, voiceTaskModel: 'fast-model' });
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  f.voice.activate(call.id);
+  const socket = f.sockets[0];
+  socket.emit({ type: 'session.input_transcript.delta', delta: 'What is ' });
+  socket.emit({ type: 'session.input_transcript.delta', delta: 'on today?' });
+  const delegation = {
+    type: 'session.delegation.created',
+    delegation: { id: 'item_1', type: 'delegation', target: 'client' },
+  };
+  socket.emit(delegation);
+  socket.emit(delegation);
+  await vi.waitFor(() =>
+    expect(socket.types()).toContain('session.commentary.append'),
+  );
+  expect(f.turn).toHaveBeenCalledTimes(1);
+  const [thread, prompt, , , options] = f.turn.mock.calls[0];
+  expect(thread).toBe('thread');
+  expect(prompt).toContain('What is on today?');
+  expect(options).toEqual({ model: 'fast-model' });
+  expect(socket.sent).toContainEqual(
+    expect.objectContaining({
+      type: 'session.thinking.append',
+      delegation_id: 'item_1',
+    }),
+  );
+  expect(socket.sent).toContainEqual(
+    expect.objectContaining({
+      type: 'session.commentary.append',
+      delegation_id: 'item_1',
+      content: 'Current answer',
+    }),
+  );
+  await f.voice.end(call.id, '');
+});
+
+it('speaks a failed delegation instead of leaving the caller waiting', async () => {
+  const f = fixture(live);
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  f.turn.mockRejectedValueOnce(new Error('Provider unavailable'));
+  const socket = f.sockets[0];
+  socket.emit({
+    type: 'session.delegation.created',
+    delegation: { id: 'item_1', target: 'client' },
+  });
+  await vi.waitFor(() =>
+    expect(socket.sent).toContainEqual(
+      expect.objectContaining({
+        type: 'session.commentary.append',
+        content: expect.stringContaining('Provider unavailable'),
+      }),
+    ),
+  );
+  await f.voice.end(call.id, '');
+});
+
+it('closes gracefully on end and keeps the server transcript', async () => {
+  const f = fixture(live);
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  const socket = f.sockets[0];
+  socket.emit({ type: 'session.input_transcript.delta', delta: 'Hello' });
+  socket.emit({ type: 'session.output_transcript.delta', delta: 'Hi there' });
+  const ending = f.voice.end(call.id, 'You: browser copy');
+  await settle();
+  expect(socket.types()).toContain('session.close');
+  socket.emit({ type: 'session.closed', reason: 'close_requested' });
+  const ended = await ending;
+  expect(ended.status).toBe('ended');
+  expect(ended.transcript).toBe('You: Hello\nDot: Hi there');
+  expect(ended.error).toBeNull();
+  expect(
+    f.transport.mock.calls.some(([url]) => String(url).endsWith('/hangup')),
+  ).toBe(false);
+  expect(f.turn).toHaveBeenCalledTimes(1);
+  expect(f.turn.mock.calls[0][1]).toContain('You: Hello');
+});
+
+it('hangs up when the session does not confirm close in time', async () => {
+  const f = fixture(live);
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  await f.voice.end(call.id, '');
+  expect(
+    f.transport.mock.calls.some(([url]) =>
+      String(url).endsWith('/v1/live/sessions/live_test/hangup'),
+    ),
+  ).toBe(true);
+  expect(f.sockets[0].closed).toBe(true);
+});
+
+it('ends the call once when the provider closes the session', async () => {
+  const f = fixture(live);
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  f.sockets[0].emit({ type: 'session.input_transcript.delta', delta: 'Bye' });
+  f.sockets[0].emit({ type: 'session.closed', reason: 'expired' });
+  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(1));
+  await f.voice.end(call.id, 'You: browser copy');
+  const ended = f.workspace.call(call.id);
+  expect(ended).toMatchObject({ status: 'ended', transcript: 'You: Bye' });
+  expect(ended.error).toContain('duration limit');
+  expect(f.turn).toHaveBeenCalledTimes(1);
+});
+
+it('ends the call and hangs up when the control connection drops', async () => {
+  const f = fixture(live);
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  f.sockets[0].handlers.close();
+  await vi.waitFor(() =>
+    expect(f.workspace.call(call.id).status).toBe('ended'),
+  );
+  await vi.waitFor(() =>
+    expect(
+      f.transport.mock.calls.some(([url]) => String(url).endsWith('/hangup')),
+    ).toBe(true),
+  );
+  expect(f.workspace.call(call.id).error).toContain('control connection');
+});
+
+it('fails the call and hangs up when the server cannot attach', async () => {
+  const f = fixture(live);
+  f.failSockets();
+  await expect(
+    f.voice.begin('thread', offer, new AbortController().signal),
+  ).rejects.toThrow('control connection failed');
+  expect(f.workspace.calls()[0]).toMatchObject({
+    status: 'failed',
+    provider: 'live',
+  });
+  expect(
+    f.transport.mock.calls.some(([url]) =>
+      String(url).endsWith('/v1/live/sessions/live_test/hangup'),
+    ),
+  ).toBe(true);
+});
+
+it('splits long answers into appends and points to the chat', () => {
+  const sentence = 'This is a sentence about the plan. ';
+  const pieces = appendPieces(
+    `## Plan\n\n**Bold** [link](https://x.test) ${sentence.repeat(200)}`,
+  );
+  expect(pieces.length).toBe(3);
+  expect(pieces.every((piece) => piece.length <= 1800)).toBe(true);
+  expect(pieces[0].startsWith('Plan\n\nBold link ')).toBe(true);
+  expect(pieces.at(-1)).toContain('The full answer is in the chat.');
 });

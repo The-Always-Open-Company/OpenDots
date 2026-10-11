@@ -94,7 +94,7 @@ Ask a Dot to show a draft before saving it. A CopilotKit human-in-the-loop card 
 
 A continuous conversation keeps the Dot's avatar and status above the messages, with text and call controls close at hand. Work updates, source links, and call receipts appear in the timeline; a side panel shows results or the agent's computer.
 
-Calls pair realtime speech with a separate compute agent, so the conversation can continue while longer work runs. Both use the same conversation context and tool permissions. The call screen includes a live timer, separate user and Dot captions, microphone mute, speaker mute, and a minimized view for continuing in chat. Voice needs separate provider configuration.
+Calls pair GPT-Live speech with the Dot's own agent, so the conversation can continue while longer work runs. The voice model delegates work to the server, which answers it with the same conversation, tools and permissions as text, optionally on a separate, faster task model. The call screen includes a live timer, separate user and Dot captions, microphone mute, speaker mute, and a minimized view for continuing in chat. Voice needs separate provider configuration.
 
 <div align="center">
 

@@ -10,6 +10,7 @@ let pc: FakePeer | undefined;
 const track = { stop: vi.fn(), enabled: true };
 class FakePeer {
   connectionState = 'new';
+  iceGatheringState = 'complete';
   onconnectionstatechange?: () => void;
   channel = { close: vi.fn(), readyState: 'open' };
   constructor() {
@@ -21,6 +22,8 @@ class FakePeer {
     return this.channel;
   }
   addTrack() {}
+  addEventListener() {}
+  removeEventListener() {}
   async createOffer() {
     return { sdp: 'offer' };
   }

@@ -8,10 +8,16 @@ let voice: ReturnType<typeof useVoice>;
 let root: ReactTestRenderer;
 let pc: FakePeer;
 const track = { stop: vi.fn(), enabled: true };
+let provider: 'live' | 'realtime' = 'realtime';
 class FakePeer {
   connectionState = 'new';
+  iceGatheringState = 'complete';
   onconnectionstatechange?: () => void;
-  channel = { close: vi.fn(), readyState: 'open' };
+  channel: {
+    close: () => void;
+    readyState: string;
+    onmessage?: (event: { data: string }) => Promise<void> | void;
+  } = { close: vi.fn(), readyState: 'open' };
   constructor() {
     // The test needs the peer created by the hook, like a browser constructor.
     // eslint-disable-next-line @typescript-eslint/no-this-alias
@@ -21,6 +27,8 @@ class FakePeer {
     return this.channel;
   }
   addTrack() {}
+  addEventListener() {}
+  removeEventListener() {}
   async createOffer() {
     return { sdp: 'offer' };
   }
@@ -37,6 +45,7 @@ function Hook() {
   return null;
 }
 beforeEach(async () => {
+  provider = 'realtime';
   vi.useFakeTimers();
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.stubGlobal('RTCPeerConnection', FakePeer);
@@ -56,7 +65,7 @@ beforeEach(async () => {
     .mockReset()
     .mockImplementation(async (path: string) =>
       path === '/voice/calls'
-        ? { id: 'call', sdp: 'answer' }
+        ? { id: 'call', sdp: 'answer', provider }
         : { endedAt: null },
     );
   await act(async () => {
@@ -125,6 +134,64 @@ it('clears disconnect timers on manual end', async () => {
     await vi.advanceTimersByTimeAsync(6000);
   });
   expect(ends()).toHaveLength(1);
+});
+async function startLive() {
+  await act(async () => {
+    await voice.end();
+  });
+  provider = 'live';
+  await act(async () => {
+    await voice.start();
+    pc.state('connected');
+  });
+}
+const receive = (event: Record<string, unknown>) =>
+  act(async () => {
+    await pc.channel.onmessage?.({ data: JSON.stringify(event) });
+  });
+it('shows GPT-Live captions and phases without running delegated work in the browser', async () => {
+  await startLive();
+  await receive({ type: 'session.input_transcript.delta', delta: 'What is ' });
+  await receive({ type: 'session.input_transcript.delta', delta: 'on today?' });
+  expect(voice.userCaption).toBe('What is on today?');
+  await receive({
+    type: 'session.delegation.created',
+    delegation: { id: 'item_1', target: 'client' },
+  });
+  expect(voice.phase).toBe('thinking');
+  await receive({
+    type: 'session.output_transcript.delta',
+    delta: 'Let me check.',
+  });
+  expect(voice.phase).toBe('speaking');
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1300);
+  });
+  expect(voice.phase).toBe('thinking');
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  await receive({
+    type: 'session.output_transcript.delta',
+    delta: 'You have two meetings.',
+  });
+  expect(voice.caption).toBe('You have two meetings.');
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1300);
+  });
+  expect(voice.phase).toBe('listening');
+  expect(api.mock.calls.some(([path]) => path.endsWith('/compute'))).toBe(
+    false,
+  );
+});
+it('saves the GPT-Live transcript when the session closes', async () => {
+  await startLive();
+  await receive({ type: 'session.input_transcript.delta', delta: 'Hello' });
+  await receive({ type: 'session.output_transcript.delta', delta: 'Hi' });
+  await receive({ type: 'session.closed', reason: 'remote_hangup' });
+  const [, , body] = ends().at(-1)!;
+  expect(body.transcript).toBe('You: Hello\nDot: Hi');
+  expect(voice.status).toBe('idle');
 });
 it('clears disconnect timers on unmount', async () => {
   await act(async () => {

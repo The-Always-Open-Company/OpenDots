@@ -231,7 +231,11 @@ Slack is not available in this fork yet. Upstream OpenDots delivered Slack messa
 
 ## Calls
 
-The included speech adapter uses the Realtime API at `api.openai.com`. Set `VOICE_API_KEY` to a key with access to that API and `VOICE_MODEL` to a supported Realtime model (the local UI test used `gpt-realtime-2.1`); `VOICE_NAME` selects the voice. `OPENAI_BASE_URL` changes the compute model endpoint only, not speech. Calls use browser microphone access and WebRTC. Hosted deployments need HTTPS. The server mediates provider setup and delegates compute to the selected Dot's conversation.
+Calls use [GPT-Live](https://developers.openai.com/api/docs/models/gpt-live-1) at `api.openai.com` by default. Set `VOICE_API_KEY` to a key with GPT-Live access; `VOICE_MODEL` defaults to `gpt-live-1` and `VOICE_NAME` selects the voice. Calls use browser microphone access and WebRTC. Hosted deployments need HTTPS.
+
+A call uses two models. The voice model listens, speaks and decides when it needs help. When it does, it delegates to the server, which runs a normal turn of the selected Dot in the same conversation, with the same tools and permissions, and sends the answer back to be spoken. That turn uses `VOICE_TASK_MODEL`, or `OPENAI_MODEL` when unset, through `OPENAI_BASE_URL` and `OPENAI_API`; a faster model shortens the wait for spoken answers. Full answers also appear in the chat, and a call receipt is added when the call ends. Each call allows six delegated turns and lasts at most 15 minutes.
+
+The server keeps its own connection to each GPT-Live session for delegated work and the transcript, so the browser only carries audio and captions. Set `VOICE_PROVIDER=realtime` to use the older Realtime API instead; it requires `VOICE_MODEL` (for example `gpt-realtime-2.1`) and runs delegated work through the browser.
 
 A configured key is not evidence of a successful call. Verify microphone access, audio playback, compute delegation, interruption, hangup, and the saved receipt with your deployment before relying on voice workflows.
 

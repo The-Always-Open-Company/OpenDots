@@ -13,9 +13,11 @@ import { Platform } from './platform.js';
 import {
   contextMaxTokensFromEnv,
   DEFAULT_EMBEDDING_MODEL,
+  DEFAULT_LIVE_VOICE_MODEL,
   maxAgentTurnsFromEnv,
   maxUploadBytesFromEnv,
   modelApiFromEnv,
+  voiceProviderFromEnv,
   type PlatformConfig,
 } from './platform-config.js';
 import { dirname, join } from 'node:path';
@@ -56,6 +58,7 @@ const workspace = new WorkspaceStore(
   database,
   process.env.OWNER_ID ?? 'opendots-owner',
 );
+const voiceProvider = voiceProviderFromEnv(process.env.VOICE_PROVIDER);
 const config: PlatformConfig = {
   apiKey: process.env.OPENAI_API_KEY,
   model: process.env.OPENAI_MODEL,
@@ -82,8 +85,12 @@ const config: PlatformConfig = {
   computerToken: process.env.COMPUTER_TOKEN,
   computerNamespace: process.env.COMPUTER_NAMESPACE,
   voiceKey: process.env.VOICE_API_KEY,
-  voiceModel: process.env.VOICE_MODEL,
-  voiceName: process.env.VOICE_NAME ?? 'marin',
+  voiceProvider,
+  voiceModel:
+    process.env.VOICE_MODEL ||
+    (voiceProvider === 'live' ? DEFAULT_LIVE_VOICE_MODEL : undefined),
+  voiceName: process.env.VOICE_NAME || 'marin',
+  voiceTaskModel: process.env.VOICE_TASK_MODEL || undefined,
   slackChannel: process.env.SLACK_CHANNEL_NAME,
   slackTeam: process.env.SLACK_TEAM_ID,
   slackUsers: (process.env.SLACK_USER_IDS ?? '')

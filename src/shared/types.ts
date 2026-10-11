@@ -268,6 +268,8 @@ export interface CallReceipt {
   status: 'connecting' | 'active' | 'ended' | 'failed';
   transcript: string;
   error: string | null;
+  /** Speech API that carried the call; older calls predate this and used `realtime`. */
+  provider?: 'live' | 'realtime' | null;
 }
 export interface SetupStatus {
   model: boolean;

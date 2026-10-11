@@ -55,6 +55,7 @@ export class WorkspaceStore {
         this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     };
     addColumn('calls', 'anchorMessageId', 'TEXT');
+    addColumn('calls', 'provider', 'TEXT');
     addColumn('dots', 'consultable', 'INTEGER NOT NULL DEFAULT 1');
     addColumn('dots', 'mascot', 'TEXT');
     addColumn('thread_bindings', 'kind', "TEXT NOT NULL DEFAULT 'chat'");
@@ -357,7 +358,10 @@ export class WorkspaceStore {
       )
       .all(...(threadId ? [threadId] : [])) as unknown as CallReceipt[];
   }
-  createCall(threadId: string): CallReceipt {
+  createCall(
+    threadId: string,
+    provider: 'live' | 'realtime' = 'realtime',
+  ): CallReceipt {
     this.requireThread(threadId);
     const call: CallReceipt = {
       id: randomUUID(),
@@ -367,12 +371,13 @@ export class WorkspaceStore {
       status: 'connecting',
       transcript: '',
       error: null,
+      provider,
     };
     this.db
       .prepare(
-        'INSERT INTO calls(id, threadId, startedAt, endedAt, status, transcript, error) VALUES (?, ?, ?, NULL, ?, ?, NULL)',
+        'INSERT INTO calls(id, threadId, startedAt, endedAt, status, transcript, error, provider) VALUES (?, ?, ?, NULL, ?, ?, NULL, ?)',
       )
-      .run(call.id, threadId, call.startedAt, call.status, '');
+      .run(call.id, threadId, call.startedAt, call.status, '', provider);
     return call;
   }
   call(id: string): CallReceipt {

@@ -167,6 +167,11 @@ export function workspaceRoutes(platform: Platform, voice: VoiceService) {
     c.json(voice.activate(c.req.param('id'))),
   );
   app.post('/voice/calls/:id/compute', async (c) => {
+    if (platform.workspace.call(c.req.param('id')).provider === 'live')
+      return c.json(
+        { error: 'Call work for GPT-Live is handled by the server.' },
+        409,
+      );
     const data = z
       .object({
         toolCallId: z.string().min(1).max(200),

@@ -36,6 +36,11 @@ export function useVoice(
         controlPollFailures: number;
         disconnectTimer?: ReturnType<typeof setTimeout>;
         cancelled: boolean;
+        provider: 'live' | 'realtime';
+        speaker?: 'You' | 'Dot';
+        speaking: boolean;
+        quietTimer?: ReturnType<typeof setTimeout>;
+        thinkingSince?: number;
       }
     | undefined
   >(undefined);
@@ -52,6 +57,7 @@ export function useVoice(
     current.audio.srcObject = null;
     clearTimeout(current.timer);
     clearTimeout(current.disconnectTimer);
+    clearTimeout(current.quietTimer);
   }, []);
   const end = useCallback(async () => {
     if (ending.current) return;
@@ -171,6 +177,61 @@ export function useVoice(
         timer: undefined as ReturnType<typeof setTimeout> | undefined,
         controlPollFailures: 0,
         disconnectTimer: undefined as ReturnType<typeof setTimeout> | undefined,
+        provider: 'realtime' as 'live' | 'realtime',
+        speaker: undefined as 'You' | 'Dot' | undefined,
+        speaking: false,
+        quietTimer: undefined as ReturnType<typeof setTimeout> | undefined,
+        thinkingSince: undefined as number | undefined,
+      };
+      // GPT-Live sends no end-of-response event, so phases follow transcript
+      // timing. Speech starting soon after a delegation is usually "let me
+      // check"; a later burst is the result, which ends the thinking phase.
+      const speech = (speaker: 'You' | 'Dot', delta: string) => {
+        if (current.speaker !== speaker) {
+          current.speaker = speaker;
+          current.transcript.push(`${speaker}: `);
+          (speaker === 'You' ? setUserCaption : setCaption)('');
+        } else if (speaker === 'Dot' && !current.speaking) setCaption('');
+        current.transcript[current.transcript.length - 1] += delta;
+        (speaker === 'You' ? setUserCaption : setCaption)(
+          (text) => text + delta,
+        );
+        if (speaker === 'You') {
+          if (!current.speaking)
+            setPhase(current.thinkingSince ? 'thinking' : 'listening');
+          return;
+        }
+        if (
+          !current.speaking &&
+          current.thinkingSince &&
+          Date.now() - current.thinkingSince > 2000
+        )
+          current.thinkingSince = undefined;
+        current.speaking = true;
+        setPhase('speaking');
+        clearTimeout(current.quietTimer);
+        current.quietTimer = setTimeout(() => {
+          current.speaking = false;
+          if (!current.cancelled)
+            setPhase(current.thinkingSince ? 'thinking' : 'listening');
+        }, 1200);
+      };
+      const live = (data: Record<string, unknown>) => {
+        if (
+          data.type === 'session.input_transcript.delta' &&
+          typeof data.delta === 'string'
+        )
+          speech('You', data.delta);
+        if (
+          data.type === 'session.output_transcript.delta' &&
+          typeof data.delta === 'string'
+        )
+          speech('Dot', data.delta);
+        if (data.type === 'session.delegation.created') {
+          current.thinkingSince = Date.now();
+          if (!current.speaking) setPhase('thinking');
+        }
+        if (data.type === 'session.closed') void end();
       };
       session.current = current;
       stream.getTracks().forEach((track) => pc.addTrack(track, stream!));
@@ -220,6 +281,10 @@ export function useVoice(
           if (!parsed || typeof parsed !== 'object') return;
           data = parsed as Record<string, unknown>;
         } catch {
+          return;
+        }
+        if (current.provider === 'live') {
+          live(data);
           return;
         }
         if (data.type === 'input_audio_buffer.speech_started') {
@@ -300,12 +365,32 @@ export function useVoice(
       };
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      const response = await api<{ id: string; sdp: string }>(
-        '/voice/calls',
-        'POST',
-        { threadId, sdp: offer.sdp },
-      );
+      // GPT-Live expects a complete offer; send what has gathered after 5 seconds.
+      if (pc.iceGatheringState !== 'complete')
+        await new Promise<void>((resolve) => {
+          const done = () => {
+            if (pc.iceGatheringState !== 'complete') return;
+            clearTimeout(timer);
+            pc.removeEventListener('icegatheringstatechange', done);
+            resolve();
+          };
+          const timer = setTimeout(() => {
+            pc.removeEventListener('icegatheringstatechange', done);
+            resolve();
+          }, 5000);
+          pc.addEventListener('icegatheringstatechange', done);
+        });
+      if (current.cancelled) return;
+      const response = await api<{
+        id: string;
+        sdp: string;
+        provider?: 'live' | 'realtime';
+      }>('/voice/calls', 'POST', {
+        threadId,
+        sdp: pc.localDescription?.sdp ?? offer.sdp,
+      });
       current.id = response.id;
+      current.provider = response.provider ?? 'realtime';
       if (current.cancelled) {
         await api(`/voice/calls/${response.id}/end`, 'POST', {
           transcript: '',

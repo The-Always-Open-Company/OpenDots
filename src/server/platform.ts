@@ -11,6 +11,7 @@ import { Store } from './store.js';
 import { WorkspaceStore } from './workspace.js';
 import { DotAgent, type DotServices } from './dot-agent.js';
 import { runThreadTurn } from './headless.js';
+import { voiceReceiptMessagePrefix } from '../shared/voice-receipt.js';
 import { setupStatus, type PlatformConfig } from './platform-config.js';
 import { validateRuntimeScope } from './runtime-scope.js';
 import { SqliteThreadRunner } from './thread-runner.js';
@@ -100,6 +101,27 @@ export class Platform {
       .join('\n')
       .slice(-12000);
   }
+  /** Recent turns for a voice session's startup history; trimming keeps the newest. */
+  async historyMessages(
+    threadId: string,
+    maxChars = 24_000,
+  ): Promise<{ role: 'user' | 'assistant'; text: string }[]> {
+    this.requireReady();
+    this.workspace.requireThread(threadId);
+    const turns: { role: 'user' | 'assistant'; text: string }[] = [];
+    let used = 0;
+    for (const message of this.workspace.threads.messages(threadId).reverse()) {
+      if (message.role !== 'user' && message.role !== 'assistant') continue;
+      if (message.id.startsWith(voiceReceiptMessagePrefix)) continue;
+      const text =
+        typeof message.content === 'string' ? message.content.trim() : '';
+      if (!text) continue;
+      if (turns.length >= 120 || used + text.length > maxChars) break;
+      used += text.length;
+      turns.unshift({ role: message.role, text });
+    }
+    return turns;
+  }
   async handle(request: Request): Promise<Response> {
     let body: unknown;
     if (request.method !== 'GET' && request.method !== 'HEAD')
@@ -142,10 +164,12 @@ export class Platform {
     prompt: string,
     signal: AbortSignal,
     metadata?: Record<string, unknown>,
+    options: { model?: string } = {},
   ): Promise<string> {
     this.requireReady();
     const thread = this.workspace.requireThread(threadId);
     const agent = this.agent(thread.dotId);
+    agent.modelOverride = options.model;
     if (
       typeof metadata?.workItemId === 'string' &&
       typeof metadata.executionId === 'string'

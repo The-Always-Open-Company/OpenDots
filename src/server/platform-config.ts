@@ -35,6 +35,17 @@ export function modelApiFromEnv(value: string | undefined): ModelApi {
   throw new Error('OPENAI_API must be chat-completions or responses.');
 }
 
+export type VoiceProvider = 'live' | 'realtime';
+export const DEFAULT_LIVE_VOICE_MODEL = 'gpt-live-1';
+
+/** Unset means GPT-Live; `realtime` keeps the older Realtime API calls. */
+export function voiceProviderFromEnv(value: string | undefined): VoiceProvider {
+  const raw = value?.trim().toLowerCase();
+  if (!raw || raw === 'live') return 'live';
+  if (raw === 'realtime') return 'realtime';
+  throw new Error('VOICE_PROVIDER must be live or realtime.');
+}
+
 export const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 export const DEFAULT_MAX_UPLOAD_MB = 50;
 
@@ -78,8 +89,13 @@ export interface PlatformConfig extends WebConfig {
   browserUrl?: string;
   browserSecret?: string;
   voiceKey?: string;
+  /** Speech API for calls; unset means `live`. */
+  voiceProvider?: VoiceProvider;
+  /** Model that speaks and listens during a call. */
   voiceModel?: string;
   voiceName: string;
+  /** Model for Dot turns delegated from a call; defaults to `model`. */
+  voiceTaskModel?: string;
   slackChannel?: string;
   slackTeam?: string;
   slackUsers: string[];

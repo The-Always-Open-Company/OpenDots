@@ -66,6 +66,23 @@ function fixture(
   return { store, workspace, dot, agent, input };
 }
 
+it('uses a per-run model override once, then returns to the configured model', async () => {
+  const f = fixture();
+  const network = vi
+    .spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(completion({ role: 'assistant', content: 'Fast.' }))
+    .mockResolvedValueOnce(
+      completion({ role: 'assistant', content: 'Default.' }),
+    );
+  f.agent.modelOverride = 'fast-model';
+  await lastValueFrom(f.agent.run(f.input).pipe(toArray()));
+  await lastValueFrom(f.agent.run(f.input).pipe(toArray()));
+  const models = network.mock.calls.map(
+    ([, init]) => JSON.parse(String(init?.body)).model,
+  );
+  expect(models).toEqual(['fast-model', 'custom-model']);
+});
+
 function createPageCall(args: Record<string, unknown>, id = 'create-page') {
   return completion(
     {

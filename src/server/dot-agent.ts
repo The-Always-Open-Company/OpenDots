@@ -128,6 +128,8 @@ export class DotAgent extends AbstractAgent {
   private inner?: BuiltInAgent;
   private controller?: AbortController;
   workContext?: { workItemId: string; executionId: string };
+  /** Model for the next run only; unset uses the configured conversation model. */
+  modelOverride?: string;
   constructor(
     private store: Store,
     private workspace: WorkspaceStore,
@@ -484,12 +486,15 @@ export class DotAgent extends AbstractAgent {
               }),
             );
           const modelApi = this.config.modelApi ?? 'chat-completions';
-          const adapter = openaiCompatibleText(this.config.model, {
-            apiKey: this.config.apiKey,
-            baseURL: this.config.baseUrl ?? 'https://api.openai.com/v1',
-            api: modelApi,
-            maxRetries: 1,
-          });
+          const adapter = openaiCompatibleText(
+            this.modelOverride ?? this.config.model,
+            {
+              apiKey: this.config.apiKey,
+              baseURL: this.config.baseUrl ?? 'https://api.openai.com/v1',
+              api: modelApi,
+              maxRetries: 1,
+            },
+          );
           const serverTools = [
             ...tools,
             ...pageTools(pages),
@@ -803,6 +808,7 @@ export class DotAgent extends AbstractAgent {
       void start();
       return () => {
         this.workContext = undefined;
+        this.modelOverride = undefined;
         closed = true;
         clearTimeout(timeout);
         clearInterval(watcher);

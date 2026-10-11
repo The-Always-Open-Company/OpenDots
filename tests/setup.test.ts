@@ -4,6 +4,7 @@ import {
   DEFAULT_CONTEXT_MAX_TOKENS,
   maxAgentTurnsFromEnv,
   setupStatus,
+  voiceProviderFromEnv,
   type PlatformConfig,
 } from '../src/server/platform-config.js';
 const config: PlatformConfig = {
@@ -73,4 +74,10 @@ it('leaves the turn limit off unless a usable limit is set', () => {
   expect(maxAgentTurnsFromEnv('8')).toBe(8);
   for (const bad of ['1', '101', '2.5', 'many', '-3'])
     expect(() => maxAgentTurnsFromEnv(bad)).toThrow(/MAX_AGENT_TURNS/);
+});
+it('defaults calls to GPT-Live and keeps the Realtime API selectable', () => {
+  for (const unset of [undefined, '', ' ', 'live', 'LIVE'])
+    expect(voiceProviderFromEnv(unset)).toBe('live');
+  expect(voiceProviderFromEnv('realtime')).toBe('realtime');
+  expect(() => voiceProviderFromEnv('sip')).toThrow(/VOICE_PROVIDER/);
 });
