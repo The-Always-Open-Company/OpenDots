@@ -48,6 +48,7 @@ function fixture(overrides: Partial<PlatformConfig> = {}) {
     voiceProvider: 'realtime',
     voiceModel: 'voice-model',
     voiceName: 'marin',
+    voiceTaskLimit: 6,
     slackUsers: [],
     ...overrides,
   };
@@ -339,7 +340,7 @@ it('allows a rejected compute call to be retried with the same tool ID', async (
   expect(f.turn).toHaveBeenCalledTimes(2);
   await f.voice.end(call.id, '');
 });
-it('counts failed compute attempts toward the six-turn limit', async () => {
+it('counts failed compute attempts toward the per-call limit', async () => {
   const f = fixture();
   const call = await f.voice.begin(
     'thread',
@@ -354,7 +355,7 @@ it('counts failed compute attempts toward the six-turn limit', async () => {
     ).rejects.toThrow('Provider unavailable');
   }
   await expect(f.voice.compute(call.id, 'success', 'Research')).rejects.toThrow(
-    'six compute-turn limit',
+    'limit of 6 delegated turns',
   );
   expect(f.turn).toHaveBeenCalledTimes(6);
   await f.voice.end(call.id, '');
@@ -374,12 +375,12 @@ it('counts a retry of the same tool ID as another attempt', async () => {
     );
   }
   await expect(f.voice.compute(call.id, 'same', 'Research')).rejects.toThrow(
-    'six compute-turn limit',
+    'limit of 6 delegated turns',
   );
   expect(f.turn).toHaveBeenCalledTimes(6);
   await f.voice.end(call.id, '');
 });
-it('keeps successful compute turns cached and enforces the six-turn cap', async () => {
+it('keeps successful compute turns cached and enforces the per-call limit', async () => {
   const f = fixture();
   const call = await f.voice.begin(
     'thread',
@@ -397,7 +398,7 @@ it('keeps successful compute turns cached and enforces the six-turn cap', async 
   );
   expect(f.turn).toHaveBeenCalledTimes(6);
   await expect(f.voice.compute(call.id, 'extra', 'Research')).rejects.toThrow(
-    'six compute-turn limit',
+    'limit of 6 delegated turns',
   );
   await f.voice.end(call.id, '');
 });
@@ -479,6 +480,96 @@ it('answers a delegation once with the task model and speaks the result', async 
       content: 'Current answer',
     }),
   );
+  await f.voice.end(call.id, '');
+});
+
+it('allows 20 delegated turns per call when no limit is configured', async () => {
+  const f = fixture({ voiceTaskLimit: undefined });
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  for (let i = 0; i < 20; i++)
+    await f.voice.compute(call.id, String(i), 'Research');
+  await expect(f.voice.compute(call.id, 'extra', 'Research')).rejects.toThrow(
+    'limit of 20 delegated turns',
+  );
+  await f.voice.end(call.id, '');
+});
+
+it('queues overlapping delegations instead of failing the second', async () => {
+  const f = fixture(live);
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  let release!: () => void;
+  let running = 0;
+  let overlapped = false;
+  f.turn.mockImplementation(async () => {
+    running += 1;
+    if (running > 1) overlapped = true;
+    if (f.turn.mock.calls.length === 1)
+      await new Promise<void>((resolve) => (release = resolve));
+    running -= 1;
+    return 'Current answer';
+  });
+  const socket = f.sockets[0];
+  socket.emit({ type: 'session.input_transcript.delta', delta: 'First' });
+  socket.emit({
+    type: 'session.delegation.created',
+    delegation: { id: 'item_1', target: 'client' },
+  });
+  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(1));
+  socket.emit({ type: 'session.input_transcript.delta', delta: 'Second' });
+  socket.emit({
+    type: 'session.delegation.created',
+    delegation: { id: 'item_2', target: 'client' },
+  });
+  await settle();
+  expect(f.turn).toHaveBeenCalledTimes(1);
+  release();
+  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(2));
+  expect(overlapped).toBe(false);
+  expect(f.turn.mock.calls[1][1]).toContain('Second');
+  await vi.waitFor(() =>
+    expect(
+      socket.sent.filter(
+        (event) =>
+          event.type === 'session.commentary.append' &&
+          event.delegation_id === 'item_2',
+      ),
+    ).toHaveLength(1),
+  );
+  await f.voice.end(call.id, '');
+});
+
+it('does not spend a turn on a repeat delegation with no new speech', async () => {
+  const f = fixture(live);
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  const socket = f.sockets[0];
+  socket.emit({ type: 'session.input_transcript.delta', delta: 'Question' });
+  for (const id of ['item_1', 'item_2'])
+    socket.emit({
+      type: 'session.delegation.created',
+      delegation: { id, target: 'client' },
+    });
+  await vi.waitFor(() =>
+    expect(socket.sent).toContainEqual(
+      expect.objectContaining({
+        type: 'session.thinking.append',
+        delegation_id: 'item_2',
+        content: expect.stringContaining('already answers'),
+      }),
+    ),
+  );
+  expect(f.turn).toHaveBeenCalledTimes(1);
   await f.voice.end(call.id, '');
 });
 

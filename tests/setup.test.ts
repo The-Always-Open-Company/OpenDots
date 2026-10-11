@@ -5,6 +5,7 @@ import {
   maxAgentTurnsFromEnv,
   setupStatus,
   voiceProviderFromEnv,
+  voiceTaskLimitFromEnv,
   type PlatformConfig,
 } from '../src/server/platform-config.js';
 const config: PlatformConfig = {
@@ -80,4 +81,13 @@ it('defaults calls to GPT-Live and keeps the Realtime API selectable', () => {
     expect(voiceProviderFromEnv(unset)).toBe('live');
   expect(voiceProviderFromEnv('realtime')).toBe('realtime');
   expect(() => voiceProviderFromEnv('sip')).toThrow(/VOICE_PROVIDER/);
+});
+it('allows 20 delegated turns per call unless configured otherwise', () => {
+  for (const unset of [undefined, '', ' '])
+    expect(voiceTaskLimitFromEnv(unset)).toBe(20);
+  for (const off of ['off', 'OFF', '0'])
+    expect(voiceTaskLimitFromEnv(off)).toBe(Infinity);
+  expect(voiceTaskLimitFromEnv('40')).toBe(40);
+  for (const bad of ['101', '2.5', 'many', '-3'])
+    expect(() => voiceTaskLimitFromEnv(bad)).toThrow(/VOICE_TASK_LIMIT/);
 });

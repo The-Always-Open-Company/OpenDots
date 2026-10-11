@@ -18,6 +18,7 @@ import {
   maxUploadBytesFromEnv,
   modelApiFromEnv,
   voiceProviderFromEnv,
+  voiceTaskLimitFromEnv,
   type PlatformConfig,
 } from './platform-config.js';
 import { dirname, join } from 'node:path';
@@ -91,6 +92,7 @@ const config: PlatformConfig = {
     (voiceProvider === 'live' ? DEFAULT_LIVE_VOICE_MODEL : undefined),
   voiceName: process.env.VOICE_NAME || 'marin',
   voiceTaskModel: process.env.VOICE_TASK_MODEL || undefined,
+  voiceTaskLimit: voiceTaskLimitFromEnv(process.env.VOICE_TASK_LIMIT),
   slackChannel: process.env.SLACK_CHANNEL_NAME,
   slackTeam: process.env.SLACK_TEAM_ID,
   slackUsers: (process.env.SLACK_USER_IDS ?? '')

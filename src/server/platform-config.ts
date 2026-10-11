@@ -46,6 +46,21 @@ export function voiceProviderFromEnv(value: string | undefined): VoiceProvider {
   throw new Error('VOICE_PROVIDER must be live or realtime.');
 }
 
+export const DEFAULT_VOICE_TASK_LIMIT = 20;
+
+/** Delegated Dot turns per call. Unset means 20; `off` or `0` means no limit. */
+export function voiceTaskLimitFromEnv(value: string | undefined): number {
+  const raw = value?.trim().toLowerCase();
+  if (!raw) return DEFAULT_VOICE_TASK_LIMIT;
+  if (raw === 'off' || raw === '0') return Infinity;
+  const limit = Number(raw);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+    throw new Error(
+      'VOICE_TASK_LIMIT must be off, or an integer from 1 to 100.',
+    );
+  return limit;
+}
+
 export const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 export const DEFAULT_MAX_UPLOAD_MB = 50;
 
@@ -96,6 +111,8 @@ export interface PlatformConfig extends WebConfig {
   voiceName: string;
   /** Model for Dot turns delegated from a call; defaults to `model`. */
   voiceTaskModel?: string;
+  /** Delegated Dot turns per call; defaults to 20, `Infinity` for no limit. */
+  voiceTaskLimit?: number;
   slackChannel?: string;
   slackTeam?: string;
   slackUsers: string[];

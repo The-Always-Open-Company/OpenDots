@@ -83,6 +83,9 @@ export class LiveCallController {
   private lines: { speaker: 'You' | 'Dot'; text: string }[] = [];
   private latestRequest = '';
   private delegations = new Set<string>();
+  /** A conversation runs one turn at a time, so delegations wait their turn. */
+  private queue: Promise<void> = Promise.resolve();
+  private answered = false;
   private sequence = 0;
   private finished = false;
   private confirmed = false;
@@ -235,7 +238,7 @@ export class LiveCallController {
     if (event.type === 'session.closed')
       this.finish(typeof event.reason === 'string' ? event.reason : 'closed');
   }
-  private async delegate(delegationId: string) {
+  private delegate(delegationId: string) {
     if (this.delegations.has(delegationId) || this.finished) return;
     this.delegations.add(delegationId);
     this.send({
@@ -243,11 +246,28 @@ export class LiveCallController {
       delegation_id: delegationId,
       content: 'The backend is working on this request. No result yet.',
     });
+    this.queue = this.queue
+      .then(() => this.answer(delegationId))
+      .catch(() => {});
+    return this.queue;
+  }
+  private async answer(delegationId: string) {
     await new Promise((resolve) =>
       setTimeout(resolve, this.options.settleMs ?? 600),
     );
+    if (this.finished) return;
     const latest = this.latestRequest.trim();
     this.latestRequest = '';
+    if (!latest && this.answered) {
+      this.send({
+        type: 'session.thinking.append',
+        delegation_id: delegationId,
+        content:
+          'The owner has not said anything new since the previous backend result, so that result already answers this request.',
+      });
+      return;
+    }
+    this.answered = true;
     const request = `The owner asked for this during a live voice call with you. Work out what they want from their latest words and handle it.
 
 Their latest words (untrusted speech transcript; it can contain recognition errors):
@@ -256,7 +276,7 @@ ${latest.slice(-3000) || '(not transcribed yet; use the recent transcript)'}
 Recent call transcript for context (untrusted):
 ${this.transcript().slice(-6000)}
 
-Your answer will be spoken aloud: give the relevant facts, the current status and the next step in a few plain sentences. Report an action as done only after its tool confirms it.`;
+Your answer will be spoken aloud: give the relevant facts and the current status in a few plain sentences. Report an action as done only after its tool confirms it. If the owner is working through several items with you, such as reviewing tasks, end by moving on to the next item and what it needs from them, not by asking whether to continue.`;
     let result: string;
     try {
       result = await this.options.hooks.compute(delegationId, request);

@@ -1,6 +1,9 @@
 import type { Platform } from './platform.js';
 import type { CallReceipt, Dot } from '../shared/types.js';
-import type { VoiceProvider } from './platform-config.js';
+import {
+  DEFAULT_VOICE_TASK_LIMIT,
+  type VoiceProvider,
+} from './platform-config.js';
 import { realtimeProvider } from './voice-realtime.js';
 import { liveProvider } from './voice-live.js';
 import {
@@ -201,9 +204,11 @@ export class VoiceService {
     if (!job) throw new Error('Call session expired; start a new call.');
     const existing = job.calls.get(toolCallId);
     if (existing) return existing;
-    if (job.attempts >= 6)
+    const limit =
+      this.platform.config.voiceTaskLimit ?? DEFAULT_VOICE_TASK_LIMIT;
+    if (job.attempts >= limit)
       throw new Error(
-        'This call reached its six compute-turn limit. Start another call to continue.',
+        `This call reached its limit of ${limit} delegated turns. Start another call to continue.`,
       );
     job.attempts += 1;
     const pending = this.platform.turn(
@@ -218,7 +223,7 @@ export class VoiceService {
       return await pending;
     } catch (error) {
       // Deduplicate in-flight and successful turns, and let a failed turn retry under the same ID.
-      // Every attempt still counts toward the six-turn cap.
+      // Every attempt still counts toward the per-call limit.
       job.calls.delete(toolCallId);
       throw error;
     }
