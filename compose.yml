@@ -14,9 +14,9 @@ services:
       VOICE_NAME: ${VOICE_NAME:-marin}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      OPENAI_MODEL: ${OPENAI_MODEL:-}
-      OPENAI_API: ${OPENAI_API:-}
-      SUMMARY_MODEL: ${SUMMARY_MODEL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-6.1-sol}
+      OPENAI_API: ${OPENAI_API:-responses}
+      SUMMARY_MODEL: ${SUMMARY_MODEL:-gpt-5.4-mini}
       CONTEXT_MAX_TOKENS: ${CONTEXT_MAX_TOKENS:-}
       MAX_AGENT_TURNS: ${MAX_AGENT_TURNS:-}
       WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-parallel}
@@ -26,9 +26,9 @@ services:
       DATABASE_URL: postgres://opendots:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/opendots
       DOCLING_URL: http://docling:5001
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
-      MEMORY_MODEL: ${MEMORY_MODEL:-}
-      ENRICHMENT_MODEL: ${ENRICHMENT_MODEL:-}
-      RERANK_MODEL: ${RERANK_MODEL:-}
+      MEMORY_MODEL: ${MEMORY_MODEL:-gpt-5.4-mini}
+      ENRICHMENT_MODEL: ${ENRICHMENT_MODEL:-gpt-5.4-mini}
+      RERANK_MODEL: ${RERANK_MODEL:-gpt-5.4-mini}
       DOCUMENTS_DIR: /data/documents
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-}
     volumes:

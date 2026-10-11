@@ -62,7 +62,7 @@ Edit `.env` on the server and restart after changes:
 | `OWNER_TOKEN`                    | Application access token; required for external bindings           |
 | `APP_ORIGIN`                     | Comma-separated exact browser origins for a proxy or custom domain |
 
-Conversations use the chat-completions API, which every OpenAI-compatible endpoint serves. Some OpenAI models, such as `gpt-6.1-sol`, only call tools through the Responses API; set `OPENAI_API=responses` for them. That setting applies to conversations only. Summaries, memory extraction, document indexing and search reranking still use chat completions, so point `SUMMARY_MODEL`, `MEMORY_MODEL`, `ENRICHMENT_MODEL` and `RERANK_MODEL` at a model that serves it, typically a small, fast one.
+`.env.example` and `compose.yml` default to `gpt-6.1-sol` for conversations and `gpt-5.4-mini` for the four background models. `gpt-6.1-sol` only calls tools through the Responses API, so they also set `OPENAI_API=responses`. Without `OPENAI_API`, conversations use the chat-completions API, which every OpenAI-compatible endpoint serves; set `OPENAI_API=chat-completions` when you point `OPENAI_BASE_URL` and `OPENAI_MODEL` at another provider. That setting applies to conversations only. Summaries, memory extraction, document indexing and search reranking still use chat completions, so point `SUMMARY_MODEL`, `MEMORY_MODEL`, `ENRICHMENT_MODEL` and `RERANK_MODEL` at a model that serves it, typically a small, fast one.
 
 Provider credentials belong in `.env`, not client-side variables or source code. CopilotKit and mem0 telemetry are disabled in code; no telemetry setting is needed.
 
