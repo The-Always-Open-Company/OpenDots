@@ -34,6 +34,7 @@ services:
       RERANK_MODEL: ${RERANK_MODEL:-gpt-5.4-mini}
       DOCUMENTS_DIR: /data/documents
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-}
+      PLUGIN_SECRET_KEY: ${PLUGIN_SECRET_KEY:-}
     volumes:
       - opendots-data:/data
     depends_on:
