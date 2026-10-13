@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import type { PendingAction, WorkView } from '../shared/types';
+import { PendingActionCard, type PluginName } from './PendingActionCard';
 
 export function WorkActivity({
   work,
   actions,
+  plugins,
   busy,
   onOpen,
   onAction,
@@ -14,6 +16,7 @@ export function WorkActivity({
 }: {
   work: WorkView[];
   actions: PendingAction[];
+  plugins?: PluginName[];
   busy: boolean;
   onOpen: (id: string) => void;
   onAction: (id: string, action: 'pause' | 'resume' | 'cancel') => void;
@@ -59,25 +62,24 @@ export function WorkActivity({
       {!!pending.length && (
         <div className="task-list">
           {pending.map((action) => (
-            <article className="task-detail-card" key={action.id}>
-              <h2>{action.toolName}</h2>
-              <p className="muted">{action.argumentsJson.slice(0, 400)}</p>
-              <div className="task-controls">
-                <button disabled={busy} onClick={() => onApprove(action.id)}>
-                  Approve
-                </button>
-                <button disabled={busy} onClick={() => onDecline(action.id)}>
-                  Decline
-                </button>
-              </div>
-            </article>
+            <PendingActionCard
+              key={action.id}
+              action={action}
+              plugins={plugins}
+              busy={busy}
+              onApprove={onApprove}
+              onDecline={onDecline}
+            />
           ))}
         </div>
       )}
       <div className="task-list">
         {work.map((item) => (
           <article className="task-detail-card" key={String(item.workItem.id)}>
-            <button className="text-button" onClick={() => onOpen(String(item.workItem.id))}>
+            <button
+              className="text-button"
+              onClick={() => onOpen(String(item.workItem.id))}
+            >
               <strong>{String(item.workItem.title)}</strong>
             </button>
             <p className="muted">
@@ -214,10 +216,7 @@ export function WorkDetail({
             .map((event) => (
               <p className="muted" key={event.id}>
                 {event.payload.slice(0, 180)}{' '}
-                <button
-                  disabled={busy}
-                  onClick={() => onReplay?.(event.id)}
-                >
+                <button disabled={busy} onClick={() => onReplay?.(event.id)}>
                   Replay
                 </button>
               </p>

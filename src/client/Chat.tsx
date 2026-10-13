@@ -24,6 +24,7 @@ import {
   X,
 } from 'lucide-react';
 import { ToolActivity } from './ToolActivity';
+import { PendingActionCard, type PluginName } from './PendingActionCard';
 import { endedWithoutAnswer } from './chat-answer';
 import {
   ComputerToolCard,
@@ -67,6 +68,7 @@ export function Chat({
   onSchedule,
   onComputer,
   actions = [],
+  plugins,
   onApprove,
   onDecline,
 }: {
@@ -82,6 +84,7 @@ export function Chat({
   onSchedule: () => void;
   onComputer?: () => void;
   actions?: PendingAction[];
+  plugins?: PluginName[];
   onApprove?: (id: string) => void;
   onDecline?: (id: string) => void;
 }) {
@@ -567,18 +570,13 @@ export function Chat({
       {actions
         .filter((action) => action.status === 'pending')
         .map((action) => (
-          <article className="task-detail-card" key={action.id}>
-            <h2>Waiting for you · {action.toolName}</h2>
-            <p className="muted">{action.argumentsJson.slice(0, 400)}</p>
-            <div className="task-controls">
-              <button type="button" onClick={() => onApprove?.(action.id)}>
-                Approve
-              </button>
-              <button type="button" onClick={() => onDecline?.(action.id)}>
-                Decline
-              </button>
-            </div>
-          </article>
+          <PendingActionCard
+            key={action.id}
+            action={action}
+            plugins={plugins}
+            onApprove={onApprove}
+            onDecline={onDecline}
+          />
         ))}
       <form
         className="chat-composer"

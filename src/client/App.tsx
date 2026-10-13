@@ -886,6 +886,7 @@ export function App() {
                       action.status === 'pending' &&
                       action.threadId === thread.id,
                   )}
+                  plugins={state.plugins}
                   onApprove={(id) => {
                     requestActivityNotifications();
                     void mutate(`/actions/${id}/approve`, 'POST', {});
@@ -1100,6 +1101,7 @@ export function App() {
                         .includes(search.toLowerCase()),
                     )}
                     actions={state.actions ?? []}
+                    plugins={state.plugins}
                     busy={busy}
                     onOpen={(id) =>
                       void api<WorkView>(`/work/${id}`)

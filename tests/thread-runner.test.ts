@@ -2,6 +2,7 @@ import '../src/server/disable-telemetry.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { EventSchemas, EventType, type BaseEvent } from '@ag-ui/client';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createApp } from '../src/server/app.js';
 import { Platform } from '../src/server/platform.js';
@@ -411,6 +412,125 @@ it('drops older turns instead of failing when the summary call fails', async () 
   expect(last).toContain('earlier message(s) were omitted');
   expect(last).toContain('gamma');
   expect(last).not.toContain('alpha');
+});
+
+it('saves a stopped turn so later turns still replay', async () => {
+  const f = fixture();
+  vi.spyOn(globalThis, 'fetch')
+    .mockImplementationOnce(
+      (_url, init) =>
+        new Promise((_resolve, reject) =>
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError')),
+          ),
+        ),
+    )
+    .mockResolvedValueOnce(
+      completion({ role: 'assistant', content: 'After the call.' }),
+    );
+  const call = new AbortController();
+  const stopped = f.platform
+    .turn('thread', 'Cut off mid-call', call.signal)
+    .catch(() => '');
+  await vi.waitFor(() =>
+    expect(f.platform.runner.isRunning({ threadId: 'thread' })).resolves.toBe(
+      true,
+    ),
+  );
+  call.abort();
+  await stopped;
+  await vi.waitFor(() =>
+    expect(f.workspace.threads.runs('thread')).toHaveLength(1),
+  );
+  const [run] = f.workspace.threads.runs('thread');
+  const terminals = run.events.filter((event) =>
+    ['RUN_FINISHED', 'RUN_ERROR'].includes(event.type),
+  );
+  expect(terminals).toEqual([
+    expect.objectContaining({
+      type: 'RUN_FINISHED',
+      threadId: 'thread',
+      runId: run.runId,
+    }),
+  ]);
+
+  await f.platform.turn('thread', 'Back in chat', AbortSignal.timeout(5000));
+  const replay = await events(
+    await f.platform.handle(connectRequest(f.dot.id)),
+  );
+  for (const event of replay)
+    expect(EventSchemas.safeParse(event).success).toBe(true);
+  expect(JSON.stringify(replay)).toContain('After the call.');
+});
+
+it('repairs stopped runs saved with an ID-less duplicate finish', async () => {
+  const f = fixture();
+  const threadId = 'thread';
+  f.workspace.threads.appendRun(
+    {
+      runId: 'stopped',
+      threadId,
+      agentId: f.dot.id,
+      parentRunId: null,
+      createdAt: 1,
+      events: [
+        {
+          type: EventType.RUN_STARTED,
+          threadId,
+          runId: 'stopped',
+          input: {
+            threadId,
+            runId: 'stopped',
+            messages: [{ id: 'u1', role: 'user', content: 'Cut off' }],
+            tools: [],
+            context: [],
+            state: {},
+            forwardedProps: {},
+          },
+        },
+        { type: EventType.RUN_FINISHED },
+        { type: EventType.RUN_FINISHED },
+      ] as BaseEvent[],
+    },
+    [{ id: 'u1', role: 'user', content: 'Cut off' }],
+    new Set(),
+  );
+  f.workspace.threads.appendRun(
+    {
+      runId: 'later',
+      threadId,
+      agentId: f.dot.id,
+      parentRunId: 'stopped',
+      createdAt: 2,
+      events: [
+        { type: EventType.RUN_STARTED, threadId, runId: 'later' },
+        {
+          type: EventType.TEXT_MESSAGE_START,
+          messageId: 'a2',
+          role: 'assistant',
+        },
+        {
+          type: EventType.TEXT_MESSAGE_CONTENT,
+          messageId: 'a2',
+          delta: 'Still here.',
+        },
+        { type: EventType.TEXT_MESSAGE_END, messageId: 'a2' },
+        { type: EventType.RUN_FINISHED, threadId, runId: 'later' },
+      ] as BaseEvent[],
+    },
+    [{ id: 'a2', role: 'assistant', content: 'Still here.' }],
+    new Set(['a2']),
+  );
+  const replay = await events(
+    await f.platform.handle(connectRequest(f.dot.id)),
+  );
+  for (const event of replay)
+    expect(EventSchemas.safeParse(event).success).toBe(true);
+  expect(replay.filter((event) => event.type === 'RUN_FINISHED')).toEqual([
+    expect.objectContaining({ threadId, runId: 'stopped' }),
+    expect.objectContaining({ threadId, runId: 'later' }),
+  ]);
+  expect(JSON.stringify(replay)).toContain('Still here.');
 });
 
 it('lists local conversations through the runtime thread endpoint', async () => {

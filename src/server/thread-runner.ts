@@ -15,7 +15,11 @@ import {
   type Message,
 } from '@ag-ui/client';
 import { Observable, ReplaySubject } from 'rxjs';
-import { clientAdditions, type ThreadHistory } from './thread-history.js';
+import {
+  clientAdditions,
+  type StoredRun,
+  type ThreadHistory,
+} from './thread-history.js';
 
 interface ActiveRun {
   runId: string;
@@ -27,6 +31,34 @@ interface ActiveRun {
 function eventMessageId(event: BaseEvent): string | undefined {
   const id = (event as { messageId?: unknown }).messageId;
   return typeof id === 'string' ? id : undefined;
+}
+
+const terminal = (event: BaseEvent) =>
+  event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR;
+
+// Clients reject RUN_FINISHED without IDs and stop applying the replay there.
+function withRunIds(
+  event: BaseEvent,
+  threadId: string,
+  runId: string,
+): BaseEvent {
+  if (event.type !== EventType.RUN_FINISHED) return event;
+  const ids = event as { threadId?: unknown; runId?: unknown };
+  return typeof ids.threadId === 'string' && typeof ids.runId === 'string'
+    ? event
+    : ({ ...event, threadId, runId } as BaseEvent);
+}
+
+// Older stopped runs were saved with a duplicate, ID-less RUN_FINISHED.
+function replayEvents(runs: StoredRun[]): BaseEvent[] {
+  return compactEvents(
+    runs.flatMap((run) => {
+      const end = run.events.findIndex(terminal);
+      return (end < 0 ? run.events : run.events.slice(0, end + 1)).map(
+        (event) => withRunIds(event, run.threadId, run.runId),
+      );
+    }),
+  );
 }
 
 // Durable replacement for CopilotKit's InMemoryAgentRunner: the same run,
@@ -58,11 +90,12 @@ export class SqliteThreadRunner extends AgentRunner {
       subject.next(event);
     };
     const finish = (interruptionMessage?: string) => {
-      for (const event of finalizeRunEvents(events, {
+      // finalizeRunEvents appends to the array it is given; emit appends too.
+      for (const event of finalizeRunEvents([...events], {
         stopRequested: stop.requested,
         ...(interruptionMessage === undefined ? {} : { interruptionMessage }),
       }))
-        emit(event);
+        emit(withRunIds(event, threadId, input.runId));
       try {
         if (interruptionMessage === undefined || events.length)
           this.persist(
@@ -141,9 +174,7 @@ export class SqliteThreadRunner extends AgentRunner {
   connect(request: AgentRunnerConnectRequest): Observable<BaseEvent> {
     const connection = new ReplaySubject<BaseEvent>(Infinity);
     const replayed = new Set<string>();
-    for (const event of compactEvents(
-      this.history.runs(request.threadId).flatMap((run) => run.events),
-    )) {
+    for (const event of replayEvents(this.history.runs(request.threadId))) {
       connection.next(event);
       const id = eventMessageId(event);
       if (id) replayed.add(id);
@@ -202,9 +233,7 @@ export class SqliteThreadRunner extends AgentRunner {
   }
 
   getThreadEvents(threadId: string): BaseEvent[] {
-    return compactEvents(
-      this.history.runs(threadId).flatMap((run) => run.events),
-    );
+    return replayEvents(this.history.runs(threadId));
   }
 
   getThreadState(threadId: string): Record<string, unknown> | null {
