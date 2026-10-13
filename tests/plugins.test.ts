@@ -4,7 +4,13 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/server/app.js';
 import { decide, type ExecutionContext } from '../src/server/authorize.js';
-import { approvalDenied } from '../src/server/approved-actions.js';
+import { convertSchemaToJsonSchema } from '@tanstack/ai';
+import {
+  applyApprovedAction,
+  approvalDenied,
+  approvalReport,
+  reportApproval,
+} from '../src/server/approved-actions.js';
 import { ExecutionEngine } from '../src/server/execution-engine.js';
 import type { PluginRow, RemoteTool } from '../src/server/plugin-adapters.js';
 import { googleCalendarAdapter } from '../src/server/plugin-adapters/google-calendar.js';
@@ -14,10 +20,11 @@ import {
   encryptSecret,
   secretStorageAvailable,
 } from '../src/server/plugin-secrets.js';
-import { PluginService } from '../src/server/plugins.js';
+import type { PluginParameters } from '../src/server/plugin-schema.js';
+import { PluginService, PluginToolError } from '../src/server/plugins.js';
 import { Runner } from '../src/server/runner.js';
 import { Store } from '../src/server/store.js';
-import { snapshotFor } from '../src/server/work-tools.js';
+import { guardTools, snapshotFor } from '../src/server/work-tools.js';
 import { WorkspaceStore } from '../src/server/workspace.js';
 import { GOOGLE_CALENDAR_SCOPES } from '../src/shared/plugin-presets.js';
 
@@ -407,6 +414,170 @@ describe('plugin permissions', () => {
     expect(plugins.remove('mail')).toBe(false);
     expect(plugins.allowed(dot.id, 'mail', 'list')).toBe(false);
     expect(Number(engine.trigger(String(trigger))?.enabled)).toBe(0);
+  });
+});
+
+describe('plugin schemas and errors', () => {
+  const createChat: RemoteTool = {
+    name: 'create_chat',
+    description: 'Create a chat',
+    schema: {
+      $schema: 'http://json-schema.org/draft-07/schema#',
+      type: 'object',
+      properties: {
+        body: {
+          oneOf: [
+            {
+              type: 'object',
+              properties: {
+                chat_type: { type: 'string', enum: ['direct_message'] },
+                user_id: { type: 'string' },
+              },
+              required: ['chat_type', 'user_id'],
+            },
+            {
+              type: 'object',
+              properties: {
+                chat_type: { type: 'string', enum: ['group_chat'] },
+                user_ids: { type: 'array', items: { type: 'string' } },
+                title: { type: 'string' },
+              },
+              required: ['chat_type', 'user_ids', 'title'],
+            },
+          ],
+        },
+      },
+      required: ['body'],
+    },
+  };
+  const missingType = {
+    body: { user_ids: ['1', '2'], title: 'Planning' },
+  };
+  const group = {
+    body: { chat_type: 'group_chat', user_ids: ['1', '2'], title: 'Planning' },
+  };
+
+  async function zoho() {
+    const calls: unknown[] = [];
+    const w = world({
+      listTools: async () => [createChat],
+      callTool: async (_plugin, _name, args) => {
+        calls.push(args);
+        const body = (args as { body?: { chat_type?: string } }).body;
+        return body?.chat_type
+          ? { content: [{ type: 'text', text: '{"chat_id":"CT_1"}' }] }
+          : {
+              isError: true,
+              content: [
+                {
+                  type: 'text',
+                  text: '{"code":"param_missing","message":"The param \'chat_type\' is missing."}',
+                },
+              ],
+            };
+      },
+    });
+    w.plugins.save({ id: 'zoho', name: 'Zoho', url: 'http://127.0.0.1/mcp' });
+    await w.plugins.refresh('zoho');
+    w.plugins.grant(w.dot.id, 'zoho', 'create_chat');
+    return { ...w, calls };
+  }
+
+  const parametersOf = (tool: { parameters: unknown }) =>
+    (tool.parameters as PluginParameters)['~standard'];
+
+  it('gives the model the server schema and checks calls against it', async () => {
+    const { plugins, dot } = await zoho();
+    const [tool] = plugins.definitions(dot.id);
+    const sent = convertSchemaToJsonSchema(
+      tool.parameters as Parameters<typeof convertSchemaToJsonSchema>[0],
+    ) as { properties: Record<string, unknown>; required: string[] };
+    expect(sent.properties.body).toEqual(
+      (createChat.schema as { properties: { body: unknown } }).properties.body,
+    );
+    expect(sent.properties.operationId).toMatchObject({ type: 'string' });
+    expect(sent.required).toEqual(['body']);
+    expect(sent).not.toHaveProperty('$schema');
+
+    const standard = parametersOf(tool);
+    expect(standard.validate(group)).toEqual({ value: group });
+    const rejected = standard.validate(missingType) as {
+      issues: { message: string }[];
+    };
+    expect(rejected.issues.map((issue) => issue.message)).toContain(
+      "body must have required property 'chat_type'",
+    );
+  });
+
+  it('treats an MCP error result as a failed call, not an uncertain one', async () => {
+    const { plugins, dot, engine, store, workspace } = await zoho();
+    plugins.grant(dot.id, 'zoho', 'create_chat', 'allow');
+    await expect(
+      plugins.call(dot.id, 'zoho', 'create_chat', missingType),
+    ).rejects.toThrow(PluginToolError);
+    await expect(
+      plugins.call(dot.id, 'zoho', 'create_chat', missingType),
+    ).rejects.toThrow(/chat_type' is missing/);
+    await expect(
+      plugins.call(dot.id, 'zoho', 'create_chat', group),
+    ).resolves.toMatchObject({ content: [{ text: '{"chat_id":"CT_1"}' }] });
+
+    const item = engine.createWorkItem({
+      actorId: dot.id,
+      title: 'Conversation',
+      objective: 'Chat',
+      source: 'owner',
+      autoResume: false,
+    });
+    const [guarded] = guardTools(plugins.definitions(dot.id), {
+      engine,
+      context: () => ctx(dot.id),
+      snapshot: () =>
+        snapshotFor({ store, workspace, plugins, engine }, dot, false),
+      ensureWork: () => String(item.id),
+      idempotent: () => false,
+    });
+    await expect(guarded.execute!(missingType)).rejects.toThrow(/chat_type/);
+    expect(
+      engine.detail(String(item.id))?.invocations?.map((call) => call.status),
+    ).toEqual(['failed']);
+  });
+
+  it('records a failed approval and reports the outcome to the conversation', async () => {
+    const { plugins, dot, engine, store, workspace } = await zoho();
+    const held = engine.gate(
+      ctx(dot.id),
+      'plugin_zoho_create_chat',
+      missingType,
+      snapshotFor({ store, workspace, plugins, engine }, dot, false),
+    )!;
+    engine.approveAction(held.pendingActionId, true);
+    const action = engine.claimApprovedAction()!;
+    const outcome = await applyApprovedAction(
+      { engine, workspace, store, plugins },
+      action,
+    );
+    expect(outcome?.status).toBe('failed');
+    expect(engine.action(held.pendingActionId)?.status).toBe('failed');
+
+    const turns: string[] = [];
+    let busy = 2;
+    await reportApproval(
+      {
+        isRunning: async () => busy-- > 0,
+        turn: async (_threadId, prompt) => void turns.push(prompt),
+        sleep: async () => {},
+      },
+      action,
+      outcome!,
+    );
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toContain('plugin_zoho_create_chat');
+    expect(turns[0]).toContain("chat_type' is missing");
+    expect(turns[0]).toContain('correct the call');
+    expect(
+      approvalReport(action, { status: 'executed', result: { ok: true } }),
+    ).toContain('It ran and returned: {"ok":true}');
   });
 });
 

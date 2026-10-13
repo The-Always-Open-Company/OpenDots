@@ -1,6 +1,7 @@
 export const workPromptPrefix = 'opendots-work:';
 
-export type WorkPromptKind = 'schedule' | 'wake' | 'watch' | 'work';
+export type WorkPromptKind =
+  'schedule' | 'wake' | 'watch' | 'approval' | 'work';
 
 export function workPromptKind(message: {
   id: string;
@@ -17,7 +18,13 @@ export function workPromptKind(message: {
     message.id.startsWith(workPromptPrefix);
   if (!marked) return null;
   const kind = record?.triggerKind;
-  if (kind === 'schedule' || kind === 'wake' || kind === 'watch') return kind;
+  if (
+    kind === 'schedule' ||
+    kind === 'wake' ||
+    kind === 'watch' ||
+    kind === 'approval'
+  )
+    return kind;
   return 'work';
 }
 
@@ -25,5 +32,6 @@ export function workPromptLabel(kind: WorkPromptKind) {
   if (kind === 'schedule') return 'Schedule ran';
   if (kind === 'wake') return 'Woke up';
   if (kind === 'watch') return 'Watch fired';
+  if (kind === 'approval') return 'Approved action ran';
   return 'Scheduled run';
 }

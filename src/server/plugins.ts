@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { defineTool } from '@copilotkit/runtime/v2';
-import { z } from 'zod';
 import type {
   Plugin,
   PluginAccess,
@@ -29,6 +28,11 @@ import {
   type OAuthSettings,
 } from './plugin-oauth.js';
 import {
+  pluginParameters,
+  PluginToolError,
+  toolErrorOf,
+} from './plugin-schema.js';
+import {
   decryptSecret,
   encryptSecret,
   redactSecrets,
@@ -42,6 +46,7 @@ export {
   pluginFetch,
 } from './plugin-network.js';
 export { redactSecrets } from './plugin-secrets.js';
+export { PluginToolError } from './plugin-schema.js';
 export type { PluginRow, RemoteTool } from './plugin-adapters.js';
 
 const ID = /^[a-z][a-z0-9-]{0,40}$/;
@@ -188,38 +193,6 @@ export function parametersOf(schema: unknown): PluginToolParameter[] {
       ...(enumOf(value).length ? { enum: enumOf(value) } : {}),
       required: required.includes(name),
     }));
-}
-
-function zodFromSchema(schema: unknown) {
-  const { properties: props, required } = properties(schema);
-  const shape: Record<string, z.ZodType> = {
-    operationId: z
-      .string()
-      .min(1)
-      .max(80)
-      .optional()
-      .describe('Pass this only when retrying the same plugin call.'),
-  };
-  for (const [key, value] of Object.entries(props)) {
-    if (key === 'operationId') continue;
-    const choices = enumOf(value);
-    let field: z.ZodType = z.unknown();
-    if (value.type === 'string')
-      field = choices.length
-        ? z.enum(choices as [string, ...string[]])
-        : z.string();
-    else if (value.type === 'number' || value.type === 'integer')
-      field = z.number();
-    else if (value.type === 'boolean') field = z.boolean();
-    else if (value.type === 'array')
-      field = z.array(
-        value.items?.type === 'string' ? z.string() : z.unknown(),
-      );
-    if (value.description) field = field.describe(value.description);
-    if (!required.includes(key)) field = field.optional();
-    shape[key] = field;
-  }
-  return z.object(shape).passthrough();
 }
 
 export interface SavePluginInput {
@@ -638,7 +611,7 @@ export class PluginService {
       prepared = { ...prepared };
       delete prepared.operationId;
     }
-    return this.guarded(plugin, async (auth, secrets) => {
+    const result = await this.guarded(plugin, async (auth, secrets) => {
       const result = this.adapters.callTool
         ? await this.adapters.callTool(plugin, toolName, prepared)
         : await adapterFor(plugin.kind).callTool(
@@ -649,6 +622,9 @@ export class PluginService {
           );
       return redactSecrets(result, secrets);
     });
+    const error = toolErrorOf(result);
+    if (error) throw new PluginToolError(error);
+    return result;
   }
   /** Resolves credentials, runs `work`, and keeps secrets out of any error. */
   private async guarded<T>(
@@ -797,7 +773,7 @@ export class PluginService {
   definitions(dotId: string) {
     const rows = this.db
       .prepare(
-        `SELECT t.pluginId, t.toolName, t.description, t.schemaJson, g.mode, g.constraintsJson
+        `SELECT t.pluginId, t.toolName, t.description, t.schemaJson, t.schemaHash, g.mode, g.constraintsJson
          FROM plugin_tools t
          JOIN plugin_grants g ON g.pluginId=t.pluginId AND g.toolName=t.toolName
          JOIN plugins p ON p.id=t.pluginId
@@ -808,6 +784,7 @@ export class PluginService {
       toolName: string;
       description: string;
       schemaJson: string;
+      schemaHash: string;
       mode: PluginGrantMode;
       constraintsJson: string;
     }[];
@@ -833,7 +810,10 @@ export class PluginService {
         ]
           .filter(Boolean)
           .join(' '),
-        parameters: zodFromSchema(JSON.parse(row.schemaJson)),
+        parameters: pluginParameters(
+          JSON.parse(row.schemaJson),
+          `${row.pluginId}:${row.toolName}:${row.schemaHash}`,
+        ),
         execute: async (args) => {
           const parsed = pluginToolName(name);
           if (!parsed) throw new Error('Plugin tool name is invalid.');

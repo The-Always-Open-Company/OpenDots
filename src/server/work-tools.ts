@@ -11,6 +11,7 @@ import { ACTION_ITEM_PROMPT } from './action-item-tools.js';
 import { runWithOperation } from './effect-context.js';
 import type { MemoryProvider } from './memory.js';
 import type { PluginService } from './plugins.js';
+import { PluginToolError } from './plugin-schema.js';
 import {
   assertWake,
   initialRunAt,
@@ -149,14 +150,15 @@ export function guardTools(
         } catch (error) {
           const message =
             error instanceof Error ? error.message : 'Tool failed.';
+          const failed = idempotent || error instanceof PluginToolError;
           deps.engine.completeEffect(
             workItemId,
             tool.name,
             begun.operationId,
-            idempotent ? 'failed' : 'uncertain',
+            failed ? 'failed' : 'uncertain',
             { error: message },
           );
-          if (!idempotent)
+          if (!failed)
             return {
               status: 'uncertain',
               operationId: begun.operationId,

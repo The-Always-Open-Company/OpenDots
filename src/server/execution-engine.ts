@@ -1122,7 +1122,7 @@ export class ExecutionEngine {
   }
   completeApprovedAction(
     id: string,
-    status: 'executed' | 'uncertain' | 'declined',
+    status: 'executed' | 'failed' | 'uncertain' | 'declined',
     result: unknown,
     options?: { continue?: boolean },
   ) {

@@ -34,7 +34,7 @@ import { modelJson } from './model-json.js';
 import { ExecutionEngine } from './execution-engine.js';
 import { PluginService } from './plugins.js';
 import { WorkRunner } from './work-runner.js';
-import { applyApprovedAction } from './approved-actions.js';
+import { applyApprovedAction, reportApproval } from './approved-actions.js';
 import { deliverInternal } from './watches.js';
 import { ActionItemStore } from './action-item-store.js';
 import { PgActionItemIndex } from './action-item-index.js';
@@ -268,8 +268,27 @@ const work = new WorkRunner(
       },
     );
   },
-  (action) =>
-    applyApprovedAction({ engine, workspace, store, plugins, memory }, action),
+  async (action) => {
+    const outcome = await applyApprovedAction(
+      { engine, workspace, store, plugins, memory },
+      action,
+    );
+    if (outcome)
+      void reportApproval(
+        {
+          isRunning: (threadId) => platform.runner.isRunning({ threadId }),
+          turn: (threadId, prompt) =>
+            platform.turn(threadId, prompt, AbortSignal.timeout(300_000), {
+              opendotsSource: 'work',
+              triggerKind: 'approval',
+            }),
+        },
+        action,
+        outcome,
+      ).catch(() =>
+        console.error('Could not tell the Dot how an approved action went.'),
+      );
+  },
 );
 runner.attachWork(work);
 if (config.slackChannel)

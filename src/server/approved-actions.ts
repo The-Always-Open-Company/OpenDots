@@ -1,6 +1,7 @@
 import type { ExecutionEngine } from './execution-engine.js';
 import type { MemoryProvider } from './memory.js';
 import type { PluginService } from './plugins.js';
+import { PluginToolError } from './plugin-schema.js';
 import { assertWake, parseSchedule } from './schedule-time.js';
 import type { Store } from './store.js';
 import type { WorkspaceStore } from './workspace.js';
@@ -107,10 +108,7 @@ export async function applyApprovedAction(
     toolName === 'remember' ||
     toolName === 'update_note' ||
     deps.plugins.idempotent(toolName);
-  const finish = (
-    status: 'executed' | 'uncertain' | 'declined',
-    result: unknown,
-  ) => {
+  const finish = (status: ApprovalOutcome['status'], result: unknown) => {
     const schedule =
       toolName === 'arm_trigger' ||
       toolName === 'apply_profile' ||
@@ -119,6 +117,7 @@ export async function applyApprovedAction(
     deps.engine.completeApprovedAction(id, status, result, {
       continue: !schedule,
     });
+    return { status, result };
   };
   try {
     const result = await run(
@@ -131,9 +130,67 @@ export async function applyApprovedAction(
       ctx.executionId || null,
       idempotent,
     );
-    finish('executed', result);
+    return finish('executed', result);
   } catch (error) {
-    finish('uncertain', { error: message(error) });
+    return finish(
+      idempotent || error instanceof PluginToolError ? 'failed' : 'uncertain',
+      { error: message(error) },
+    );
+  }
+}
+
+export interface ApprovalOutcome {
+  status: 'executed' | 'failed' | 'uncertain';
+  result: unknown;
+}
+
+const clip = (value: unknown, limit: number) => {
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+};
+
+/** What a Dot is told when an approved action from a conversation has run. */
+export function approvalReport(action: ActionRow, outcome: ApprovalOutcome) {
+  const call = `The owner approved your ${String(action.toolName)} call with ${clip(
+    JSON.parse(String(action.argumentsJson)),
+    1500,
+  )}.`;
+  const error = (outcome.result as { error?: unknown } | null)?.error;
+  if (outcome.status === 'executed')
+    return `${call} It ran and returned: ${clip(outcome.result, 4000)}\nTell the owner the outcome in a sentence or two.`;
+  if (outcome.status === 'failed')
+    return `${call} It failed: ${clip(error ?? outcome.result, 2000)}\nTell the owner briefly what went wrong. If you can correct the call, make the corrected call; it comes back for approval when it needs one.`;
+  return `${call} Its outcome is unknown: ${clip(error ?? outcome.result, 2000)}\nTell the owner, and do not call it again until they confirm what happened.`;
+}
+
+/**
+ * Approvals from a conversation have no objective to resume, so the Dot hears
+ * the outcome in a turn of its own once the conversation is free.
+ */
+export async function reportApproval(
+  deps: {
+    isRunning: (threadId: string) => Promise<boolean>;
+    turn: (threadId: string, prompt: string) => Promise<unknown>;
+    sleep?: (ms: number) => Promise<void>;
+  },
+  action: ActionRow,
+  outcome: ApprovalOutcome,
+) {
+  const threadId = String(action.threadId ?? '');
+  if (!threadId || action.workItemId) return;
+  const sleep =
+    deps.sleep ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const prompt = approvalReport(action, outcome);
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    if (!(await deps.isRunning(threadId)))
+      try {
+        await deps.turn(threadId, prompt);
+        return;
+      } catch (error) {
+        if (!/already answering/.test(message(error))) throw error;
+      }
+    await sleep(2000);
   }
 }
 
@@ -217,7 +274,7 @@ async function run(
       workItemId,
       toolName,
       begun.operationId,
-      idempotent ? 'failed' : 'uncertain',
+      idempotent || error instanceof PluginToolError ? 'failed' : 'uncertain',
       { error: message(error) },
     );
     throw error;
