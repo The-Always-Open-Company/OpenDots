@@ -487,8 +487,74 @@ describe('approvals', () => {
 });
 
 describe('notes, profile, schedules, and wakes', () => {
+  it('offers only the work tools that can succeed in this run', () => {
+    const { engine, dot, deps } = world();
+    const names = (context?: Partial<ReturnType<WorkDeps['context']>>) =>
+      workTools({
+        ...deps(),
+        context: () => ({ ...deps().context(), ...context }),
+      }).map((tool) => tool.name);
+    const gated = [
+      'complete_work',
+      'fail_work',
+      'update_schedule',
+      'cancel_schedule',
+      'list_responsibilities',
+      'close_responsibility',
+    ];
+    for (const name of gated) expect(names()).not.toContain(name);
+    expect(names()).toEqual(
+      expect.arrayContaining(['propose_schedule', 'upsert_responsibility']),
+    );
+
+    const item = engine.createWorkItem({
+      actorId: dot.id,
+      title: 'Digest',
+      objective: 'Send the digest',
+      source: 'schedule',
+      recurring: true,
+    });
+    engine.addTrigger({
+      workItemId: String(item.id),
+      actorId: dot.id,
+      kind: 'schedule',
+      spec: { kind: 'interval', seconds: 3600 },
+      anchor: 'clock',
+      nextRunAt: Date.now() + 3_600_000,
+      enabled: true,
+      dotCanManage: true,
+    });
+    engine.createWorkItem({
+      actorId: dot.id,
+      title: 'Standup',
+      objective: 'Check the board',
+      source: 'responsibility',
+      recurring: true,
+    });
+    expect(names({ executionId: 'execution-1', mode: 'background' })).toEqual(
+      expect.arrayContaining(gated),
+    );
+  });
+
   it('gives the model the interval and calendar schedule shapes', () => {
-    const { deps } = world();
+    const { engine, dot, deps } = world();
+    const item = engine.createWorkItem({
+      actorId: dot.id,
+      title: 'Digest',
+      objective: 'Send the digest',
+      source: 'schedule',
+      recurring: true,
+    });
+    engine.addTrigger({
+      workItemId: String(item.id),
+      actorId: dot.id,
+      kind: 'schedule',
+      spec: { kind: 'interval', seconds: 3600 },
+      anchor: 'clock',
+      nextRunAt: Date.now() + 3_600_000,
+      enabled: true,
+      dotCanManage: true,
+    });
     const tools = workTools(deps());
     const propose = tools.find((tool) => tool.name === 'propose_schedule');
     const update = tools.find((tool) => tool.name === 'update_schedule');
@@ -631,7 +697,9 @@ describe('notes, profile, schedules, and wakes', () => {
       wakeAt: Date.now() + 6 * 60_000,
     })) as { workItemId: string };
     expect(engine.workItem(saved.workItemId)?.source).toBe('responsibility');
-    const listed = (await call(tools, 'list_responsibilities')) as {
+    // The next run offers the tools for responsibilities that now exist.
+    const next = workTools(deps());
+    const listed = (await call(next, 'list_responsibilities')) as {
       id: string;
     }[];
     expect(listed.map((item) => item.id)).toContain(saved.workItemId);
@@ -641,7 +709,7 @@ describe('notes, profile, schedules, and wakes', () => {
     const trigger = engine.detail(saved.workItemId)?.triggers[0] as {
       enabled?: number;
     };
-    await call(tools, 'close_responsibility', { id: saved.workItemId });
+    await call(next, 'close_responsibility', { id: saved.workItemId });
     expect(engine.execution(executionId)?.finishIntent).toBe('complete');
     expect(
       Number(

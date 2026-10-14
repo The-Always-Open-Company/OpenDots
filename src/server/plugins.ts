@@ -55,6 +55,17 @@ const TOOL_NAME = /^[a-zA-Z0-9_-]+$/;
 const MAX_TOOL_NAME = 64;
 const STALE = 'Schema changed. Accept the new schema to use these tools.';
 const GOOGLE_CALENDAR_URL = 'https://www.googleapis.com/calendar/v3';
+const MODEL_DESCRIPTION = 600;
+
+/** A long remote description is cut to its first paragraph for the model; storage keeps it whole. */
+export function modelDescription(text: string) {
+  const whole = text.trim();
+  if (whole.length <= MODEL_DESCRIPTION) return whole;
+  const first = whole.split(/\n\s*\n/)[0].trim();
+  return first.length <= MODEL_DESCRIPTION
+    ? `${first} …`
+    : `${first.slice(0, MODEL_DESCRIPTION).trimEnd()}…`;
+}
 
 const canonical = (tool: RemoteTool) => ({
   name: tool.name,
@@ -801,7 +812,7 @@ export class PluginService {
       return defineTool({
         name,
         description: [
-          row.description,
+          modelDescription(row.description),
           limits ? `Limits: ${limits}.` : '',
           row.mode === 'ask'
             ? 'The owner approves each call before it runs.'

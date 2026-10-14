@@ -39,7 +39,11 @@ Each model call is kept within an estimated token budget, `CONTEXT_MAX_TOKENS` (
 2. If that is not enough, older turns are replaced by a summary, keeping about half the budget of recent turns verbatim. Summaries are cached per conversation and extended incrementally, so each turn summarizes only what is new.
 3. If the summary call fails, the older turns are dropped with a marker instead of failing the turn.
 
-Summaries use `SUMMARY_MODEL`, which defaults to `OPENAI_MODEL`. Stored history is never rewritten; compaction affects only what is sent to the model.
+Summaries use `SUMMARY_MODEL`, which defaults to `OPENAI_MODEL`. Stored history is never rewritten; compaction affects only what is sent to the model. The system prompt and the tool definitions sent with every call count against the same budget, so history gets what is left (at least 20000, or half the budget when that is smaller).
+
+### Tools sent to the model
+
+Every tool definition is sent with every model call, so a Dot with many plugins or computer tools pays for them on each turn. With `LAZY_TOOLS` on (the default), only common tools are sent in full; the rest (plugin tools, computer tools, schedules, responsibilities, notes and most objective tools) are listed by name, and the model loads the ones it needs for the rest of that reply. Permissions are checked on every call either way. Set `LAZY_TOOLS=off` to send every tool, and `LOG_CONTEXT_SIZE=1` to log the estimated prompt and tool tokens for each reply.
 
 ### Turn limit
 
@@ -57,6 +61,8 @@ Edit `.env` on the server and restart after changes:
 | `CONTEXT_MAX_TOKENS`             | Estimated token budget for history sent to the model               |
 | `SUMMARY_MODEL`                  | Model for summaries of older turns; defaults to the model          |
 | `MAX_AGENT_TURNS`                | Model turns per reply, 2–100; unset or `off` means no limit        |
+| `LAZY_TOOLS`                     | `on` (default) loads rarely used tools on demand; `off` sends all  |
+| `LOG_CONTEXT_SIZE`               | `1` logs estimated prompt and tool tokens per reply                |
 | `OWNER_ID`                       | Stable identity used for this deployment's conversations           |
 | `DATABASE_PATH`                  | SQLite file containing conversations, pages, and metadata          |
 | `OWNER_TOKEN`                    | Application access token; required for external bindings           |

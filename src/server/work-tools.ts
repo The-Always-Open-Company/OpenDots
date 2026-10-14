@@ -775,5 +775,20 @@ export function workTools(deps: WorkDeps): ToolDefinition[] {
         },
       }),
     );
-  return tools;
+  const unavailable = unavailableTools(deps);
+  return tools.filter((tool) => !unavailable.has(tool.name));
+}
+
+/** Tools that cannot succeed anywhere in this run, so the model never sees them. */
+function unavailableTools(deps: WorkDeps) {
+  const unavailable = new Set<string>();
+  if (!deps.context().executionId)
+    for (const name of ['complete_work', 'fail_work']) unavailable.add(name);
+  if (!deps.engine.hasManageableSchedule(deps.dot.id))
+    for (const name of ['update_schedule', 'cancel_schedule'])
+      unavailable.add(name);
+  if (!deps.engine.hasResponsibility(deps.dot.id))
+    for (const name of ['list_responsibilities', 'close_responsibility'])
+      unavailable.add(name);
+  return unavailable;
 }

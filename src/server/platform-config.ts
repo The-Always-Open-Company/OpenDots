@@ -25,6 +25,14 @@ export function maxAgentTurnsFromEnv(
   return turns;
 }
 
+/** Unset or `on` loads rarely used tools on demand; `off` sends every tool. */
+export function lazyToolsFromEnv(value: string | undefined): boolean {
+  const raw = value?.trim().toLowerCase();
+  if (!raw || raw === 'on') return true;
+  if (raw === 'off') return false;
+  throw new Error('LAZY_TOOLS must be on or off.');
+}
+
 export type ModelApi = 'chat-completions' | 'responses';
 
 /** Unset means chat completions, which every OpenAI-compatible endpoint speaks. */
@@ -82,6 +90,10 @@ export interface PlatformConfig extends WebConfig {
   contextMaxTokens?: number;
   /** Model turns allowed per reply; unset means no limit. */
   maxAgentTurns?: number;
+  /** Send rarely used tools only after the model discovers them; unset means on. */
+  lazyTools?: boolean;
+  /** Log estimated prompt and tool tokens for each run. */
+  logContextSize?: boolean;
   /** Model that summarizes older history; defaults to `model`. */
   summaryModel?: string;
   /** Postgres with pgvector, for learned memories and document search. */

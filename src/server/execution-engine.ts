@@ -1764,6 +1764,20 @@ export class ExecutionEngine {
       )
       .get(threadId) as Row | undefined;
   }
+  hasManageableSchedule(actorId: string) {
+    return !!this.db
+      .prepare(
+        "SELECT 1 FROM triggers WHERE actorId=? AND kind='schedule' AND enabled=1 AND dotCanManage=1 LIMIT 1",
+      )
+      .get(actorId);
+  }
+  hasResponsibility(actorId: string) {
+    return !!this.db
+      .prepare(
+        "SELECT 1 FROM work_items WHERE actorId=? AND source='responsibility' LIMIT 1",
+      )
+      .get(actorId);
+  }
   ownsExecution(id: string, lease: string) {
     const row = this.execution(id);
     return !!row && row.status === 'running' && row.lease === lease;

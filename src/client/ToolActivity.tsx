@@ -38,6 +38,7 @@ const labels: Record<string, string> = {
   list_responsibilities: 'Checking responsibilities',
   upsert_responsibility: 'Saving a responsibility',
   close_responsibility: 'Closing a responsibility',
+  __lazy__tool__discovery__: 'Looking up tools',
 };
 
 export function toolActivityLabel(name: string) {
