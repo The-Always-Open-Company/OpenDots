@@ -23,6 +23,8 @@ it('sends tools the prompts rely on eagerly and defers the rest', () => {
     'create_action_items',
     'search_action_items',
     'update_action_item',
+    // List results are summaries that point at the full read
+    'read_action_item',
   ])
     expect(isLazy(name), name).toBe(false);
   for (const name of [

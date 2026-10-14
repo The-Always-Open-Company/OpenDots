@@ -4,6 +4,7 @@ import { ENTITY_KINDS, type ActionItem, type Entity } from '../shared/types.js';
 import {
   actionItemInput,
   actionItemPatch,
+  REVIEW_BUCKETS,
   searchInput,
   sourceInput,
   type ActionItemService,
@@ -57,6 +58,37 @@ export function itemView(
   };
 }
 
+/** One row of a list: enough to answer or pick an item to read in full. */
+export function summaryView(
+  item: ActionItem & { remindersGiven?: number },
+  timeZone: string,
+) {
+  const names = (assignee: boolean) =>
+    item.entities
+      .filter((entity) => (entity.role === 'assignee') === assignee)
+      .map((entity) => entity.name);
+  const assignees = names(true);
+  const concerns = names(false);
+  return {
+    id: item.id,
+    statement: item.statement,
+    status: item.status,
+    priority: item.priority,
+    assignee: assignees.length ? assignees.join(', ') : 'you',
+    due: localTime(item.dueAt, timeZone),
+    ...(concerns.length ? { concerns } : {}),
+    ...(item.labels.length ? { labels: item.labels } : {}),
+    ...(item.remindersGiven ? { remindersGiven: item.remindersGiven } : {}),
+  };
+}
+
+const detail = z
+  .enum(['summary', 'full'])
+  .optional()
+  .describe(
+    'summary (default) lists key fields; full adds context, details, entities and source. Prefer read_action_item for one item.',
+  );
+
 const entityView = (entity: Entity) => ({
   id: entity.id,
   name: entity.name,
@@ -91,6 +123,10 @@ export function actionItemTools(
   };
   const view = (item: ActionItem & { remindersGiven?: number }) =>
     itemView(item, deps.timeZone);
+  const listView =
+    (level: 'summary' | 'full' = 'summary') =>
+    (item: ActionItem & { remindersGiven?: number }) =>
+      level === 'full' ? view(item) : summaryView(item, deps.timeZone);
   return [
     defineTool({
       name: 'create_action_items',
@@ -143,15 +179,26 @@ export function actionItemTools(
     defineTool({
       name: 'search_action_items',
       description:
-        "Find the owner's action items by meaning and keywords within filters: entities they concern, who must do them, who asked, status, labels and due dates. Open and waiting items are searched unless statuses are given.",
+        "Find the owner's action items by meaning and keywords within filters: entities they concern, who must do them, who asked, status, labels and due dates. Open and waiting items are searched unless statuses are given. Returns a page of summaries with the total; pass nextOffset as offset for the next page.",
       parameters: searchInput.extend({
-        limit: z.number().int().min(1).max(50).optional(),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(20)
+          .optional()
+          .describe('Items per page (default 10).'),
+        detail,
       }),
-      execute: async (input) => {
+      execute: async ({ detail: level, ...input }) => {
         deps.check();
         const found = await service.search(input, actor, deps.signal);
         deps.check();
-        return { ...found, items: found.items.map(view) };
+        return {
+          ...found,
+          returned: found.items.length,
+          items: found.items.map(listView(level)),
+        };
       },
     }),
     defineTool({
@@ -213,15 +260,43 @@ export function actionItemTools(
     defineTool({
       name: 'review_action_items',
       description:
-        "What needs following up: the owner's overdue and soon-due items, reminders that have come due, items others owe the owner that are overdue, and items untouched for two weeks. remindersGiven counts earlier reminders.",
-      parameters: z.object({}),
-      execute: async () => {
+        "What needs following up: the owner's overdue and soon-due items, reminders that have come due, items others owe the owner that are overdue, and items untouched for two weeks. Every bucket reports its total; chosen buckets list a page of summaries, and nextOffset pages further. remindersGiven counts earlier reminders.",
+      parameters: z.object({
+        buckets: z
+          .array(z.enum(REVIEW_BUCKETS))
+          .max(REVIEW_BUCKETS.length)
+          .optional()
+          .describe('Buckets to list items for (default all).'),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(20)
+          .optional()
+          .describe('Items per bucket (default 5).'),
+        offset: z
+          .number()
+          .int()
+          .min(0)
+          .max(500)
+          .optional()
+          .describe('Items to skip in each bucket, for the next page.'),
+        detail,
+      }),
+      execute: async ({ buckets, limit, offset, detail: level }) => {
         deps.check();
-        const review = service.review(actor, { markReminded: deps.inWork });
+        const review = service.reviewPage(actor, {
+          buckets,
+          limit: limit ?? 5,
+          offset,
+          markReminded: deps.inWork,
+        });
         return Object.fromEntries(
-          Object.entries(review).map(([bucket, items]) => [
+          Object.entries(review).map(([bucket, page]) => [
             bucket,
-            items.map(view),
+            page.items
+              ? { ...page, items: page.items.map(listView(level)) }
+              : page,
           ]),
         );
       },
@@ -267,5 +342,6 @@ export const ACTION_ITEM_PROMPT = [
   'When a result is possible_duplicate, add what is new to the existing item with add_action_item_note; refile with force only if it is really a different item.',
   'When a result lists possibleEntityMatches, merge them with merge_entities when they are clearly the same, and ask the owner only when you are unsure.',
   'Use search_action_items before answering what the owner has to do or is owed, and update_action_item without asking whenever the owner or new content shows something is done, dropped, waiting or changed.',
+  'search_action_items and review_action_items return short summaries: call read_action_item for an item you need the context, details or source of, and pass nextOffset as offset only when you need more than the page shown.',
   'If the owner wants reminders or follow-ups, propose a schedule whose objective is to call review_action_items and report what is overdue, due soon, due for a reminder, or owed to the owner.',
 ].join(' ');

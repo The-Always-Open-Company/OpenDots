@@ -25,6 +25,7 @@ export const EAGER_TOOLS: ReadonlySet<string> = new Set([
   'fail_work',
   'create_action_items',
   'search_action_items',
+  'read_action_item',
   'update_action_item',
 ]);
 

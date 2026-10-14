@@ -182,8 +182,28 @@ export const searchInput = z.object({
   dueBefore: when.optional(),
   dueAfter: when.optional(),
   limit: z.number().int().min(1).max(200).optional(),
+  offset: z
+    .number()
+    .int()
+    .min(0)
+    .max(5_000)
+    .optional()
+    .describe(
+      'Items to skip, for the next page. Only applies without a query; a query returns its best matches.',
+    ),
 });
 export type SearchInput = z.input<typeof searchInput>;
+
+export const REVIEW_BUCKETS = [
+  'overdue',
+  'dueSoon',
+  'reminders',
+  'owedToYouOverdue',
+  'stale',
+] as const;
+export type ReviewBucket = (typeof REVIEW_BUCKETS)[number];
+/** Items scanned per bucket when a review is paged, so counts stay honest. */
+const REVIEW_SCAN = 500;
 
 /** Who is acting: a Dot (limited to what it can read) or the owner through the API. */
 export interface Actor {
@@ -778,14 +798,26 @@ export class ActionItemService {
     ]
       .join(' ')
       .trim();
-    const respond = (ids: string[], note?: string) => ({
+    const respond = (
+      ids: string[],
+      note?: string,
+      nextOffset: number | null = null,
+    ) => ({
       items: this.store.items(ids),
       total: candidates.length,
+      nextOffset,
       ...(unresolved.length ? { unresolved } : {}),
       ...(note ? { note } : {}),
     });
-    if (!candidates.length || text.length < 2)
-      return respond(candidates.slice(0, limit));
+    if (!candidates.length || text.length < 2) {
+      const offset = params.offset ?? 0;
+      const end = offset + limit;
+      return respond(
+        candidates.slice(offset, end),
+        undefined,
+        end < candidates.length ? end : null,
+      );
+    }
     let ranked: string[];
     try {
       await this.reindexStale(this.options.reindexBeforeSearch, signal);
@@ -878,26 +910,88 @@ export class ActionItemService {
       this.options.dueSoonMs,
       this.options.staleMs,
     );
-    const all = [...new Set(Object.values(groups).flat())];
+    const result = this.expandGroups(groups);
+    if (options.markReminded) this.markReminded(groups.reminders, actor, now);
+    return result;
+  }
+
+  /**
+   * One page of chosen review buckets, with every bucket's total. Only
+   * reminders on the page are marked as given, so none are lost unseen.
+   */
+  reviewPage(
+    actor: Actor,
+    options: {
+      buckets?: readonly ReviewBucket[];
+      limit: number;
+      offset?: number;
+      markReminded?: boolean;
+      now?: number;
+    },
+  ) {
+    const now = options.now ?? Date.now();
+    const offset = options.offset ?? 0;
+    const groups = this.store.review(
+      now,
+      this.options.dueSoonMs,
+      this.options.staleMs,
+      REVIEW_SCAN,
+    );
+    const chosen = options.buckets?.length ? options.buckets : REVIEW_BUCKETS;
+    const page = Object.fromEntries(
+      chosen.map((bucket) => [
+        bucket,
+        groups[bucket].slice(offset, offset + options.limit),
+      ]),
+    ) as Partial<Record<ReviewBucket, string[]>>;
+    const items = this.expandGroups(page);
+    if (options.markReminded)
+      this.markReminded(page.reminders ?? [], actor, now);
+    const end = offset + options.limit;
+    return Object.fromEntries(
+      REVIEW_BUCKETS.map((bucket) => [
+        bucket,
+        items[bucket]
+          ? {
+              total: groups[bucket].length,
+              items: items[bucket],
+              nextOffset: end < groups[bucket].length ? end : null,
+            }
+          : { total: groups[bucket].length },
+      ]),
+    ) as Record<
+      ReviewBucket,
+      {
+        total: number;
+        items?: (ActionItem & { remindersGiven: number })[];
+        nextOffset?: number | null;
+      }
+    >;
+  }
+
+  private expandGroups<K extends string>(groups: Partial<Record<K, string[]>>) {
+    const entries = Object.entries(groups) as [K, string[]][];
+    const all = [...new Set(entries.flatMap(([, ids]) => ids))];
     const counts = this.store.reminderCounts(all);
     const items = new Map(this.store.items(all).map((item) => [item.id, item]));
-    const expand = (ids: string[]) =>
-      ids
-        .map((id) => items.get(id))
-        .filter((item): item is ActionItem => !!item)
-        .map((item) => ({ ...item, remindersGiven: counts.get(item.id) ?? 0 }));
-    const result = {
-      overdue: expand(groups.overdue),
-      dueSoon: expand(groups.dueSoon),
-      reminders: expand(groups.reminders),
-      owedToYouOverdue: expand(groups.owedToYouOverdue),
-      stale: expand(groups.stale),
-    };
-    if (options.markReminded)
-      for (const id of groups.reminders) {
-        this.store.event(id, 'reminded', 'Reminder given.', actor.id, now);
-        this.store.clearReminder(id);
-      }
-    return result;
+    return Object.fromEntries(
+      entries.map(([bucket, ids]) => [
+        bucket,
+        ids
+          .map((id) => items.get(id))
+          .filter((item): item is ActionItem => !!item)
+          .map((item) => ({
+            ...item,
+            remindersGiven: counts.get(item.id) ?? 0,
+          })),
+      ]),
+    ) as Record<K, (ActionItem & { remindersGiven: number })[]>;
+  }
+
+  private markReminded(ids: string[], actor: Actor, now: number) {
+    for (const id of ids) {
+      this.store.event(id, 'reminded', 'Reminder given.', actor.id, now);
+      this.store.clearReminder(id);
+    }
   }
 }

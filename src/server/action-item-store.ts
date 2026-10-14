@@ -438,15 +438,15 @@ export class ActionItemStore {
     ).map((row) => String(row.id));
   }
 
-  /** IDs grouped for a follow-up review. */
-  review(now: number, soonMs: number, staleMs: number) {
+  /** IDs grouped for a follow-up review, at most `limit` per group. */
+  review(now: number, soonMs: number, staleMs: number, limit = 50) {
     const ids = (sql: string, ...params: SQLInputValue[]) =>
       (
         this.db
           .prepare(
-            `SELECT a.id FROM action_items a WHERE ${OPEN} AND ${sql} ORDER BY a.dueAt IS NULL, a.dueAt, ${PRIORITY_RANK}, a.createdAt LIMIT 50`,
+            `SELECT a.id FROM action_items a WHERE ${OPEN} AND ${sql} ORDER BY a.dueAt IS NULL, a.dueAt, ${PRIORITY_RANK}, a.createdAt LIMIT ?`,
           )
-          .all(...params) as Row[]
+          .all(...params, limit) as Row[]
       ).map((row) => String(row.id));
     return {
       overdue: ids(`a.dueAt < ? AND ${OWNERSHIP.me}`, now),

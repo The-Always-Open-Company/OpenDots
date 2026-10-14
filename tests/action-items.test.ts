@@ -590,11 +590,17 @@ describe('action item tools', () => {
       });
     const review = (inWork: boolean) =>
       tools(inWork).find((tool) => tool.name === 'review_action_items')!
-        .execute!({} as never) as Promise<{ reminders: unknown[] }>;
-    expect((await review(false)).reminders).toHaveLength(1);
-    expect((await review(false)).reminders).toHaveLength(1);
-    expect((await review(true)).reminders).toHaveLength(1);
-    expect((await review(true)).reminders).toHaveLength(0);
+        .execute!({} as never) as Promise<{
+        reminders: { total: number; items: unknown[] };
+      }>;
+    expect((await review(false)).reminders.items).toHaveLength(1);
+    expect((await review(false)).reminders.items).toHaveLength(1);
+    expect((await review(true)).reminders.items).toHaveLength(1);
+    expect((await review(true)).reminders).toEqual({
+      total: 0,
+      items: [],
+      nextOffset: null,
+    });
 
     const search = tools(false).find(
       (tool) => tool.name === 'search_action_items',
@@ -607,8 +613,78 @@ describe('action item tools', () => {
     expect(found.items[0]).toMatchObject({ assignee: 'you', due: null });
     const parameters = (search as unknown as { parameters: z.ZodType })
       .parameters;
-    expect(parameters.safeParse({ limit: 50 }).success).toBe(true);
-    expect(parameters.safeParse({ limit: 51 }).success).toBe(false);
+    expect(parameters.safeParse({ limit: 20 }).success).toBe(true);
+    expect(parameters.safeParse({ limit: 21 }).success).toBe(false);
+  });
+
+  it('lists summaries a page at a time', async () => {
+    const { service, first, owner } = setup();
+    await service.create(
+      [companyAPricing, companyASecurity, owedByPersonJ],
+      owner,
+    );
+    const search = actionItemTools(service, {
+      dotId: first.id,
+      threadId: 'thread-1',
+      timeZone: 'UTC',
+      inWork: false,
+      check: () => undefined,
+      signal: new AbortController().signal,
+    }).find((tool) => tool.name === 'search_action_items')!;
+    type Page = {
+      items: Record<string, unknown>[];
+      total: number;
+      returned: number;
+      nextOffset: number | null;
+    };
+    const page = (input: object) =>
+      search.execute!(input as never) as Promise<Page>;
+
+    const firstPage = await page({ limit: 2 });
+    expect(firstPage).toMatchObject({ total: 3, returned: 2, nextOffset: 2 });
+    expect(Object.keys(firstPage.items[0]!)).not.toContain('source');
+    expect(Object.keys(firstPage.items[0]!)).not.toContain('context');
+    const rest = await page({ limit: 2, offset: 2 });
+    expect(rest).toMatchObject({ total: 3, returned: 1, nextOffset: null });
+    expect(
+      new Set([...firstPage.items, ...rest.items].map((item) => item.id)).size,
+    ).toBe(3);
+    const full = await page({ limit: 1, detail: 'full' });
+    expect(full.items[0]).toHaveProperty('source.excerpt');
+  });
+
+  it('reviews chosen buckets and only marks the reminders it returns', async () => {
+    const { service, first, owner } = setup();
+    await service.create(
+      [
+        { ...companyAPricing, remindAt: '2020-01-01T00:00:00Z' },
+        { ...companyASecurity, remindAt: '2020-01-02T00:00:00Z' },
+        { ...owedByPersonJ, remindAt: '2020-01-03T00:00:00Z' },
+      ],
+      owner,
+    );
+    const review = actionItemTools(service, {
+      dotId: first.id,
+      threadId: 'thread-1',
+      timeZone: 'UTC',
+      inWork: true,
+      check: () => undefined,
+      signal: new AbortController().signal,
+    }).find((tool) => tool.name === 'review_action_items')!;
+    type Bucket = { total: number; items?: unknown[]; nextOffset?: number };
+    const run = (input: object) =>
+      review.execute!(input as never) as Promise<Record<string, Bucket>>;
+
+    const paged = await run({ buckets: ['reminders'], limit: 1 });
+    expect(paged.reminders).toMatchObject({ total: 3, nextOffset: 1 });
+    expect(paged.reminders!.items).toHaveLength(1);
+    expect(paged.overdue).toEqual({ total: 0 });
+    expect(paged.stale).not.toHaveProperty('items');
+    expect((await run({ buckets: ['reminders'] })).reminders).toMatchObject({
+      total: 2,
+      nextOffset: null,
+    });
+    expect((await run({})).reminders!.total).toBe(0);
   });
 });
 
