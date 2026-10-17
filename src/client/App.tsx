@@ -810,6 +810,7 @@ export function App() {
             pageId={pageId}
             workspace={workspace}
             paused={state.settings.paused}
+            voiceNoteAutoSend={state.settings.voiceNoteAutoSend}
             onPage={(id) => openPage(spaceId, id)}
             onSettings={() => setDialog({ type: 'settings' })}
             onCreateDot={() => setDialog({ type: 'dot', spaceId })}
@@ -871,6 +872,8 @@ export function App() {
                   initialPrompt={pendingPrompt}
                   onConsumed={() => setPendingPrompt(undefined)}
                   voiceReady={workspace.setup.voice}
+                  voiceNotesReady={workspace.setup.voiceNotes}
+                  voiceNoteAutoSend={state.settings.voiceNoteAutoSend}
                   documentsReady={workspace.setup.documents}
                   calls={workspace.calls.filter(
                     (call) => call.threadId === thread.id,

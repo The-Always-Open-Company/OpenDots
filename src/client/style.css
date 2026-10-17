@@ -3051,6 +3051,63 @@ h3 {
   font-size: 10px;
   padding: 8px;
 }
+.voice-note-panel {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  background: #e5f1ef;
+  color: #4f7f7a;
+  border-radius: 8px;
+  padding: 6px 9px;
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+.voice-note-panel.failed {
+  background: #f6ece8;
+  color: #9b6f62;
+}
+.voice-note-panel audio {
+  height: 30px;
+  max-width: 220px;
+  flex: 1 1 160px;
+}
+.voice-note-panel > span:not(.voice-note-dot) {
+  flex: 1 1 auto;
+}
+.voice-note-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d9776b;
+  animation: voice-note-pulse 1.2s ease-in-out infinite;
+}
+@keyframes voice-note-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+.voice-note-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  opacity: 0.75;
+  margin-bottom: 2px;
+}
+.spoken-reply {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #eef1ea;
+  color: #6d7a68;
+  border: 0;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
 .attachment-chips {
   display: flex;
   flex-wrap: wrap;

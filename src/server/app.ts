@@ -19,6 +19,7 @@ import { Runner } from './runner.js';
 import { configured, type Config } from './research.js';
 import type { Platform } from './platform.js';
 import { VoiceService } from './voice.js';
+import { VOICE_NOTE_MAX_BYTES } from './voice-notes.js';
 import { workspaceRoutes } from './workspace-routes.js';
 import { DEFAULT_MAX_UPLOAD_MB } from './platform-config.js';
 const interval = z.number().int().min(60).max(31_536_000).nullable();
@@ -75,14 +76,30 @@ export function createApp({
         413,
       ),
   });
+  const voiceNoteTooLarge = bodyLimit({
+    maxSize: VOICE_NOTE_MAX_BYTES + 100_000,
+    onError: (c) =>
+      c.json(
+        {
+          error: `Voice notes can be up to ${VOICE_NOTE_MAX_BYTES / 1_000_000} MB.`,
+        },
+        413,
+      ),
+  });
+  const isVoiceNote = (method: string, path: string) =>
+    method === 'POST' && path === '/api/voice/notes/transcribe';
   const isUpload = (method: string, path: string) =>
-    method === 'POST' && /^\/api\/documents(?:\/[^/]+\/versions)?$/.test(path);
+    (method === 'POST' &&
+      /^\/api\/documents(?:\/[^/]+\/versions)?$/.test(path)) ||
+    isVoiceNote(method, path);
   app.use('/api/*', (c, next) =>
     c.req.path.startsWith('/api/copilotkit/')
       ? runtimeTooLarge(c, next)
-      : isUpload(c.req.method, c.req.path)
-        ? uploadTooLarge(c, next)
-        : tooLarge(c, next),
+      : isVoiceNote(c.req.method, c.req.path)
+        ? voiceNoteTooLarge(c, next)
+        : isUpload(c.req.method, c.req.path)
+          ? uploadTooLarge(c, next)
+          : tooLarge(c, next),
   );
   app.use('/api/*', async (c, next) => {
     c.header('Cache-Control', 'no-store');
@@ -345,6 +362,7 @@ export function createApp({
           .max(10)
           .transform((names) => [...new Set(names)])
           .optional(),
+        voiceNoteAutoSend: z.boolean().optional(),
       })
       .strict()
       .safeParse(await c.req.json().catch(() => null));

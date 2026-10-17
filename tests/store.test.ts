@@ -30,6 +30,22 @@ describe('durable task lifecycle', () => {
     expect(reopened.settings().name).toBe('Sam');
     reopened.close();
   });
+  it('defaults voice note auto-send to off for settings saved before it existed', () => {
+    const { store, path } = fixture();
+    store.database
+      .prepare('UPDATE settings SET value=? WHERE id=1')
+      .run(JSON.stringify({ name: 'Old', paused: false }));
+    const reopened = new Store(path);
+    expect(reopened.settings()).toMatchObject({
+      name: 'Old',
+      voiceNoteAutoSend: false,
+    });
+    reopened.updateSettings({ voiceNoteAutoSend: true });
+    reopened.close();
+    const later = new Store(path);
+    expect(later.settings().voiceNoteAutoSend).toBe(true);
+    later.close();
+  });
   it('claims each due job once even through separate database connections', () => {
     const { store, path } = fixture();
     store.createTask('Research one');

@@ -21,6 +21,7 @@ const dot: Dot = {
   memoryAllowed: false,
   consultable: false,
   mascot: null,
+  replyMode: 'text',
   createdAt: 0,
 };
 

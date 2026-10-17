@@ -20,6 +20,7 @@ const defaults: Settings = {
   researchAllowed: true,
   memoryAllowed: true,
   ownerNames: [],
+  voiceNoteAutoSend: false,
 };
 export class Store {
   private db: DatabaseSync;

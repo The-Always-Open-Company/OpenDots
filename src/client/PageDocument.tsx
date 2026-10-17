@@ -27,6 +27,7 @@ export function PageDocument({
   pages,
   workspace,
   paused,
+  voiceNoteAutoSend,
   onHome,
   onOutline,
   onSubpage,
@@ -42,6 +43,7 @@ export function PageDocument({
   pages: Page[];
   workspace: WorkspaceState;
   paused: boolean;
+  voiceNoteAutoSend: boolean;
   onHome: () => void;
   onOutline: () => void;
   onSubpage: () => void;
@@ -320,6 +322,7 @@ export function PageDocument({
           page={page}
           workspace={workspace}
           paused={paused}
+          voiceNoteAutoSend={voiceNoteAutoSend}
           beforeChat={beforeChat}
           onRefresh={onRefresh}
           onSchedule={onSchedule}

@@ -96,6 +96,8 @@ const config: PlatformConfig = {
   voiceName: process.env.VOICE_NAME || 'marin',
   voiceTaskModel: process.env.VOICE_TASK_MODEL || undefined,
   voiceTaskLimit: voiceTaskLimitFromEnv(process.env.VOICE_TASK_LIMIT),
+  voiceTranscribeModel: process.env.VOICE_TRANSCRIBE_MODEL || undefined,
+  voiceSpeechModel: process.env.VOICE_SPEECH_MODEL || undefined,
   slackChannel: process.env.SLACK_CHANNEL_NAME,
   slackTeam: process.env.SLACK_TEAM_ID,
   slackUsers: (process.env.SLACK_USER_IDS ?? '')

@@ -46,6 +46,7 @@ export async function upload<T>(
   path: string,
   file: File,
   fields: Record<string, string | string[] | undefined> = {},
+  signal?: AbortSignal,
 ): Promise<T> {
   const form = new FormData();
   form.append('file', file, file.name);
@@ -56,6 +57,7 @@ export async function upload<T>(
     method: 'POST',
     headers: authHeaders(),
     body: form,
+    signal,
   });
   const data = (await response
     .json()
@@ -68,6 +70,29 @@ export async function upload<T>(
       response.status,
     );
   return data as T;
+}
+/** POSTs JSON and returns the binary response, e.g. synthesized speech. */
+export async function postForBlob(
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const response = await fetch(`/api${path}`, {
+    method: 'POST',
+    signal,
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const data = (await response.json().catch(() => ({}))) as {
+      error?: string;
+    };
+    throw new ApiError(
+      data.error ?? `Request failed (${response.status}).`,
+      response.status,
+    );
+  }
+  return response.blob();
 }
 /** Downloads through fetch so the access token is sent, then saves the blob. */
 export async function download(path: string, fileName: string) {

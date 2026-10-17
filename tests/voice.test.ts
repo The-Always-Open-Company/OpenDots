@@ -104,6 +104,7 @@ function fixture(overrides: Partial<PlatformConfig> = {}) {
       requireReady() {},
       setup: () => ({
         voice: true,
+        voiceNotes: true,
         model: true,
         browser: false,
         memory: false,

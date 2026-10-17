@@ -286,6 +286,16 @@ The server keeps its own connection to each GPT-Live session for delegated work 
 
 A configured key is not evidence of a successful call. Verify microphone access, audio playback, compute delegation, interruption, hangup, and the saved receipt with your deployment before relying on voice workflows.
 
+## Voice notes
+
+A voice note lets you speak a message without starting a call. Press the microphone in the message box, record up to 5 minutes (recording stops on its own at the limit), then listen back and send it or discard it. Cancelling or discarding never reaches the Dot. Voice notes need only `VOICE_API_KEY`; they do not use `VOICE_MODEL` or GPT-Live.
+
+When you send a note, the server forwards the audio to OpenAI's transcription API (`VOICE_TRANSCRIBE_MODEL`, default `gpt-4o-mini-transcribe`) and returns the text. By default the text lands in the message box so you can check or edit it before sending; turn on **Send voice notes right away** in Settings to send it as soon as it is transcribed. Either way it is sent like a typed message, in the same conversation, with the same tools, permissions and approval cards, and it is marked **Voice note** in the timeline. Action items and approvals from a voice note are tracked the same way as from a typed message. If an upload or transcription fails, the recording stays in the browser and **Retry** sends the same audio again; transcription has no side effects, so a retry cannot duplicate a message or an action.
+
+Each Dot's **Reply to voice notes** setting chooses between text only (the default) and text with a spoken reply. With spoken replies, the written answer to a voice note is also read aloud with `VOICE_SPEECH_MODEL` (default `gpt-4o-mini-tts`) in the `VOICE_NAME` voice, and a **Listen** button replays it. The written reply is always kept. Typed messages are answered in text only.
+
+Audio is not stored by OpenDots. Recordings stay in browser memory until they are transcribed or discarded; the server passes them to OpenAI without writing them to disk, and spoken replies are cached only in the open tab. Only the transcript is saved, as the message in the conversation. Notes can be up to 5 minutes and 10 MB, in WebM, Ogg, MP4, MP3 or WAV. Recording needs microphone access, so hosted deployments need HTTPS.
+
 ## Containers
 
 Set `OWNER_TOKEN` and `BROWSER_SECRET` to different random secrets of at least 24 characters in `.env`, and set `POSTGRES_PASSWORD` (`openssl rand -hex 24`), then run:

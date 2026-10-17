@@ -96,6 +96,8 @@ A continuous conversation keeps the Dot's avatar and status above the messages, 
 
 Calls pair GPT-Live speech with the Dot's own agent, so the conversation can continue while longer work runs. The voice model delegates work to the server, which answers it with the same conversation, tools and permissions as text, optionally on a separate, faster task model. The call screen includes a live timer, separate user and Dot captions, microphone mute, speaker mute, and a minimized view for continuing in chat. Voice needs separate provider configuration.
 
+Voice notes are the lighter option: record up to 5 minutes from the message box, listen back, and send. The note is transcribed and sent as a normal message with the same tools, permissions and approvals, after you review the text or straight away if you prefer. Each Dot can answer voice notes in text only or also read its reply aloud. OpenDots keeps only the transcript, not the audio (see [Voice notes](docs/SETUP.md#voice-notes)).
+
 <div align="center">
 
 <table><tr><td>
@@ -168,25 +170,25 @@ See [Setup](docs/SETUP.md) for configuration, calls, the browser service, and Do
 
 Conversation messages, tool calls, run events, and cached conversation summaries are stored in the SQLite database at `DATABASE_PATH`, together with pages, workspace metadata, documents and their access rules. Uploaded files and their converted text live in `DOCUMENTS_DIR`. Learned memories and searchable document passages live in Postgres. Back up all three.
 
-The configured model provider receives conversation context, including authorized page content, tool results, recalled memories, document passages, and the older turns it summarizes. Memory extraction sends each chat turn's user messages and reply to the memory model; document passages and search queries are sent to the embedding model. Indexing sends document text to the enrichment model, and each document search sends the recent conversation and candidate passages to the search model. Documents are converted locally by docling-serve. Public-web research sends queries and selected URLs to Parallel by default; set `WEB_SEARCH_PROVIDER=disabled` to disable those tools. Speech integrations send data to their configured providers when used. Plugins send each tool call's arguments to that plugin's provider (Google, Linear, Zoho or the MCP server you add), and their results reach the model as untrusted data; see [Plugins](docs/SETUP.md#plugins).
+The configured model provider receives conversation context, including authorized page content, tool results, recalled memories, document passages, and the older turns it summarizes. Memory extraction sends each chat turn's user messages and reply to the memory model; document passages and search queries are sent to the embedding model. Indexing sends document text to the enrichment model, and each document search sends the recent conversation and candidate passages to the search model. Documents are converted locally by docling-serve. Public-web research sends queries and selected URLs to Parallel by default; set `WEB_SEARCH_PROVIDER=disabled` to disable those tools. Speech integrations send data to their configured providers when used; voice note audio goes to OpenAI for transcription and is not stored, and spoken replies send the reply text to OpenAI's speech API. Plugins send each tool call's arguments to that plugin's provider (Google, Linear, Zoho or the MCP server you add), and their results reach the model as untrusted data; see [Plugins](docs/SETUP.md#plugins).
 
 CopilotKit and mem0 telemetry are switched off in code at startup (`src/server/disable-telemetry.ts`), regardless of environment settings, and the upstream browser setup telemetry has been removed. Review the policies and retention settings of each service you configure.
 
 ## Features
 
-| Area                       | Included                                                                                                      |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Spaces and Specialist Dots | Saved names, role instructions, and per-Dot research and memory permissions                                   |
-| Pages                      | Searchable library, visual editor, slash commands, autosave, and revision checks                              |
-| Conversations              | React SDK chat, locally stored history with context compaction, page-specific conversations, and source links |
-| Calls                      | WebRTC speech, delegated compute, bounded sessions, hangup, and timeline receipts                             |
-| Background work            | Scheduled server-side turns in their original conversation, with pause and retry controls                     |
-| Browser                    | Separate read-only public-page service with page capture and navigation limits                                |
-| Dot computers              | Per-Dot browser profiles, files, shell, takeover, permissions, and action records through OpenBot             |
-| Memory                     | Shared About me preferences, plus per-Dot learned memories you can review, edit and delete                    |
+| Area                       | Included                                                                                                                |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Spaces and Specialist Dots | Saved names, role instructions, and per-Dot research and memory permissions                                             |
+| Pages                      | Searchable library, visual editor, slash commands, autosave, and revision checks                                        |
+| Conversations              | React SDK chat, locally stored history with context compaction, page-specific conversations, and source links           |
+| Calls                      | WebRTC speech, delegated compute, bounded sessions, hangup, and timeline receipts                                       |
+| Background work            | Scheduled server-side turns in their original conversation, with pause and retry controls                               |
+| Browser                    | Separate read-only public-page service with page capture and navigation limits                                          |
+| Dot computers              | Per-Dot browser profiles, files, shell, takeover, permissions, and action records through OpenBot                       |
+| Memory                     | Shared About me preferences, plus per-Dot learned memories you can review, edit and delete                              |
 | Documents                  | Library with per-Dot and per-Space access, local conversion, enriched multi-query search, versions and chat attachments |
-| Dot consultations          | Dots ask each other questions in separate, restricted consultation threads                                    |
-| Deployment                 | Local Node setup and separate application, browser, Postgres and docling-serve containers                     |
+| Dot consultations          | Dots ask each other questions in separate, restricted consultation threads                                              |
+| Deployment                 | Local Node setup and separate application, browser, Postgres and docling-serve containers                               |
 
 Scheduled tasks run in their original conversation. If a worker stops or its lease expires during a run, OpenDots marks that run **Interrupted** and waits for an explicit retry. Review its pages and computer actions, then use **Retry after review** when appropriate. Completed effects may already be present even when a run has no final result.
 

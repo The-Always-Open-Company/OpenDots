@@ -6,7 +6,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { CallReceipt, Conversation, Dot, Space } from '../shared/types.js';
+import type {
+  CallReceipt,
+  Conversation,
+  Dot,
+  ReplyMode,
+  Space,
+} from '../shared/types.js';
 export type ThreadKind = 'chat' | 'consultation';
 export class WorkspaceStore {
   private db: DatabaseSync;
@@ -58,6 +64,7 @@ export class WorkspaceStore {
     addColumn('calls', 'provider', 'TEXT');
     addColumn('dots', 'consultable', 'INTEGER NOT NULL DEFAULT 1');
     addColumn('dots', 'mascot', 'TEXT');
+    addColumn('dots', 'replyMode', "TEXT NOT NULL DEFAULT 'text'");
     addColumn('thread_bindings', 'kind', "TEXT NOT NULL DEFAULT 'chat'");
     this.db.exec(
       'CREATE TABLE IF NOT EXISTS consultations(fromDotId TEXT NOT NULL, toDotId TEXT NOT NULL, threadId TEXT NOT NULL, PRIMARY KEY(fromDotId, toDotId))',
@@ -103,7 +110,7 @@ export class WorkspaceStore {
   dots(): Dot[] {
     return this.db
       .prepare(
-        'SELECT id, spaceId, name, instructions, researchAllowed, memoryAllowed, consultable, mascot, createdAt FROM dots ORDER BY createdAt',
+        'SELECT id, spaceId, name, instructions, researchAllowed, memoryAllowed, consultable, mascot, replyMode, createdAt FROM dots ORDER BY createdAt',
       )
       .all()
       .map((row) => ({
@@ -118,6 +125,7 @@ export class WorkspaceStore {
         memoryAllowed: !!row.memoryAllowed,
         consultable: !!row.consultable,
         mascot: typeof row.mascot === 'string' ? row.mascot : null,
+        replyMode: row.replyMode === 'voice' ? 'voice' : 'text',
       })) as unknown as Dot[];
   }
   dot(id: string) {
@@ -143,6 +151,7 @@ export class WorkspaceStore {
       memoryAllowed,
       consultable,
       mascot: null,
+      replyMode: 'text',
       createdAt: Date.now(),
     };
     this.db.exec('BEGIN');
@@ -192,6 +201,7 @@ export class WorkspaceStore {
       spaceIds?: string[];
       consultable?: boolean;
       mascot?: string | null;
+      replyMode?: ReplyMode;
     },
   ): Dot {
     const current = this.dot(id);
@@ -228,6 +238,13 @@ export class WorkspaceStore {
         this.db
           .prepare('UPDATE dots SET mascot=? WHERE id=?')
           .run(patch.mascot, id);
+      }
+      if (patch.replyMode !== undefined) {
+        if (!['text', 'voice'].includes(patch.replyMode))
+          throw new Error('Choose text or voice replies.');
+        this.db
+          .prepare('UPDATE dots SET replyMode=? WHERE id=?')
+          .run(patch.replyMode, id);
       }
       this.db.exec('COMMIT');
     } catch (error) {

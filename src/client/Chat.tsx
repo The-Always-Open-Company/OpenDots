@@ -47,6 +47,14 @@ import {
   shouldSubmitComposerOnKeyDown,
 } from './chat-composer';
 import { DOCUMENT_ACCEPT } from './DocumentUploadDialog';
+import { useVoiceNote } from './useVoiceNote';
+import { useSpokenReply } from './useSpokenReply';
+import {
+  SpokenReplyButton,
+  VoiceNoteButton,
+  VoiceNotePanel,
+} from './VoiceNoteControls';
+import { voiceNoteMessagePrefix, voiceNoteReply } from '../shared/voice-note';
 
 interface Attachment {
   key: string;
@@ -61,6 +69,8 @@ export function Chat({
   initialPrompt,
   onConsumed,
   voiceReady,
+  voiceNotesReady = false,
+  voiceNoteAutoSend = false,
   documentsReady = false,
   calls,
   paused,
@@ -77,6 +87,8 @@ export function Chat({
   initialPrompt?: string;
   onConsumed: () => void;
   voiceReady: boolean;
+  voiceNotesReady?: boolean;
+  voiceNoteAutoSend?: boolean;
   documentsReady?: boolean;
   calls: CallReceipt[];
   paused: boolean;
@@ -122,6 +134,7 @@ export function Chat({
     };
   }, [thread.id, contextAttempt]);
   const [draft, setDraft] = useState('');
+  const [draftFromVoice, setDraftFromVoice] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
   const attachmentsReady = attachments.every(
@@ -207,6 +220,23 @@ export function Chat({
   );
   const pendingLocal = useRef(false);
   const voice = useVoice(thread.id, onSaved, agent.messages.at(-1)?.id);
+  const spoken = useSpokenReply();
+  const note = useVoiceNote(thread.id, (text) => {
+    // Auto-send only when nothing else is waiting in the composer, so typed text is never lost.
+    if (
+      voiceNoteAutoSend &&
+      !draft.trim() &&
+      !source &&
+      !attachments.length &&
+      canSend &&
+      !paused
+    ) {
+      void send(text, { voiceNote: true });
+      return;
+    }
+    setDraft((current) => (current.trim() ? `${current}\n\n${text}` : text));
+    setDraftFromVoice(true);
+  });
   const sent = useRef(false);
   const bottom = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -296,24 +326,21 @@ export function Chat({
       clearInterval(timer);
     };
   }, [agent, copilotkit, loaded, thread.id]);
-  const send = async (text: string) => {
+  const canSend =
+    attachmentsReady && !running && !following && loaded && contextReady;
+  const send = async (
+    text: string,
+    { voiceNote = false }: { voiceNote?: boolean } = {},
+  ) => {
     const documents = attachments.flatMap((item) =>
       item.document ? [item.document] : [],
     );
-    if (
-      (!text.trim() && !documents.length) ||
-      !attachmentsReady ||
-      running ||
-      following ||
-      !loaded ||
-      !contextReady ||
-      paused
-    )
-      return;
+    if ((!text.trim() && !documents.length) || !canSend || paused) return;
     setError('');
     setRunning(true);
+    setDraftFromVoice(false);
     agent.addMessage({
-      id: crypto.randomUUID(),
+      id: `${voiceNote ? voiceNoteMessagePrefix : ''}${crypto.randomUUID()}`,
       role: 'user',
       content: contextualMessage(
         attachedDocuments(
@@ -334,6 +361,8 @@ export function Chat({
           'The current turn returned no response. Check the runtime connection and retry.',
         );
       onSaved();
+      const reply = voiceNote ? voiceNoteReply(agent.messages) : undefined;
+      if (reply && dot.replyMode === 'voice') void spoken.play(reply);
     } catch (e) {
       setError(
         e instanceof Error
@@ -356,6 +385,7 @@ export function Chat({
   }, [agent.messages.length, running]);
   useEffect(() => {
     if (paused && voice.status !== 'idle') void voice.end();
+    if (paused) note.stop();
   }, [paused]);
   useHumanInTheLoop(
     {
@@ -476,7 +506,13 @@ export function Chat({
                 ? 'Talk with your Dot'
                 : 'Voice setup requires VOICE_API_KEY'
             }
-            disabled={!voiceReady || paused || !loaded || !contextReady}
+            disabled={
+              !voiceReady ||
+              paused ||
+              !loaded ||
+              !contextReady ||
+              (voice.status === 'idle' && note.status !== 'idle')
+            }
             onClick={() =>
               voice.status === 'idle' ? void voice.start() : void voice.end()
             }
@@ -517,6 +553,13 @@ export function Chat({
               messages={agent.messages}
             />
           )}
+          renderSpeech={
+            voiceNotesReady && dot.replyMode === 'voice'
+              ? (message) => (
+                  <SpokenReplyButton message={message} spoken={spoken} />
+                )
+              : undefined
+          }
         />
         {unanswered && (
           <div className="work-marker">
@@ -544,9 +587,9 @@ export function Chat({
           </button>
         </div>
       )}
-      {(error || voice.error) && (
+      {(error || voice.error || spoken.error) && (
         <div className="chat-error" role="alert">
-          {error || voice.error}
+          {error || voice.error || spoken.error}
           {error && (
             <button
               onClick={() => {
@@ -591,9 +634,15 @@ export function Chat({
         }}
         onSubmit={(e) => {
           e.preventDefault();
-          void send(`${source ? `From ${source}:\n\n` : ''}${draft}`);
+          void send(`${source ? `From ${source}:\n\n` : ''}${draft}`, {
+            voiceNote: draftFromVoice,
+          });
         }}
       >
+        <VoiceNotePanel
+          note={note}
+          sendDisabled={!canSend || paused || !voiceNotesReady}
+        />
         {sourceOpen && (
           <div className="source-input">
             <Link2 size={15} />
@@ -691,13 +740,29 @@ export function Chat({
               />
             </>
           )}
+          {voiceNotesReady && (
+            <VoiceNoteButton
+              note={note}
+              disabled={
+                paused ||
+                !loaded ||
+                !contextReady ||
+                running ||
+                following ||
+                voice.status !== 'idle'
+              }
+            />
+          )}
           <textarea
             aria-label="Message your Dot"
             placeholder={`Message ${dot.name}…`}
             rows={1}
             value={draft}
             maxLength={4000}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              if (!e.target.value.trim()) setDraftFromVoice(false);
+            }}
             onKeyDown={(e) => {
               if (shouldSubmitComposerOnKeyDown(e)) {
                 e.preventDefault();
@@ -738,8 +803,10 @@ export function Chat({
         </div>
         <div className="chat-compose-note">
           {voiceReady
-            ? 'Text and voice, one conversation.'
-            : 'Text is ready. Voice needs separate server configuration.'}
+            ? 'Text, voice notes, and calls, one conversation.'
+            : voiceNotesReady
+              ? 'Text and voice notes, one conversation.'
+              : 'Text is ready. Voice needs separate server configuration.'}
         </div>
       </form>
     </div>

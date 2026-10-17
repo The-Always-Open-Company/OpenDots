@@ -13,6 +13,7 @@ export function SpaceWorkspace({
   pageId,
   workspace,
   paused,
+  voiceNoteAutoSend,
   onPage,
   onDirty,
   onRefresh,
@@ -25,6 +26,7 @@ export function SpaceWorkspace({
   pageId?: string;
   workspace: WorkspaceState;
   paused: boolean;
+  voiceNoteAutoSend: boolean;
   onPage: (id?: string) => void;
   onDirty: (value: boolean) => void;
   onRefresh: () => void;
@@ -126,6 +128,7 @@ export function SpaceWorkspace({
             pages={pages}
             workspace={workspace}
             paused={paused}
+            voiceNoteAutoSend={voiceNoteAutoSend}
             onHome={() => onPage()}
             onOutline={() => setOutline(!outline)}
             onSubpage={() => void create(page.id)}

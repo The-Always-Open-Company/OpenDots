@@ -1,10 +1,11 @@
 import { openPageLink } from './page-navigation';
 import { Fragment, type ReactNode } from 'react';
-import { Clock3, PhoneOff } from 'lucide-react';
+import { Clock3, Mic, PhoneOff } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import type { AssistantMessage, Message } from '@ag-ui/core';
 import type { CallReceipt } from '../shared/types';
 import { voiceReceiptMessagePrefix } from '../shared/voice-receipt';
+import { isVoiceNote, voiceNoteReplyIds } from '../shared/voice-note';
 import { workPromptKind, workPromptLabel } from '../shared/work-marker';
 // These markers only control rendering; they do not confer trust or permissions.
 export function isInternalVoiceReceipt(message: Message): boolean {
@@ -37,12 +38,16 @@ export function ChatTranscript({
   messages,
   calls,
   renderTools,
+  renderSpeech,
 }: {
   messages: Message[];
   calls: CallReceipt[];
   renderTools?: (message: AssistantMessage) => ReactNode;
+  /** Shown under the written reply to each voice note. */
+  renderSpeech?: (message: AssistantMessage) => ReactNode;
 }) {
   const ids = new Set(messages.map((message) => message.id));
+  const spoken = renderSpeech ? voiceNoteReplyIds(messages) : new Set<string>();
   return (
     <>
       {calls
@@ -65,6 +70,12 @@ export function ChatTranscript({
               typeof message.content === 'string' &&
               message.content.trim() && (
                 <div className={`chat-bubble ${message.role}`}>
+                  {isVoiceNote(message) && (
+                    <span className="voice-note-label">
+                      <Mic size={12} />
+                      Voice note
+                    </span>
+                  )}
                   <ReactMarkdown
                     components={{
                       img: ({ alt }) => <span>{alt}</span>,
@@ -94,6 +105,9 @@ export function ChatTranscript({
                 </div>
               )
             )}
+            {message.role === 'assistant' &&
+              spoken.has(message.id) &&
+              renderSpeech?.(message)}
             {message.role === 'assistant' && renderTools?.(message)}
             {calls
               .filter((call) => call.anchorMessageId === message.id)

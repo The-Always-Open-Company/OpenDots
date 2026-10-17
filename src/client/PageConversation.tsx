@@ -9,6 +9,7 @@ export function PageConversation({
   page,
   workspace,
   paused,
+  voiceNoteAutoSend,
   beforeChat,
   onRefresh,
   onSchedule,
@@ -19,6 +20,7 @@ export function PageConversation({
   page: Page;
   workspace: WorkspaceState;
   paused: boolean;
+  voiceNoteAutoSend: boolean;
   beforeChat: () => Promise<boolean>;
   onRefresh: () => void;
   onSchedule: (id: string) => void;
@@ -108,6 +110,8 @@ export function PageConversation({
           initialPrompt={pending}
           onConsumed={() => setPending(undefined)}
           voiceReady={workspace.setup.voice}
+          voiceNotesReady={workspace.setup.voiceNotes}
+          voiceNoteAutoSend={voiceNoteAutoSend}
           documentsReady={workspace.setup.documents}
           calls={workspace.calls.filter((call) => call.threadId === thread.id)}
           paused={paused}

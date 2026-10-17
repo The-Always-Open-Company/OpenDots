@@ -5,6 +5,12 @@ import {
   isInternalVoiceReceipt,
 } from '../src/client/ChatTranscript';
 import type { Message } from '@ag-ui/core';
+import {
+  speakableText,
+  voiceNoteMessagePrefix,
+  voiceNoteReply,
+  voiceNoteReplyIds,
+} from '../src/shared/voice-note';
 it('keeps call receipts between the anchored message and later conversation turns', () => {
   const html = renderToStaticMarkup(
     <ChatTranscript
@@ -113,6 +119,53 @@ it('hides only marked receipt prompts while retaining summaries and prior unmark
   expect(html).toContain('Earlier unmarked receipt prompt');
   expect(html).toContain('Confirmed call summary');
   expect(html).toContain('My next question');
+});
+
+it('labels voice notes and offers a spoken copy only of the reply to each note', () => {
+  const messages: Message[] = [
+    { id: 'typed', role: 'user', content: 'A typed question' },
+    { id: 'typed-reply', role: 'assistant', content: 'A typed answer' },
+    {
+      id: `${voiceNoteMessagePrefix}one`,
+      role: 'user',
+      content: 'Remind me to call Sam',
+    },
+    { id: 'thinking', role: 'assistant', content: 'Checking reminders.' },
+    { id: 'note-reply', role: 'assistant', content: 'Reminder set.' },
+  ];
+  expect([...voiceNoteReplyIds(messages)]).toEqual(['note-reply']);
+  expect(voiceNoteReply(messages)?.id).toBe('note-reply');
+  expect(voiceNoteReply(messages.slice(0, 2))).toBeUndefined();
+  const html = renderToStaticMarkup(
+    <ChatTranscript
+      messages={messages}
+      calls={[]}
+      renderSpeech={(message) => <button>Listen to {message.id}</button>}
+    />,
+  );
+  expect(html.match(/Voice note/g)).toHaveLength(1);
+  expect(html.indexOf('Voice note')).toBeLessThan(
+    html.indexOf('Remind me to call Sam'),
+  );
+  expect(html).toContain('Listen to note-reply');
+  expect(html).not.toContain('Listen to typed-reply');
+  expect(html).not.toContain('Listen to thinking');
+  const textOnly = renderToStaticMarkup(
+    <ChatTranscript messages={messages} calls={[]} />,
+  );
+  expect(textOnly).toContain('Voice note');
+  expect(textOnly).not.toContain('Listen');
+});
+
+it('reads markdown replies aloud as plain sentences within the speech limit', () => {
+  expect(
+    speakableText(
+      '## Plan\n- **Book** the [dentist](https://x.test)\n- Run `npm test`\n\n```js\ncode()\n```',
+    ),
+  ).toBe('Plan Book the dentist Run npm test');
+  const long = speakableText(`${'A sentence here. '.repeat(400)}`);
+  expect(long.length).toBeLessThanOrEqual(4096);
+  expect(long.endsWith('.…')).toBe(true);
 });
 
 it('shows a schedule or wake as a marker and keeps the reply', () => {

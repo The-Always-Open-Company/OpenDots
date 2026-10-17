@@ -8,6 +8,7 @@ const settings: Settings = {
   researchAllowed: true,
   memoryAllowed: true,
   ownerNames: [],
+  voiceNoteAutoSend: false,
 };
 const task: Task = {
   id: 'one',

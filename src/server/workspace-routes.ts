@@ -5,6 +5,13 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { Platform } from './platform.js';
 import { VoiceService } from './voice.js';
+import {
+  checkVoiceNote,
+  SPEECH_MAX_CHARS,
+  speakText,
+  transcribeNote,
+  VOICE_NOTE_MAX_BYTES,
+} from './voice-notes.js';
 const dotSchema = z
   .object({
     name: z.string().trim().min(1).max(40),
@@ -15,6 +22,7 @@ const dotSchema = z
     spaceId: z.string().min(1).optional(),
     consultable: z.boolean().optional(),
     mascot: z.enum(['blue', 'mint', 'orange', 'purple']).nullable().optional(),
+    replyMode: z.enum(['text', 'voice']).optional(),
   })
   .strict();
 export function workspaceRoutes(platform: Platform, voice: VoiceService) {
@@ -71,11 +79,12 @@ export function workspaceRoutes(platform: Platform, voice: VoiceService) {
       data.data.consultable ?? true,
     );
     return c.json(
-      data.data.mascot === undefined
+      data.data.mascot === undefined && data.data.replyMode === undefined
         ? created
         : platform.workspace.updateDot(created.id, {
             ...created,
             mascot: data.data.mascot,
+            replyMode: data.data.replyMode,
           }),
       201,
     );
@@ -209,11 +218,71 @@ export function workspaceRoutes(platform: Platform, voice: VoiceService) {
     platform.workspace.anchorCall(c.req.param('id'), data.data.anchorMessageId);
     return c.json(await voice.end(c.req.param('id'), data.data.transcript));
   });
+  const voiceNotesBlocked = () =>
+    !platform.setup().voiceNotes
+      ? 'Voice note setup required: VOICE_API_KEY.'
+      : platform.store.settings().paused
+        ? 'Dot is paused.'
+        : null;
+  app.post('/voice/notes/transcribe', async (c) => {
+    const blocked = voiceNotesBlocked();
+    if (blocked) return c.json({ error: blocked }, 409);
+    const body = await c.req.parseBody().catch(() => null);
+    const file = body?.file;
+    const threadId = body?.threadId;
+    if (!(file instanceof File) || typeof threadId !== 'string')
+      return c.json(
+        { error: 'Send the voice note audio and its conversation.' },
+        400,
+      );
+    try {
+      platform.workspace.requireThread(threadId);
+    } catch {
+      return c.json({ error: 'Conversation not found.' }, 404);
+    }
+    try {
+      checkVoiceNote(file, Number(body?.durationMs));
+    } catch (error) {
+      return c.json(
+        { error: (error as Error).message },
+        file.size > VOICE_NOTE_MAX_BYTES ? 413 : 400,
+      );
+    }
+    const text = await transcribeNote(
+      platform.config,
+      (...args) => fetch(...args),
+      file,
+      AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(60_000)]),
+    );
+    return c.json({ text });
+  });
+  app.post('/voice/speech', async (c) => {
+    const blocked = voiceNotesBlocked();
+    if (blocked) return c.json({ error: blocked }, 409);
+    const data = z
+      .object({ text: z.string().trim().min(1).max(SPEECH_MAX_CHARS) })
+      .strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!data.success)
+      return c.json(
+        {
+          error: `Spoken replies need 1 to ${SPEECH_MAX_CHARS} characters of text.`,
+        },
+        400,
+      );
+    const audio = await speakText(
+      platform.config,
+      (...args) => fetch(...args),
+      data.data.text,
+      AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(60_000)]),
+    );
+    return c.body(audio, 200, { 'Content-Type': 'audio/mpeg' });
+  });
   app.all('/copilotkit/*', (c) => platform.handle(c.req.raw));
   app.onError((error, c) => {
     const text = error.message;
     const known =
-      /^(Setup|Voice setup|Dot |Space |Specialist |Conversation |Call |This call|End the current|Voice provider|An audio|This conversation is already)/.test(
+      /^(Setup|Voice setup|Voice note|Dot |Space |Specialist |Conversation |Call |This call|End the current|Voice provider|An audio|This conversation is already)/.test(
         text,
       );
     return c.json(

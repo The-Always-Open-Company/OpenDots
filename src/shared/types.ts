@@ -13,6 +13,8 @@ export interface Settings {
   memoryAllowed: boolean;
   /** Names the owner goes by in notes and documents, e.g. ["Andre Smart", "Andre"]. */
   ownerNames: string[];
+  /** Send transcribed voice notes immediately instead of placing them in the composer. */
+  voiceNoteAutoSend: boolean;
 }
 export interface Task {
   id: string;
@@ -316,8 +318,11 @@ export interface Dot {
   consultable: boolean;
   /** Chosen mascot. Null keeps the color derived from the Dot id. */
   mascot: string | null;
+  /** How this Dot answers voice notes; `voice` adds a spoken copy of the text reply. */
+  replyMode: ReplyMode;
   createdAt: number;
 }
+export type ReplyMode = 'text' | 'voice';
 export interface Conversation {
   id: string;
   dotId: string;
@@ -341,6 +346,8 @@ export interface SetupStatus {
   model: boolean;
   browser: boolean;
   voice: boolean;
+  /** Recorded voice notes: need VOICE_API_KEY only. */
+  voiceNotes: boolean;
   /** Learned per-Dot memory: needs DATABASE_URL. */
   memory: boolean;
   /** Document library: needs DATABASE_URL and DOCLING_URL. */

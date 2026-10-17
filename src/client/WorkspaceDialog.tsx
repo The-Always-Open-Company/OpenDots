@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
-import type { Dot, Memory, State, WorkspaceState } from '../shared/types';
+import type {
+  Dot,
+  Memory,
+  ReplyMode,
+  State,
+  WorkspaceState,
+} from '../shared/types';
 export type Dialog =
   | { type: 'space' }
   | { type: 'dot'; dot?: Dot; spaceId: string }
@@ -55,6 +61,12 @@ export function WorkspaceDialog({
   const [interval, setInterval] = useState('86400');
   const [mascot, setMascot] = useState(
     dialog.type === 'dot' ? (dialog.dot?.mascot ?? '') : '',
+  );
+  const [replyMode, setReplyMode] = useState<ReplyMode>(
+    dialog.type === 'dot' ? (dialog.dot?.replyMode ?? 'text') : 'text',
+  );
+  const [voiceNoteAutoSend, setVoiceNoteAutoSend] = useState(
+    state.settings.voiceNoteAutoSend,
   );
   const [useClock, setUseClock] = useState(false);
   const [timezone, setTimezone] = useState(
@@ -151,6 +163,7 @@ export function WorkspaceDialog({
                 memoryAllowed: memory,
                 consultable,
                 mascot: mascot || null,
+                replyMode,
               };
             }
             if (dialog.type === 'settings') {
@@ -163,6 +176,7 @@ export function WorkspaceDialog({
                   .split(',')
                   .map((value) => value.trim())
                   .filter(Boolean),
+                voiceNoteAutoSend,
               };
             }
             if (dialog.type === 'memory') {
@@ -225,6 +239,19 @@ export function WorkspaceDialog({
                     <option value="mint">Mint</option>
                     <option value="orange">Orange</option>
                     <option value="purple">Purple</option>
+                  </select>
+                  <label className="field-label" htmlFor="dot-reply-mode">
+                    Reply to voice notes
+                  </label>
+                  <select
+                    id="dot-reply-mode"
+                    value={replyMode}
+                    onChange={(event) =>
+                      setReplyMode(event.target.value as ReplyMode)
+                    }
+                  >
+                    <option value="text">Text only</option>
+                    <option value="voice">Text and spoken reply</option>
                   </select>
                 </>
               )}
@@ -317,6 +344,21 @@ export function WorkspaceDialog({
                 Separate names with commas. When notes or documents use one of
                 these names, Dots know it means you, so those tasks are yours.
               </p>
+              <label className="permission-row">
+                <input
+                  type="checkbox"
+                  checked={voiceNoteAutoSend}
+                  onChange={(e) => setVoiceNoteAutoSend(e.target.checked)}
+                />
+                <span>
+                  <strong>Send voice notes right away</strong>
+                  <small>
+                    Skip transcript review: a voice note goes to the Dot as soon
+                    as it is transcribed. Leave off to check or edit the text in
+                    the message box first.
+                  </small>
+                </span>
+              </label>
             </>
           )}
           {(dialog.type === 'dot' || dialog.type === 'settings') && (
@@ -457,6 +499,10 @@ export function WorkspaceDialog({
               <p>
                 Slack: {workspace.setup.slack.replaceAll('_', ' ')}. Voice:{' '}
                 {workspace.setup.voice
+                  ? 'configuration present'
+                  : 'needs VOICE_API_KEY'}
+                . Voice notes:{' '}
+                {workspace.setup.voiceNotes
                   ? 'configuration present'
                   : 'needs VOICE_API_KEY'}
                 .

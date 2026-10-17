@@ -125,6 +125,10 @@ export interface PlatformConfig extends WebConfig {
   voiceTaskModel?: string;
   /** Delegated Dot turns per call; defaults to 20, `Infinity` for no limit. */
   voiceTaskLimit?: number;
+  /** Model that transcribes voice notes; defaults to `gpt-4o-mini-transcribe`. */
+  voiceTranscribeModel?: string;
+  /** Model that speaks replies to voice notes; defaults to `gpt-4o-mini-tts`. */
+  voiceSpeechModel?: string;
   slackChannel?: string;
   slackTeam?: string;
   slackUsers: string[];
@@ -156,6 +160,7 @@ export function setupStatus(
     model: !!(config.apiKey && config.model),
     browser: !!(config.browserUrl && config.browserSecret),
     voice: !!(config.voiceKey && config.voiceModel && !missing.length),
+    voiceNotes: !!(config.voiceKey && !missing.length),
     memory: !!(config.databaseUrl && !missing.length),
     documents: !!(config.databaseUrl && config.doclingUrl && !missing.length),
     actionItems: !!(config.databaseUrl && config.apiKey && !missing.length),

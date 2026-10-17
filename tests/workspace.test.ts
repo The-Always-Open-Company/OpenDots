@@ -39,6 +39,7 @@ it('migrates legacy Space ownership once and never restores revoked access on re
     const ws = new WorkspaceStore(path, 'owner');
     const dot = ws.dot('dot')!;
     expect(dot.spaceIds).toEqual(['old']);
+    expect(dot.replyMode).toBe('text');
     expect(ws.canAccessSpace('dot', 'new')).toBe(false);
     expect(() =>
       ws.updateDot('dot', { ...dot, spaceIds: ['missing'] }),
