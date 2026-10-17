@@ -8,12 +8,14 @@ import { SpaceDocuments } from './SpaceDocuments';
 import { openPageLink } from './page-navigation';
 import { PageDocument } from './PageDocument';
 import { PageOutline } from './PageOutline';
+import type { SendTiming } from './send-buffer';
 export function SpaceWorkspace({
   space,
   pageId,
   workspace,
   paused,
   voiceNoteAutoSend,
+  sendTiming,
   onPage,
   onDirty,
   onRefresh,
@@ -27,6 +29,7 @@ export function SpaceWorkspace({
   workspace: WorkspaceState;
   paused: boolean;
   voiceNoteAutoSend: boolean;
+  sendTiming: SendTiming;
   onPage: (id?: string) => void;
   onDirty: (value: boolean) => void;
   onRefresh: () => void;
@@ -129,6 +132,7 @@ export function SpaceWorkspace({
             workspace={workspace}
             paused={paused}
             voiceNoteAutoSend={voiceNoteAutoSend}
+            sendTiming={sendTiming}
             onHome={() => onPage()}
             onOutline={() => setOutline(!outline)}
             onSubpage={() => void create(page.id)}

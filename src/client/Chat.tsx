@@ -55,6 +55,11 @@ import {
   VoiceNotePanel,
 } from './VoiceNoteControls';
 import { voiceNoteMessagePrefix, voiceNoteReply } from '../shared/voice-note';
+import {
+  immediateSendTiming,
+  useSendBuffer,
+  type SendTiming,
+} from './send-buffer';
 
 interface Attachment {
   key: string;
@@ -71,6 +76,7 @@ export function Chat({
   voiceReady,
   voiceNotesReady = false,
   voiceNoteAutoSend = false,
+  sendTiming = immediateSendTiming,
   documentsReady = false,
   calls,
   paused,
@@ -89,6 +95,7 @@ export function Chat({
   voiceReady: boolean;
   voiceNotesReady?: boolean;
   voiceNoteAutoSend?: boolean;
+  sendTiming?: SendTiming;
   documentsReady?: boolean;
   calls: CallReceipt[];
   paused: boolean;
@@ -219,6 +226,8 @@ export function Chat({
     null,
   );
   const pendingLocal = useRef(false);
+  const batch = useRef({ size: 0, voiceNote: false });
+  const buffer = useSendBuffer(sendTiming, () => deliver());
   const voice = useVoice(thread.id, onSaved, agent.messages.at(-1)?.id);
   const spoken = useSpokenReply();
   const note = useVoiceNote(thread.id, (text) => {
@@ -231,7 +240,7 @@ export function Chat({
       canSend &&
       !paused
     ) {
-      void send(text, { voiceNote: true });
+      send(text, { voiceNote: true });
       return;
     }
     setDraft((current) => (current.trim() ? `${current}\n\n${text}` : text));
@@ -282,7 +291,8 @@ export function Chat({
         return;
       }
       if (stopped) return;
-      if (runningRef.current || agent.isRunning) {
+      // Held messages exist only locally, so replaying a server run would drop them.
+      if (runningRef.current || agent.isRunning || buffer.holding) {
         pendingLocal.current = true;
         return;
       }
@@ -325,35 +335,53 @@ export function Chat({
       stopped = true;
       clearInterval(timer);
     };
-  }, [agent, copilotkit, loaded, thread.id]);
+  }, [agent, buffer, copilotkit, loaded, thread.id]);
   const canSend =
     attachmentsReady && !running && !following && loaded && contextReady;
-  const send = async (
+  const send = (
     text: string,
-    { voiceNote = false }: { voiceNote?: boolean } = {},
+    {
+      voiceNote = false,
+      immediate = false,
+    }: { voiceNote?: boolean; immediate?: boolean } = {},
   ) => {
     const documents = attachments.flatMap((item) =>
       item.document ? [item.document] : [],
     );
     if ((!text.trim() && !documents.length) || !canSend || paused) return;
     setError('');
-    setRunning(true);
     setDraftFromVoice(false);
+    const content = attachedDocuments(
+      text.trim() ? text : 'Please look at the attached document.',
+      documents,
+    );
     agent.addMessage({
       id: `${voiceNote ? voiceNoteMessagePrefix : ''}${crypto.randomUUID()}`,
       role: 'user',
-      content: contextualMessage(
-        attachedDocuments(
-          text.trim() ? text : 'Please look at the attached document.',
-          documents,
-        ),
-        pageContext,
-      ),
+      content: batch.current.size
+        ? content
+        : contextualMessage(content, pageContext),
     });
+    batch.current = {
+      size: batch.current.size + 1,
+      voiceNote: batch.current.voiceNote || voiceNote,
+    };
     setDraft('');
     setAttachments([]);
     setSource('');
     setSourceOpen(false);
+    buffer.hold();
+    if (immediate) buffer.flushNow();
+  };
+  const deliver = () => {
+    if (paused) return false;
+    const { voiceNote } = batch.current;
+    batch.current = { size: 0, voiceNote: false };
+    void run(voiceNote);
+  };
+  const run = async (voiceNote: boolean) => {
+    runningRef.current = true;
+    setRunning(true);
     try {
       const result = await copilotkit.runAgent({ agent });
       if (!result.newMessages.some((message) => message.role === 'assistant'))
@@ -377,15 +405,26 @@ export function Chat({
     if (loaded && contextReady && !paused && initialPrompt && !sent.current) {
       sent.current = true;
       onConsumed();
-      void send(initialPrompt);
+      send(initialPrompt, { immediate: true });
     }
   }, [loaded, contextReady, paused, initialPrompt]);
+  useEffect(() => buffer.draftChanged(draft), [buffer, draft]);
+  useEffect(
+    () => () => {
+      buffer.flushNow();
+      buffer.dispose();
+    },
+    [buffer],
+  );
+  const thinking =
+    running || following || (buffer.holding && !paused && !draft.trim());
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
-  }, [agent.messages.length, running]);
+  }, [agent.messages.length, thinking, buffer.nudging]);
   useEffect(() => {
     if (paused && voice.status !== 'idle') void voice.end();
     if (paused) note.stop();
+    else buffer.flushNow();
   }, [paused]);
   useHumanInTheLoop(
     {
@@ -449,14 +488,14 @@ export function Chat({
           character={dot.mascot}
           name={dot.name}
           small
-          state={running || following ? 'working' : paused ? 'paused' : 'idle'}
+          state={thinking ? 'working' : paused ? 'paused' : 'idle'}
         />
         <div>
           <strong>{dot.name}</strong>
           <span>
             {paused
               ? 'Paused'
-              : running || following
+              : thinking
                 ? 'Thinking…'
                 : loaded && contextReady
                   ? 'Here with you'
@@ -467,7 +506,7 @@ export function Chat({
           <button
             className="icon-button"
             aria-label="Save conversation as page"
-            disabled={running || following}
+            disabled={running || following || buffer.holding}
             onClick={async () => {
               const title = window.prompt('Page title', thread.title);
               if (!title) return;
@@ -569,7 +608,15 @@ export function Chat({
             </span>
           </div>
         )}
-        {(running || following) && (
+        {buffer.nudging && (
+          <div className="chat-bubble assistant" role="status">
+            <p>
+              It seems you were still typing. Did you want to add something
+              else?
+            </p>
+          </div>
+        )}
+        {thinking && (
           <div className="thinking">
             <span />
             <span />
@@ -634,7 +681,7 @@ export function Chat({
         }}
         onSubmit={(e) => {
           e.preventDefault();
-          void send(`${source ? `From ${source}:\n\n` : ''}${draft}`, {
+          send(`${source ? `From ${source}:\n\n` : ''}${draft}`, {
             voiceNote: draftFromVoice,
           });
         }}

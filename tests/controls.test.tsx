@@ -9,6 +9,9 @@ const settings: Settings = {
   memoryAllowed: true,
   ownerNames: [],
   voiceNoteAutoSend: false,
+  sendDelaySeconds: 5,
+  typingNudgeSeconds: 20,
+  typingNudgeGraceSeconds: 10,
 };
 const task: Task = {
   id: 'one',

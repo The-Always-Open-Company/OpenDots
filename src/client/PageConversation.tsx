@@ -5,11 +5,13 @@ import type { Page } from '../server/pages';
 import { Chat } from './Chat';
 import { PageChatRequests } from './page-chat-requests';
 import { api } from './api';
+import type { SendTiming } from './send-buffer';
 export function PageConversation({
   page,
   workspace,
   paused,
   voiceNoteAutoSend,
+  sendTiming,
   beforeChat,
   onRefresh,
   onSchedule,
@@ -21,6 +23,7 @@ export function PageConversation({
   workspace: WorkspaceState;
   paused: boolean;
   voiceNoteAutoSend: boolean;
+  sendTiming: SendTiming;
   beforeChat: () => Promise<boolean>;
   onRefresh: () => void;
   onSchedule: (id: string) => void;
@@ -112,6 +115,7 @@ export function PageConversation({
           voiceReady={workspace.setup.voice}
           voiceNotesReady={workspace.setup.voiceNotes}
           voiceNoteAutoSend={voiceNoteAutoSend}
+          sendTiming={sendTiming}
           documentsReady={workspace.setup.documents}
           calls={workspace.calls.filter((call) => call.threadId === thread.id)}
           paused={paused}

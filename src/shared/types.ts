@@ -15,6 +15,12 @@ export interface Settings {
   ownerNames: string[];
   /** Send transcribed voice notes immediately instead of placing them in the composer. */
   voiceNoteAutoSend: boolean;
+  /** Seconds to hold sent chat messages before the Dot replies; 0 sends immediately. */
+  sendDelaySeconds: number;
+  /** Seconds of unsent composer text before the Dot asks whether you want to add more. */
+  typingNudgeSeconds: number;
+  /** Seconds after that question before held messages are sent anyway. */
+  typingNudgeGraceSeconds: number;
 }
 export interface Task {
   id: string;

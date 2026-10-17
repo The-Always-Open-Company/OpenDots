@@ -21,6 +21,7 @@ import { inspectMarkdown } from './editor/markdown';
 import { DocumentMenu } from './editor/DocumentMenu';
 import { PageConversation } from './PageConversation';
 import { SendToDot } from './SendToDot';
+import type { SendTiming } from './send-buffer';
 const RichEditor = lazy(() => import('./editor/RichEditor'));
 export function PageDocument({
   page,
@@ -28,6 +29,7 @@ export function PageDocument({
   workspace,
   paused,
   voiceNoteAutoSend,
+  sendTiming,
   onHome,
   onOutline,
   onSubpage,
@@ -44,6 +46,7 @@ export function PageDocument({
   workspace: WorkspaceState;
   paused: boolean;
   voiceNoteAutoSend: boolean;
+  sendTiming: SendTiming;
   onHome: () => void;
   onOutline: () => void;
   onSubpage: () => void;
@@ -323,6 +326,7 @@ export function PageDocument({
           workspace={workspace}
           paused={paused}
           voiceNoteAutoSend={voiceNoteAutoSend}
+          sendTiming={sendTiming}
           beforeChat={beforeChat}
           onRefresh={onRefresh}
           onSchedule={onSchedule}

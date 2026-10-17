@@ -21,6 +21,9 @@ const defaults: Settings = {
   memoryAllowed: true,
   ownerNames: [],
   voiceNoteAutoSend: false,
+  sendDelaySeconds: 5,
+  typingNudgeSeconds: 20,
+  typingNudgeGraceSeconds: 10,
 };
 export class Store {
   private db: DatabaseSync;

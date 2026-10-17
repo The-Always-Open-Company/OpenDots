@@ -68,6 +68,15 @@ export function WorkspaceDialog({
   const [voiceNoteAutoSend, setVoiceNoteAutoSend] = useState(
     state.settings.voiceNoteAutoSend,
   );
+  const [sendDelay, setSendDelay] = useState(
+    String(state.settings.sendDelaySeconds),
+  );
+  const [typingNudge, setTypingNudge] = useState(
+    String(state.settings.typingNudgeSeconds),
+  );
+  const [typingNudgeGrace, setTypingNudgeGrace] = useState(
+    String(state.settings.typingNudgeGraceSeconds),
+  );
   const [useClock, setUseClock] = useState(false);
   const [timezone, setTimezone] = useState(
     Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
@@ -177,6 +186,9 @@ export function WorkspaceDialog({
                   .map((value) => value.trim())
                   .filter(Boolean),
                 voiceNoteAutoSend,
+                sendDelaySeconds: Number(sendDelay),
+                typingNudgeSeconds: Number(typingNudge),
+                typingNudgeGraceSeconds: Number(typingNudgeGrace),
               };
             }
             if (dialog.type === 'memory') {
@@ -359,6 +371,55 @@ export function WorkspaceDialog({
                   </small>
                 </span>
               </label>
+              <label className="field-label" htmlFor="send-delay">
+                Wait before replying (seconds)
+              </label>
+              <input
+                id="send-delay"
+                type="number"
+                min={0}
+                max={30}
+                step={1}
+                required
+                value={sendDelay}
+                onChange={(event) => setSendDelay(event.target.value)}
+              />
+              <p className="muted">
+                Messages you send are held this long so you can add more lines
+                before the Dot replies. Typing keeps holding them. Use 0 to send
+                right away.
+              </p>
+              <label className="field-label" htmlFor="typing-nudge">
+                Ask if you’re still typing after (seconds)
+              </label>
+              <input
+                id="typing-nudge"
+                type="number"
+                min={5}
+                max={300}
+                step={1}
+                required
+                value={typingNudge}
+                onChange={(event) => setTypingNudge(event.target.value)}
+              />
+              <label className="field-label" htmlFor="typing-nudge-grace">
+                Then send anyway after (seconds)
+              </label>
+              <input
+                id="typing-nudge-grace"
+                type="number"
+                min={3}
+                max={120}
+                step={1}
+                required
+                value={typingNudgeGrace}
+                onChange={(event) => setTypingNudgeGrace(event.target.value)}
+              />
+              <p className="muted">
+                If held messages are waiting and the message box keeps unsent
+                text, the Dot asks whether you want to add something, then sends
+                what you already sent. Your unsent text stays in the box.
+              </p>
             </>
           )}
           {(dialog.type === 'dot' || dialog.type === 'settings') && (

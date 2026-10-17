@@ -46,6 +46,27 @@ describe('durable task lifecycle', () => {
     expect(later.settings().voiceNoteAutoSend).toBe(true);
     later.close();
   });
+  it('defaults the chat send buffer timings for settings saved before they existed', () => {
+    const { store, path } = fixture();
+    store.database
+      .prepare('UPDATE settings SET value=? WHERE id=1')
+      .run(JSON.stringify({ name: 'Old', paused: false }));
+    const reopened = new Store(path);
+    expect(reopened.settings()).toMatchObject({
+      sendDelaySeconds: 5,
+      typingNudgeSeconds: 20,
+      typingNudgeGraceSeconds: 10,
+    });
+    reopened.updateSettings({ sendDelaySeconds: 0, typingNudgeSeconds: 45 });
+    reopened.close();
+    const later = new Store(path);
+    expect(later.settings()).toMatchObject({
+      sendDelaySeconds: 0,
+      typingNudgeSeconds: 45,
+      typingNudgeGraceSeconds: 10,
+    });
+    later.close();
+  });
   it('claims each due job once even through separate database connections', () => {
     const { store, path } = fixture();
     store.createTask('Research one');

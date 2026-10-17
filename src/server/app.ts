@@ -363,6 +363,9 @@ export function createApp({
           .transform((names) => [...new Set(names)])
           .optional(),
         voiceNoteAutoSend: z.boolean().optional(),
+        sendDelaySeconds: z.number().int().min(0).max(30).optional(),
+        typingNudgeSeconds: z.number().int().min(5).max(300).optional(),
+        typingNudgeGraceSeconds: z.number().int().min(3).max(120).optional(),
       })
       .strict()
       .safeParse(await c.req.json().catch(() => null));

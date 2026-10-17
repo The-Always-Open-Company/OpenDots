@@ -272,3 +272,33 @@ it('stores the per-Dot reply mode and the auto-send setting, with text and revie
   expect((await settings.json()).voiceNoteAutoSend).toBe(true);
   expect(store.settings().voiceNoteAutoSend).toBe(true);
 });
+
+it('saves chat send buffer timings and rejects values outside their ranges', async () => {
+  const { app, store } = fixture();
+  const patch = (body: unknown) =>
+    app.request('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  const saved = await patch({
+    sendDelaySeconds: 8,
+    typingNudgeSeconds: 30,
+    typingNudgeGraceSeconds: 15,
+  });
+  expect(saved.status).toBe(200);
+  expect(store.settings()).toMatchObject({
+    sendDelaySeconds: 8,
+    typingNudgeSeconds: 30,
+    typingNudgeGraceSeconds: 15,
+  });
+  for (const body of [
+    { sendDelaySeconds: -1 },
+    { sendDelaySeconds: 31 },
+    { sendDelaySeconds: 2.5 },
+    { typingNudgeSeconds: 4 },
+    { typingNudgeGraceSeconds: 121 },
+  ])
+    expect((await patch(body)).status).toBe(400);
+  expect(store.settings().sendDelaySeconds).toBe(8);
+});
