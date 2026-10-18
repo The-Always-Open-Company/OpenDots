@@ -1,13 +1,22 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { EventType, type RunAgentInput } from '@ag-ui/core';
 import { lastValueFrom, toArray } from 'rxjs';
-import { DotAgent, type DotServices } from '../src/server/dot-agent.js';
+import {
+  DotAgent,
+  TURN_CONTEXT_LABEL,
+  tokenUsage,
+  type DotServices,
+} from '../src/server/dot-agent.js';
 import { NotificationService } from '../src/server/notifications.js';
 import { completion } from './fixtures/model-stream.js';
 import { Store } from '../src/server/store.js';
 import { WorkspaceStore } from '../src/server/workspace.js';
 import { pageReviewTool } from '../src/shared/page-review.js';
-import type { ModelApi } from '../src/server/platform-config.js';
+import type {
+  ModelApi,
+  PlatformConfig,
+} from '../src/server/platform-config.js';
+import type { Decide } from '../src/server/decisions.js';
 
 const databases: Array<{ close(): void }> = [];
 afterEach(() => {
@@ -19,6 +28,7 @@ function fixture(
   maxAgentTurns?: number,
   modelApi?: ModelApi,
   services: DotServices = {},
+  config: Partial<PlatformConfig> = {},
 ) {
   const store = new Store(':memory:');
   const workspace = new WorkspaceStore(':memory:', 'owner');
@@ -36,6 +46,7 @@ function fixture(
       slackUsers: [],
       maxAgentTurns,
       modelApi,
+      ...config,
     },
     dot.id,
     false,
@@ -333,15 +344,94 @@ it('tells the model the current time so scheduled runs do not invent one', async
       );
     await lastValueFrom(f.agent.run(f.input).pipe(toArray()));
     const request = JSON.parse(String(network.mock.calls[0][1]?.body));
-    const system = request.messages.find(
-      (message: { role: string }) => message.role === 'system',
+    const note = request.messages.find(
+      (message: { role: string; content: unknown }) =>
+        message.role === 'user' &&
+        String(message.content).startsWith(TURN_CONTEXT_LABEL),
     );
-    expect(system.content).toContain(
+    expect(note.content).toContain(
       'Current time: 2026-10-04T07:33:12.000Z (UTC).',
     );
   } finally {
     vi.useRealTimers();
   }
+});
+
+it('keeps the system prompt and earlier history identical across turns so the prompt cache can be reused', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    const f = fixture();
+    const network = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(completion({ role: 'assistant', content: 'One.' }))
+      .mockResolvedValueOnce(
+        completion({ role: 'assistant', content: 'Two.' }),
+      );
+    vi.setSystemTime(new Date('2026-10-04T07:33:12.000Z'));
+    await lastValueFrom(f.agent.run(f.input).pipe(toArray()));
+    vi.setSystemTime(new Date('2026-10-04T08:01:47.000Z'));
+    await lastValueFrom(
+      f.agent
+        .run({
+          ...f.input,
+          runId: 'run-2',
+          messages: [
+            ...f.input.messages,
+            { id: 'user-2', role: 'user', content: 'And another page.' },
+          ],
+        })
+        .pipe(toArray()),
+    );
+    const [first, second] = network.mock.calls.map(
+      ([, init]) =>
+        JSON.parse(String(init?.body)).messages as Array<{
+          role: string;
+          content: unknown;
+        }>,
+    );
+    expect(second[0]).toEqual(first[0]);
+    expect(first[0].role).toBe('system');
+    expect(String(first[0].content)).not.toContain('Current time');
+    const isNote = (message: { role: string; content: unknown }) =>
+      String(message.content).startsWith(TURN_CONTEXT_LABEL);
+    expect(first.filter(isNote)).toHaveLength(1);
+    expect(second.filter(isNote)).toHaveLength(1);
+    expect(second.at(-2)).toMatchObject({ role: 'user' });
+    expect(isNote(second.at(-2)!)).toBe(true);
+    expect(second.at(-1)).toMatchObject({
+      role: 'user',
+      content: 'And another page.',
+    });
+    expect(String(second.at(-2)!.content)).toContain('08:01:47');
+    expect(
+      JSON.parse(String(network.mock.calls[1][1]?.body)).prompt_cache_key,
+    ).toBe('opendots-thread');
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('sums cached and cache-write tokens across normalized and raw usage shapes', () => {
+  expect(
+    tokenUsage([
+      {
+        promptTokens: 1000,
+        completionTokens: 50,
+        promptTokensDetails: { cachedTokens: 800, cacheWriteTokens: 200 },
+      },
+      {
+        input_tokens: 1200,
+        output_tokens: 20,
+        input_tokens_details: { cached_tokens: 1000 },
+      },
+    ]),
+  ).toEqual({
+    promptTokens: 1000,
+    completionTokens: 50,
+    cachedTokens: 1800,
+    cacheWriteTokens: 200,
+  });
+  expect(tokenUsage(undefined)).toBeNull();
 });
 
 it('tells the model which names in notes mean the owner', async () => {
@@ -430,4 +520,136 @@ it('reports a turn that hits the time limit as a RUN_ERROR instead of ending sil
   } finally {
     vi.useRealTimers();
   }
+});
+
+it('routes chat turns by the Decisions complexity answer, defaulting to the reasoning model', async () => {
+  const answers: Awaited<ReturnType<Decide>>[] = [
+    {
+      complexity: {
+        type: 'choice',
+        name: 'complexity',
+        choice: 'simple',
+        confidence: 0.9,
+      },
+    },
+    {
+      complexity: {
+        type: 'choice',
+        name: 'complexity',
+        choice: 'simple',
+        confidence: 0.5,
+      },
+    },
+    null,
+  ];
+  const decide = vi.fn<Decide>(async () => answers.shift() ?? null);
+  const network = vi
+    .spyOn(globalThis, 'fetch')
+    .mockImplementation(async () =>
+      completion({ role: 'assistant', content: 'Answer.' }),
+    );
+  vi.spyOn(console, 'info').mockImplementation(() => {});
+  const f = fixture(undefined, undefined, { decide }, { fastModel: 'fast' });
+  for (let turn = 0; turn < 3; turn += 1)
+    await lastValueFrom(
+      f.agent
+        .run({
+          ...f.input,
+          runId: `run-${turn}`,
+          messages: [
+            ...f.workspace.threads.messages('thread'),
+            { id: `user-${turn}`, role: 'user', content: `Question ${turn}` },
+          ],
+        })
+        .pipe(toArray()),
+    );
+  f.agent.modelOverride = 'override';
+  await lastValueFrom(
+    f.agent
+      .run({
+        ...f.input,
+        runId: 'run-override',
+        messages: [
+          ...f.workspace.threads.messages('thread'),
+          { id: 'user-override', role: 'user', content: 'Question' },
+        ],
+      })
+      .pipe(toArray()),
+  );
+  expect(
+    network.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).model),
+  ).toEqual(['fast', 'custom-model', 'custom-model', 'override']);
+  expect(decide).toHaveBeenCalledTimes(3);
+  expect(decide.mock.calls[0][0].input).toContain('Question 0');
+});
+
+it('does not route without FAST_MODEL', async () => {
+  const decide = vi.fn<Decide>(async () => null);
+  vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+    completion({ role: 'assistant', content: 'Answer.' }),
+  );
+  const f = fixture(undefined, undefined, { decide });
+  await lastValueFrom(f.agent.run(f.input).pipe(toArray()));
+  expect(decide).not.toHaveBeenCalled();
+});
+
+it('offers report_call_result on call task threads, saves the report and sends no reply notification', async () => {
+  const database = new Store(':memory:');
+  databases.push(database);
+  const notifications = new NotificationService(database.database);
+  const f = fixture(undefined, undefined, { notifications });
+  const call = f.workspace.createCall('thread', 'live');
+  const task = f.workspace.createCallTask({
+    callId: call.id,
+    delegationId: 'item_1',
+    parentThreadId: 'thread',
+    label: 'Weather',
+  });
+  const report = {
+    status: 'done',
+    facts: 'Sunny, 21 degrees.',
+    spoken: 'It is sunny.',
+    details: 'Sunny and 21 degrees all afternoon.',
+  };
+  const network = vi
+    .spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(
+      completion(
+        {
+          role: 'assistant',
+          tool_calls: [
+            {
+              index: 0,
+              id: 'report',
+              type: 'function',
+              function: {
+                name: 'report_call_result',
+                arguments: JSON.stringify(report),
+              },
+            },
+          ],
+        },
+        'tool_calls',
+      ),
+    )
+    .mockResolvedValueOnce(
+      completion({ role: 'assistant', content: 'Reported.' }),
+    );
+  await lastValueFrom(
+    f.agent
+      .run({
+        ...f.input,
+        threadId: task.childThreadId,
+        messages: [{ id: 'task', role: 'user', content: 'Check the weather.' }],
+      })
+      .pipe(toArray()),
+  );
+  const request = JSON.parse(String(network.mock.calls[0][1]?.body));
+  expect(
+    request.tools.map(
+      (tool: { function: { name: string } }) => tool.function.name,
+    ),
+  ).toContain('report_call_result');
+  expect(f.workspace.callTask(task.id)?.report).toEqual(report);
+  expect(notifications.list()).toEqual([]);
 });

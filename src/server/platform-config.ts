@@ -69,6 +69,67 @@ export function voiceTaskLimitFromEnv(value: string | undefined): number {
   return limit;
 }
 
+export const DEFAULT_DECISIONS_MODEL = 'gpt-6-luna';
+
+/** Unset means `gpt-6-luna`; `off` turns routing and correction detection off. */
+export function decisionsModelFromEnv(
+  value: string | undefined,
+): string | undefined {
+  const raw = value?.trim();
+  if (!raw) return DEFAULT_DECISIONS_MODEL;
+  return raw.toLowerCase() === 'off' ? undefined : raw;
+}
+
+export const DEFAULT_ROUTER_MIN_CONFIDENCE = 0.8;
+
+export function routerMinConfidenceFromEnv(value: string | undefined): number {
+  if (!value?.trim()) return DEFAULT_ROUTER_MIN_CONFIDENCE;
+  const confidence = Number(value);
+  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1)
+    throw new Error('ROUTER_MIN_CONFIDENCE must be a number from 0 to 1.');
+  return confidence;
+}
+
+export const DEFAULT_VOICE_TASK_CONCURRENCY = 3;
+
+export function voiceTaskConcurrencyFromEnv(value: string | undefined): number {
+  if (!value?.trim()) return DEFAULT_VOICE_TASK_CONCURRENCY;
+  const limit = Number(value);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 10)
+    throw new Error('VOICE_TASK_CONCURRENCY must be an integer from 1 to 10.');
+  return limit;
+}
+
+export type VoiceResultDelivery = 'sequential' | 'batch' | 'quiet';
+
+/** Unset means `sequential`: one spoken result at a time, paced by speech. */
+export function voiceResultDeliveryFromEnv(
+  value: string | undefined,
+): VoiceResultDelivery {
+  const raw = value?.trim().toLowerCase();
+  if (!raw || raw === 'sequential') return 'sequential';
+  if (raw === 'batch' || raw === 'quiet') return raw;
+  throw new Error('VOICE_RESULT_DELIVERY must be sequential, batch or quiet.');
+}
+
+export const DEFAULT_VOICE_QUIET_MS = 1000;
+export const DEFAULT_VOICE_TASK_AFTER_CALL_MS = 10 * 60_000;
+
+/** A whole number of milliseconds from `min` to `max`, or `fallback` when unset. */
+export function millisecondsFromEnv(
+  name: string,
+  value: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (!value?.trim()) return fallback;
+  const ms = Number(value);
+  if (!Number.isInteger(ms) || ms < min || ms > max)
+    throw new Error(`${name} must be an integer from ${min} to ${max}.`);
+  return ms;
+}
+
 export const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 export const DEFAULT_MAX_UPLOAD_MB = 50;
 
@@ -107,6 +168,12 @@ export interface PlatformConfig extends WebConfig {
   enrichmentModel?: string;
   /** Model that plans document searches and reranks passages; defaults to `model`. */
   rerankModel?: string;
+  /** Model for simple turns and voice task briefs; unset keeps every turn on `model`. */
+  fastModel?: string;
+  /** Decisions API model for routing and correction detection; unset turns them off. */
+  decisionsModel?: string;
+  /** Lowest `simple` confidence that sends a turn to `fastModel`; defaults to 0.8. */
+  routerMinConfidence?: number;
   documentsDir?: string;
   maxUploadBytes?: number;
   computerSupervisorUrl?: string;
@@ -125,6 +192,14 @@ export interface PlatformConfig extends WebConfig {
   voiceTaskModel?: string;
   /** Delegated Dot turns per call; defaults to 20, `Infinity` for no limit. */
   voiceTaskLimit?: number;
+  /** Call tasks that run at once; defaults to 3. */
+  voiceTaskConcurrency?: number;
+  /** How finished call tasks reach the call; defaults to `sequential`. */
+  voiceResultDelivery?: VoiceResultDelivery;
+  /** Silence on the line before a result is sent; defaults to 1000. */
+  voiceQuietMs?: number;
+  /** How long call tasks may keep running after hangup; defaults to 10 minutes. */
+  voiceTaskAfterCallMs?: number;
   /** Model that transcribes voice notes; defaults to `gpt-4o-mini-transcribe`. */
   voiceTranscribeModel?: string;
   /** Model that speaks replies to voice notes; defaults to `gpt-4o-mini-tts`. */

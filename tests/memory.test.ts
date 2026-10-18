@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { RunAgentInput } from '@ag-ui/core';
 import { lastValueFrom, toArray } from 'rxjs';
-import { DotAgent } from '../src/server/dot-agent.js';
+import { DotAgent, TURN_CONTEXT_LABEL } from '../src/server/dot-agent.js';
 import type {
   LearnedMemory,
   MemoryProvider,
@@ -150,9 +150,11 @@ it('recalls only this Dot’s learned memories and learns from the user and repl
     { scope: { userId: 'owner', dotId: f.dot.id }, query: 'I live in Lisbon.' },
   ]);
   const request = requestOf(network);
-  const system = request.messages.find((m) => m.role === 'system')!.content;
-  expect(system).toContain('Prefers metric units');
-  expect(system).not.toContain('Secret of the other Dot');
+  const note = request.messages.find((m) =>
+    String(m.content).startsWith(TURN_CONTEXT_LABEL),
+  )!.content;
+  expect(note).toContain('Prefers metric units');
+  expect(note).not.toContain('Secret of the other Dot');
   expect(toolNames(request)).toEqual(
     expect.arrayContaining(['remember', 'search_memories']),
   );

@@ -27,6 +27,7 @@ export const EAGER_TOOLS: ReadonlySet<string> = new Set([
   'search_action_items',
   'read_action_item',
   'update_action_item',
+  'report_call_result',
 ]);
 
 export function isLazy(name: string) {

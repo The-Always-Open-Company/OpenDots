@@ -12,13 +12,20 @@ import { WorkspaceStore } from './workspace.js';
 import { Platform } from './platform.js';
 import {
   contextMaxTokensFromEnv,
+  decisionsModelFromEnv,
   DEFAULT_EMBEDDING_MODEL,
   DEFAULT_LIVE_VOICE_MODEL,
+  DEFAULT_VOICE_QUIET_MS,
+  DEFAULT_VOICE_TASK_AFTER_CALL_MS,
   lazyToolsFromEnv,
   maxAgentTurnsFromEnv,
   maxUploadBytesFromEnv,
+  millisecondsFromEnv,
   modelApiFromEnv,
+  routerMinConfidenceFromEnv,
   voiceProviderFromEnv,
+  voiceResultDeliveryFromEnv,
+  voiceTaskConcurrencyFromEnv,
   voiceTaskLimitFromEnv,
   type PlatformConfig,
 } from './platform-config.js';
@@ -77,6 +84,11 @@ const config: PlatformConfig = {
   memoryModel: process.env.MEMORY_MODEL || undefined,
   enrichmentModel: process.env.ENRICHMENT_MODEL || undefined,
   rerankModel: process.env.RERANK_MODEL || undefined,
+  fastModel: process.env.FAST_MODEL || undefined,
+  decisionsModel: decisionsModelFromEnv(process.env.DECISIONS_MODEL),
+  routerMinConfidence: routerMinConfidenceFromEnv(
+    process.env.ROUTER_MIN_CONFIDENCE,
+  ),
   documentsDir:
     process.env.DOCUMENTS_DIR || join(dirname(database), 'documents'),
   maxUploadBytes: maxUploadBytesFromEnv(process.env.MAX_UPLOAD_MB),
@@ -96,6 +108,26 @@ const config: PlatformConfig = {
   voiceName: process.env.VOICE_NAME || 'marin',
   voiceTaskModel: process.env.VOICE_TASK_MODEL || undefined,
   voiceTaskLimit: voiceTaskLimitFromEnv(process.env.VOICE_TASK_LIMIT),
+  voiceTaskConcurrency: voiceTaskConcurrencyFromEnv(
+    process.env.VOICE_TASK_CONCURRENCY,
+  ),
+  voiceResultDelivery: voiceResultDeliveryFromEnv(
+    process.env.VOICE_RESULT_DELIVERY,
+  ),
+  voiceQuietMs: millisecondsFromEnv(
+    'VOICE_QUIET_MS',
+    process.env.VOICE_QUIET_MS,
+    DEFAULT_VOICE_QUIET_MS,
+    0,
+    10_000,
+  ),
+  voiceTaskAfterCallMs: millisecondsFromEnv(
+    'VOICE_TASK_AFTER_CALL_MS',
+    process.env.VOICE_TASK_AFTER_CALL_MS,
+    DEFAULT_VOICE_TASK_AFTER_CALL_MS,
+    0,
+    60 * 60_000,
+  ),
   voiceTranscribeModel: process.env.VOICE_TRANSCRIBE_MODEL || undefined,
   voiceSpeechModel: process.env.VOICE_SPEECH_MODEL || undefined,
   slackChannel: process.env.SLACK_CHANNEL_NAME,

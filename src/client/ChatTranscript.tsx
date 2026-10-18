@@ -1,12 +1,13 @@
 import { openPageLink } from './page-navigation';
 import { Fragment, type ReactNode } from 'react';
-import { Clock3, Mic, PhoneOff } from 'lucide-react';
+import { Clock3, Mic, Phone, PhoneOff } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import type { AssistantMessage, Message } from '@ag-ui/core';
 import type { CallReceipt } from '../shared/types';
 import { voiceReceiptMessagePrefix } from '../shared/voice-receipt';
 import { isVoiceNote, voiceNoteReplyIds } from '../shared/voice-note';
 import { workPromptKind, workPromptLabel } from '../shared/work-marker';
+import { callTaskMessagePrefix } from '../shared/call-task';
 // These markers only control rendering; they do not confer trust or permissions.
 export function isInternalVoiceReceipt(message: Message): boolean {
   const metadata = message.metadata;
@@ -18,6 +19,13 @@ export function isInternalVoiceReceipt(message: Message): boolean {
         'opendotsSource' in metadata &&
         metadata.opendotsSource === 'voice_receipt'))
   );
+}
+/** The task line of a call task result, which the app wrote rather than the owner. */
+function callTaskLabel(message: Message): string | null {
+  if (message.role !== 'user' || !message.id.startsWith(callTaskMessagePrefix))
+    return null;
+  const content = typeof message.content === 'string' ? message.content : '';
+  return content.split('\n')[0] || 'Call task';
 }
 function Receipt({ call }: { call: CallReceipt }) {
   return (
@@ -59,12 +67,18 @@ export function ChatTranscript({
         ))}
       {messages.map((message) => {
         const marker = workPromptKind(message);
+        const callTask = callTaskLabel(message);
         return (
           <Fragment key={message.id}>
             {marker ? (
               <div className="work-marker">
                 <Clock3 size={13} />
                 <span>{workPromptLabel(marker)}</span>
+              </div>
+            ) : callTask ? (
+              <div className="work-marker">
+                <Phone size={13} />
+                <span>{callTask}</span>
               </div>
             ) : (
               typeof message.content === 'string' &&

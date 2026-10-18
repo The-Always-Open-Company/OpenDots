@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { RunAgentInput } from '@ag-ui/core';
 import { lastValueFrom, toArray } from 'rxjs';
-import { DotAgent } from '../src/server/dot-agent.js';
+import { DotAgent, TURN_CONTEXT_LABEL } from '../src/server/dot-agent.js';
 import { completion } from './fixtures/model-stream.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -577,8 +577,11 @@ it('retrieves a shared document for the Dot before answering', async () => {
   const system = request.messages.find(
     (message) => message.role === 'system',
   )!.content;
-  expect(system).toContain('Refunds within 30 days');
   expect(system).toContain('policy');
+  const note = request.messages.find((message) =>
+    message.content.startsWith(TURN_CONTEXT_LABEL),
+  )!.content;
+  expect(note).toContain('Refunds within 30 days');
 });
 
 it('plans the turn search from the conversation so follow-ups find passages', async () => {
@@ -652,9 +655,9 @@ it('plans the turn search from the conversation so follow-ups find passages', as
   const request = JSON.parse(
     String(vi.mocked(fetch).mock.calls[0][1]?.body),
   ) as { messages: { role: string; content: string }[] };
-  const system = request.messages.find(
-    (message) => message.role === 'system',
+  const note = request.messages.find((message) =>
+    message.content.startsWith(TURN_CONTEXT_LABEL),
   )!.content;
-  expect(system).toContain(`"ref":"${contracts}#0"`);
-  expect(system).toContain('three months notice');
+  expect(note).toContain(`"ref":"${contracts}#0"`);
+  expect(note).toContain('three months notice');
 });

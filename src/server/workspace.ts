@@ -13,7 +13,36 @@ import type {
   ReplyMode,
   Space,
 } from '../shared/types.js';
-export type ThreadKind = 'chat' | 'consultation';
+import type { CallReport } from './task-brief.js';
+/** `call_task` threads are hidden children of a chat, one per task a call delegates. */
+export type ThreadKind = 'chat' | 'consultation' | 'call_task';
+export type CallTaskStatus =
+  | 'planning'
+  | 'waiting'
+  | 'running'
+  | 'done'
+  | 'failed'
+  | 'superseded'
+  | 'clarify'
+  | 'interrupted'
+  | 'stopped';
+export interface CallTaskRecord {
+  id: string;
+  callId: string;
+  delegationId: string;
+  parentThreadId: string;
+  childThreadId: string;
+  label: string;
+  task: string;
+  status: CallTaskStatus;
+  revision: number;
+  model: string | null;
+  routing: unknown;
+  report: CallReport | null;
+  createdAt: number;
+  updatedAt: number;
+}
+const openCallTaskStatuses = "('planning','waiting','running')";
 export class WorkspaceStore {
   private db: DatabaseSync;
   readonly pages: Pages;
@@ -32,7 +61,8 @@ export class WorkspaceStore {
       CREATE TABLE IF NOT EXISTS thread_bindings(id TEXT PRIMARY KEY, dotId TEXT NOT NULL, ownerId TEXT NOT NULL, title TEXT NOT NULL, createdAt INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS task_threads(taskId TEXT PRIMARY KEY, threadId TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS calls(id TEXT PRIMARY KEY, threadId TEXT NOT NULL, startedAt INTEGER NOT NULL, endedAt INTEGER, status TEXT NOT NULL, transcript TEXT NOT NULL, error TEXT);
-      CREATE TABLE IF NOT EXISTS captures(threadId TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS captures(threadId TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS call_tasks(id TEXT PRIMARY KEY, callId TEXT NOT NULL, delegationId TEXT NOT NULL, parentThreadId TEXT NOT NULL, childThreadId TEXT NOT NULL UNIQUE, label TEXT NOT NULL, task TEXT NOT NULL, status TEXT NOT NULL, revision INTEGER NOT NULL, model TEXT, routing TEXT, report TEXT, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL);`);
     // Migrate only once: restarting must never restore a revoked grant.
     if (
       !this.db
@@ -298,7 +328,107 @@ export class WorkspaceStore {
       .prepare('SELECT kind FROM thread_bindings WHERE id=? AND ownerId=?')
       .get(id, this.ownerId);
     if (!row) throw new Error('Conversation does not belong to this owner.');
-    return row.kind === 'consultation' ? 'consultation' : 'chat';
+    return row.kind === 'consultation' || row.kind === 'call_task'
+      ? row.kind
+      : 'chat';
+  }
+  /** Starts a call task record with its own hidden child thread. */
+  createCallTask(input: {
+    callId: string;
+    delegationId: string;
+    parentThreadId: string;
+    label: string;
+    task?: string;
+  }): CallTaskRecord {
+    const parent = this.requireThread(input.parentThreadId);
+    const id = randomUUID();
+    const childThreadId = randomUUID();
+    const now = Date.now();
+    this.db.exec('BEGIN');
+    try {
+      this.bindThread(childThreadId, parent.dotId, 'Call task', 'call_task');
+      this.db
+        .prepare(
+          'INSERT INTO call_tasks (id, callId, delegationId, parentThreadId, childThreadId, label, task, status, revision, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)',
+        )
+        .run(
+          id,
+          input.callId,
+          input.delegationId,
+          parent.id,
+          childThreadId,
+          input.label,
+          input.task ?? '',
+          'planning',
+          now,
+          now,
+        );
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    return this.callTask(id)!;
+  }
+  updateCallTask(
+    id: string,
+    patch: Partial<
+      Pick<CallTaskRecord, 'label' | 'task' | 'status' | 'revision' | 'model'>
+    > & { routing?: unknown },
+  ) {
+    const fields = Object.entries(patch).filter(
+      ([, value]) => value !== undefined,
+    );
+    if (!fields.length) return;
+    this.db
+      .prepare(
+        `UPDATE call_tasks SET ${fields.map(([key]) => `${key}=?`).join(', ')}, updatedAt=? WHERE id=?`,
+      )
+      .run(
+        ...fields.map(([key, value]) =>
+          key === 'routing'
+            ? JSON.stringify(value)
+            : (value as string | number),
+        ),
+        Date.now(),
+        id,
+      );
+  }
+  /** Stored by the `report_call_result` tool in the task's child thread. */
+  saveCallTaskReport(childThreadId: string, report: CallReport) {
+    this.db
+      .prepare(
+        'UPDATE call_tasks SET report=?, updatedAt=? WHERE childThreadId=?',
+      )
+      .run(JSON.stringify(report), Date.now(), childThreadId);
+  }
+  clearCallTaskReport(id: string) {
+    this.db.prepare('UPDATE call_tasks SET report=NULL WHERE id=?').run(id);
+  }
+  callTask(id: string): CallTaskRecord | undefined {
+    const row = this.db.prepare('SELECT * FROM call_tasks WHERE id=?').get(id);
+    return row ? callTaskRecord(row) : undefined;
+  }
+  callTasks(callId: string): CallTaskRecord[] {
+    return this.db
+      .prepare('SELECT * FROM call_tasks WHERE callId=? ORDER BY createdAt')
+      .all(callId)
+      .map(callTaskRecord);
+  }
+  /** Marks tasks a restart cut short as interrupted, returning them. */
+  interruptCallTasks(): CallTaskRecord[] {
+    const open = this.db
+      .prepare(
+        `SELECT * FROM call_tasks WHERE status IN ${openCallTaskStatuses} ORDER BY createdAt`,
+      )
+      .all()
+      .map(callTaskRecord);
+    this.db
+      .prepare(
+        `UPDATE call_tasks SET status='interrupted', updatedAt=? WHERE status IN ${openCallTaskStatuses}`,
+      )
+      .run(Date.now());
+    return open;
   }
   consultations(): {
     fromDotId: string;
@@ -469,8 +599,22 @@ export class WorkspaceStore {
       .get(id, this.ownerId);
     if (!kind) throw new Error('Conversation not found.');
     if (kind.kind !== 'chat') throw new Error('Only a chat can be deleted.');
+    const children = this.db
+      .prepare('SELECT childThreadId FROM call_tasks WHERE parentThreadId=?')
+      .all(id)
+      .map((row) => String(row.childThreadId));
     this.db.exec('BEGIN');
     try {
+      for (const child of children)
+        for (const statement of [
+          'DELETE FROM runner_messages WHERE threadId=?',
+          'DELETE FROM runner_runs WHERE threadId=?',
+          'DELETE FROM thread_summaries WHERE threadId=?',
+          'DELETE FROM captures WHERE threadId=?',
+          'DELETE FROM thread_bindings WHERE id=?',
+        ])
+          this.db.prepare(statement).run(child);
+      this.db.prepare('DELETE FROM call_tasks WHERE parentThreadId=?').run(id);
       for (const statement of [
         'DELETE FROM runner_messages WHERE threadId=?',
         'DELETE FROM runner_runs WHERE threadId=?',
@@ -502,4 +646,25 @@ export class WorkspaceStore {
       .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
       .get(name);
   }
+}
+
+function callTaskRecord(row: Record<string, unknown>): CallTaskRecord {
+  const json = (value: unknown) =>
+    typeof value === 'string' ? JSON.parse(value) : null;
+  return {
+    id: String(row.id),
+    callId: String(row.callId),
+    delegationId: String(row.delegationId),
+    parentThreadId: String(row.parentThreadId),
+    childThreadId: String(row.childThreadId),
+    label: String(row.label),
+    task: String(row.task),
+    status: String(row.status) as CallTaskStatus,
+    revision: Number(row.revision),
+    model: typeof row.model === 'string' ? row.model : null,
+    routing: json(row.routing),
+    report: json(row.report),
+    createdAt: Number(row.createdAt),
+    updatedAt: Number(row.updatedAt),
+  };
 }

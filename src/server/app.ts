@@ -165,6 +165,7 @@ export function createApp({
   });
   if (platform) app.route('/api', computerRoutes(platform.computers));
   const voice = platform ? new VoiceService(platform) : undefined;
+  voice?.recoverCallTasks();
   if (platform && voice) app.route('/api', workspaceRoutes(platform, voice));
   app.get('/api/state', (c) =>
     c.json({

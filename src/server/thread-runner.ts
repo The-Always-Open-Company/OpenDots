@@ -15,6 +15,7 @@ import {
   type Message,
 } from '@ag-ui/client';
 import { Observable, ReplaySubject } from 'rxjs';
+import { randomUUID } from 'node:crypto';
 import {
   clientAdditions,
   type StoredRun,
@@ -169,6 +170,66 @@ export class SqliteThreadRunner extends AgentRunner {
       messages,
       generated,
     );
+  }
+
+  /**
+   * Records a finished exchange that no model run produced, such as a call
+   * task's result. It is stored like a run so history replay shows it, and it
+   * is safe while another run on the thread is active.
+   */
+  appendExchange(
+    threadId: string,
+    agentId: string,
+    prompt: Message,
+    reply: string,
+  ) {
+    const runId = randomUUID();
+    const messageId = randomUUID();
+    const answer: Message = {
+      id: messageId,
+      role: 'assistant',
+      content: reply,
+    };
+    this.history.appendRun(
+      {
+        runId,
+        threadId,
+        agentId,
+        parentRunId: this.history.lastRunId(threadId),
+        events: [
+          {
+            type: EventType.RUN_STARTED,
+            threadId,
+            runId,
+            input: {
+              threadId,
+              runId,
+              messages: [prompt],
+              tools: [],
+              context: [],
+              state: {},
+              forwardedProps: {},
+            },
+          } as BaseEvent,
+          {
+            type: EventType.TEXT_MESSAGE_START,
+            messageId,
+            role: 'assistant',
+          } as BaseEvent,
+          {
+            type: EventType.TEXT_MESSAGE_CONTENT,
+            messageId,
+            delta: reply,
+          } as BaseEvent,
+          { type: EventType.TEXT_MESSAGE_END, messageId } as BaseEvent,
+          { type: EventType.RUN_FINISHED, threadId, runId } as BaseEvent,
+        ],
+        createdAt: Date.now(),
+      },
+      [prompt, answer],
+      new Set(),
+    );
+    return answer;
   }
 
   connect(request: AgentRunnerConnectRequest): Observable<BaseEvent> {

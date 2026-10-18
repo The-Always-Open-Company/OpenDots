@@ -60,6 +60,9 @@ Edit `.env` on the server and restart after changes:
 | `OPENAI_API`                     | `chat-completions` (default) or `responses`; see below             |
 | `CONTEXT_MAX_TOKENS`             | Estimated token budget for history sent to the model               |
 | `SUMMARY_MODEL`                  | Model for summaries of older turns; defaults to the model          |
+| `FAST_MODEL`                     | Model for simple turns and call task briefs; unset means none      |
+| `DECISIONS_MODEL`                | Decisions API router model; defaults to `gpt-6-luna`, `off` stops  |
+| `ROUTER_MIN_CONFIDENCE`          | Lowest `simple` confidence for `FAST_MODEL`, 0–1; default 0.8      |
 | `MAX_AGENT_TURNS`                | Model turns per reply, 2–100; unset or `off` means no limit        |
 | `LAZY_TOOLS`                     | `on` (default) loads rarely used tools on demand; `off` sends all  |
 | `LOG_CONTEXT_SIZE`               | `1` logs estimated prompt and tool tokens per reply                |
@@ -69,6 +72,8 @@ Edit `.env` on the server and restart after changes:
 | `APP_ORIGIN`                     | Comma-separated exact browser origins for a proxy or custom domain |
 
 `.env.example` and `compose.yml` default to `gpt-6.1-sol` for conversations and `gpt-5.4-mini` for the four background models. `gpt-6.1-sol` only calls tools through the Responses API, so they also set `OPENAI_API=responses`. Without `OPENAI_API`, conversations use the chat-completions API, which every OpenAI-compatible endpoint serves; set `OPENAI_API=chat-completions` when you point `OPENAI_BASE_URL` and `OPENAI_MODEL` at another provider. That setting applies to conversations only. Summaries, memory extraction, document indexing and search reranking still use chat completions, so point `SUMMARY_MODEL`, `MEMORY_MODEL`, `ENRICHMENT_MODEL` and `RERANK_MODEL` at a model that serves it, typically a small, fast one.
+
+When `FAST_MODEL` is set, each chat turn is first classified by the [Decisions API](https://developers.openai.com/api/docs/guides/decisions) with `DECISIONS_MODEL`, which takes about a quarter of a second and runs alongside memory and document search. Turns it rates `simple` with at least `ROUTER_MIN_CONFIDENCE` confidence use `FAST_MODEL`; every other turn, and every turn when the classification fails or times out, uses `OPENAI_MODEL`. Background work and consultations always use `OPENAI_MODEL`. `FAST_MODEL` turns go through `OPENAI_API`, so it must serve that API.
 
 Provider credentials belong in `.env`, not client-side variables or source code. CopilotKit and mem0 telemetry are disabled in code; no telemetry setting is needed.
 
@@ -280,7 +285,12 @@ Slack is not available in this fork yet. Upstream OpenDots delivered Slack messa
 
 Calls use [GPT-Live](https://developers.openai.com/api/docs/models/gpt-live-1) at `api.openai.com` by default. Set `VOICE_API_KEY` to a key with GPT-Live access; `VOICE_MODEL` defaults to `gpt-live-1` and `VOICE_NAME` selects the voice. Calls use browser microphone access and WebRTC. Hosted deployments need HTTPS.
 
-A call uses two models. The voice model listens, speaks and decides when it needs help. When it does, it delegates to the server, which runs a normal turn of the selected Dot in the same conversation, with the same tools and permissions, and sends the answer back to be spoken. That turn uses `VOICE_TASK_MODEL`, or `OPENAI_MODEL` when unset, through `OPENAI_BASE_URL` and `OPENAI_API`; a faster model shortens the wait for spoken answers. Full answers also appear in the chat, and a call receipt is added when the call ends. Delegated turns run one at a time; a request made while another is running waits for it. Each call allows 20 delegated turns (`VOICE_TASK_LIMIT`, 1 to 100, or `off`) and lasts at most 15 minutes.
+A call uses two models. The voice model listens, speaks and decides when it needs help. When it does, it delegates to the server, which turns the owner's words into a short task brief and runs it as a call task: a turn of the selected Dot with the same tools and permissions, in a hidden thread of its own. Each finished task adds a compact exchange (the task, then the full answer) to the conversation, and a call receipt is added when the call ends. Each call allows 20 delegated turns (`VOICE_TASK_LIMIT`, 1 to 100, or `off`) and lasts at most 15 minutes.
+
+- **Briefs and routing.** `FAST_MODEL` (or `RERANK_MODEL` when unset) writes each brief within about three seconds; otherwise a templated brief from the owner's words is used. At the same time, the Decisions API (`DECISIONS_MODEL`) rates the request, links it to an open task it follows up or corrects, and flags requests too unclear to start, which get a clarifying question instead. Tasks rated `simple` with at least `ROUTER_MIN_CONFIDENCE` confidence run on `FAST_MODEL`; the rest use `VOICE_TASK_MODEL`, or `OPENAI_MODEL` when unset. A fast task that reports it needs more reasoning is run once more on that model.
+- **Parallel tasks.** Up to `VOICE_TASK_CONCURRENCY` tasks (default 3) run at once. A follow-up waits for the task it follows; a correction stops the task it corrects and replaces its result.
+- **Results on the call.** A result is passed to the voice model quietly unless the owner is still waiting for it, it failed, or the owner must decide something; then it is spoken at the next pause (`VOICE_QUIET_MS`, default 1000 ms of silence). `VOICE_RESULT_DELIVERY` sets the pacing: `sequential` (default) speaks one result at a time, `batch` combines results that finish together, and `quiet` never pushes a result to speech. Delivery statistics are logged when each call ends.
+- **After the call.** Tasks keep running for up to `VOICE_TASK_AFTER_CALL_MS` (default 10 minutes). Their results, and spoken results that were still waiting at hangup, go to the conversation with one notification each, and the receipt lists tasks still running. Pausing Dot stops them. Tasks cut short by a restart are reported in the conversation as interrupted.
 
 The server keeps its own connection to each GPT-Live session for delegated work and the transcript, so the browser only carries audio and captions. Set `VOICE_PROVIDER=realtime` to use the older Realtime API instead; it requires `VOICE_MODEL` (for example `gpt-realtime-2.1`) and runs delegated work through the browser.
 

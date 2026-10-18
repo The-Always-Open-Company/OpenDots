@@ -8,6 +8,14 @@ import {
   type LiveSocketFactory,
   type LiveSocketHandlers,
 } from '../src/server/live-call-controller.js';
+import { SqliteThreadRunner } from '../src/server/thread-runner.js';
+import { NotificationService } from '../src/server/notifications.js';
+import type {
+  Routing,
+  TaskBrief,
+  TaskPlanner,
+} from '../src/server/task-brief.js';
+import type { DeliveryTiming } from '../src/server/call-tasks.js';
 const resources: (() => void)[] = [];
 afterEach(() => {
   resources.splice(0).forEach((close) => close());
@@ -34,7 +42,10 @@ class FakeSocket {
     return this.sent.map((event) => event.type);
   }
 }
-function fixture(overrides: Partial<PlatformConfig> = {}) {
+function fixture(
+  overrides: Partial<PlatformConfig> = {},
+  options: { planner?: TaskPlanner; delivery?: Partial<DeliveryTiming> } = {},
+) {
   const store = new Store(':memory:');
   const workspace = new WorkspaceStore(':memory:', 'owner');
   workspace.bindThread('thread', workspace.dots()[0].id, 'A conversation');
@@ -93,6 +104,8 @@ function fixture(overrides: Partial<PlatformConfig> = {}) {
     );
     return fake;
   };
+  const notifications = new NotificationService(store.database);
+  const runner = new SqliteThreadRunner(workspace.threads);
   const voice = new VoiceService(
     {
       workspace,
@@ -101,6 +114,8 @@ function fixture(overrides: Partial<PlatformConfig> = {}) {
       turn,
       history,
       historyMessages,
+      runner,
+      services: { notifications },
       requireReady() {},
       setup: () => ({
         voice: true,
@@ -115,13 +130,31 @@ function fixture(overrides: Partial<PlatformConfig> = {}) {
       }),
     },
     transport,
-    { socket, settleMs: 0, closeTimeoutMs: 50 },
+    {
+      socket,
+      settleMs: 0,
+      closeTimeoutMs: 50,
+      planner: options.planner ?? {
+        route: async () => null,
+        brief: async () => null,
+      },
+      delivery: {
+        quietMs: 0,
+        speechWaitMs: 0,
+        batchMs: 0,
+        ackGraceMs: 1000,
+        idleUpgradeMs: 60_000,
+        tickMs: 5,
+        ...options.delivery,
+      },
+    },
   );
   return {
     voice,
     transport,
     workspace,
     store,
+    notifications,
     turn,
     history,
     historyMessages,
@@ -443,8 +476,37 @@ it('creates a GPT-Live session with client delegation and seeded history, then a
   await f.voice.end(call.id, '');
 });
 
-it('answers a delegation once with the task model and speaks the result', async () => {
-  const f = fixture({ ...live, voiceTaskModel: 'fast-model' });
+const delegate = (socket: FakeSocket, id: string, extra = {}) =>
+  socket.emit({
+    type: 'session.delegation.created',
+    delegation: { id, target: 'client', ...extra },
+  });
+const appends = (socket: FakeSocket, type: string, id?: string) =>
+  socket.sent.filter(
+    (event) =>
+      event.type === `session.${type}.append` &&
+      (id === undefined || event.delegation_id === id) &&
+      !String(event.content).startsWith('The backend is working'),
+  );
+const brief = (label: string, task = label): TaskBrief => ({
+  label,
+  task,
+  context: '',
+});
+const routing = (patch: Partial<Routing> = {}): Routing => ({
+  relatesTo: null,
+  isCorrection: 0,
+  needsClarification: 0,
+  ...patch,
+});
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => (resolve = done));
+  return { promise, resolve };
+}
+
+it('runs a delegation once on its own child thread and speaks the result to a waiting owner', async () => {
+  const f = fixture({ ...live, voiceTaskModel: 'task-model' });
   const call = await f.voice.begin(
     'thread',
     offer,
@@ -454,34 +516,641 @@ it('answers a delegation once with the task model and speaks the result', async 
   const socket = f.sockets[0];
   socket.emit({ type: 'session.input_transcript.delta', delta: 'What is ' });
   socket.emit({ type: 'session.input_transcript.delta', delta: 'on today?' });
-  const delegation = {
-    type: 'session.delegation.created',
-    delegation: { id: 'item_1', type: 'delegation', target: 'client' },
-  };
-  socket.emit(delegation);
-  socket.emit(delegation);
+  delegate(socket, 'item_1');
+  delegate(socket, 'item_1');
   await vi.waitFor(() =>
-    expect(socket.types()).toContain('session.commentary.append'),
+    expect(appends(socket, 'commentary', 'item_1')).toHaveLength(1),
   );
   expect(f.turn).toHaveBeenCalledTimes(1);
-  const [thread, prompt, , , options] = f.turn.mock.calls[0];
-  expect(thread).toBe('thread');
+  const [thread, prompt, , metadata, options] = f.turn.mock.calls[0];
+  const [task] = f.workspace.callTasks(call.id);
+  expect(thread).toBe(task.childThreadId);
+  expect(f.workspace.threadKind(thread)).toBe('call_task');
+  expect(f.workspace.conversations().map((item) => item.id)).toEqual([
+    'thread',
+  ]);
   expect(prompt).toContain('What is on today?');
-  expect(options).toEqual({ model: 'fast-model' });
-  expect(socket.sent).toContainEqual(
-    expect.objectContaining({
-      type: 'session.thinking.append',
-      delegation_id: 'item_1',
-    }),
+  expect(prompt).toContain('report_call_result');
+  expect(metadata).toMatchObject({
+    opendotsSource: 'call_task',
+    callId: call.id,
+  });
+  expect(options).toEqual({ model: 'task-model' });
+  expect(String(appends(socket, 'commentary', 'item_1')[0].content)).toMatch(
+    /^\[Task 1: What is on today\?\] Status: done\. Facts: Current answer/,
   );
-  expect(socket.sent).toContainEqual(
-    expect.objectContaining({
-      type: 'session.commentary.append',
-      delegation_id: 'item_1',
-      content: 'Current answer',
-    }),
+  expect(f.workspace.callTask(task.id)?.status).toBe('done');
+  await f.voice.end(call.id, '');
+});
+
+it('appends a compact exchange for each finished task to the main thread', async () => {
+  const f = fixture(live, {
+    planner: {
+      route: async () => routing(),
+      brief: async () => brief('Acme renewal', 'Find the Acme renewal date.'),
+    },
+  });
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  f.turn.mockImplementation(async (childThreadId) => {
+    f.workspace.saveCallTaskReport(childThreadId, {
+      status: 'needs_owner',
+      facts: 'Renewal is on 3 March.',
+      spoken: 'Acme renews on 3 March.',
+      details: 'Acme renews on **3 March**.',
+      needsOwner: 'Should I draft the renewal email?',
+    });
+    return 'Reported.';
+  });
+  const socket = f.sockets[0];
+  socket.emit({
+    type: 'session.input_transcript.delta',
+    delta: 'When does Acme renew?',
+  });
+  delegate(socket, 'item_1');
+  await vi.waitFor(() =>
+    expect(appends(socket, 'commentary', 'item_1')).toHaveLength(1),
+  );
+  const messages = f.workspace.threads.messages('thread');
+  expect(messages.map((message) => message.role)).toEqual([
+    'user',
+    'assistant',
+  ]);
+  expect(messages[0].id).toMatch(/^opendots:call_task:/);
+  expect(messages[0].content).toBe(
+    'Call task 1: Acme renewal\n\nFind the Acme renewal date.',
+  );
+  expect(messages[1].content).toBe(
+    'Acme renews on **3 March**.\n\n**Question for you:** Should I draft the renewal email?',
+  );
+  expect(f.workspace.threads.runs('thread')).toHaveLength(1);
+  expect(String(appends(socket, 'commentary', 'item_1')[0].content)).toContain(
+    'Owner needs to: Should I draft the renewal email?',
   );
   await f.voice.end(call.id, '');
+});
+
+it("picks each delegation's words by offset_ms and leaves later speech for the next", async () => {
+  const f = fixture(live);
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  const socket = f.sockets[0];
+  socket.emit({
+    type: 'session.input_transcript.delta',
+    delta: 'Check the weather. ',
+    start_ms: 1000,
+    end_ms: 2000,
+  });
+  socket.emit({
+    type: 'session.input_transcript.delta',
+    delta: 'Also book a table.',
+    start_ms: 6000,
+    end_ms: 7000,
+  });
+  delegate(socket, 'item_1', { offset_ms: 2100 });
+  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(1));
+  delegate(socket, 'item_2', { offset_ms: 7100 });
+  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(2));
+  const prompts = f.turn.mock.calls.map(([, prompt]) => prompt);
+  expect(prompts[0]).toContain('latest words: Check the weather.');
+  expect(prompts[0]).not.toContain('latest words: Check the weather. Also');
+  expect(prompts[1]).toContain('latest words: Also book a table.');
+  await f.voice.end(call.id, '');
+});
+
+it('does not start a task for a repeat delegation with no new speech', async () => {
+  const f = fixture(live);
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  const socket = f.sockets[0];
+  socket.emit({ type: 'session.input_transcript.delta', delta: 'Question' });
+  delegate(socket, 'item_1');
+  delegate(socket, 'item_2');
+  await vi.waitFor(() =>
+    expect(socket.sent).toContainEqual(
+      expect.objectContaining({
+        type: 'session.thinking.append',
+        delegation_id: 'item_2',
+        content: expect.stringContaining(
+          'tasks already started cover this one',
+        ),
+      }),
+    ),
+  );
+  expect(f.turn).toHaveBeenCalledTimes(1);
+  await f.voice.end(call.id, '');
+});
+
+it('writes the brief and routes at the same time, using the brief for the prompt', async () => {
+  const route = deferred<Routing | null>();
+  const written = deferred<TaskBrief | null>();
+  const started: string[] = [];
+  const f = fixture(live, {
+    planner: {
+      route: () => (started.push('route'), route.promise),
+      brief: () => (started.push('brief'), written.promise),
+    },
+  });
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  const socket = f.sockets[0];
+  socket.emit({
+    type: 'session.input_transcript.delta',
+    delta: 'uh the second one',
+  });
+  delegate(socket, 'item_1');
+  await vi.waitFor(() => expect(started).toEqual(['route', 'brief']));
+  written.resolve({
+    label: 'Move the Acme call',
+    task: 'Move the Acme call to Friday at 3pm.',
+    context: 'The owner has two calls with Acme this week.',
+  });
+  await settle();
+  expect(f.turn).not.toHaveBeenCalled();
+  route.resolve(routing());
+  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(1));
+  const prompt = f.turn.mock.calls[0][1];
+  expect(prompt).toContain('Task: Move the Acme call to Friday at 3pm.');
+  expect(prompt).toContain('The owner has two calls with Acme this week.');
+  expect(prompt).not.toContain('uh the second one');
+  expect(f.workspace.callTasks(call.id)[0].label).toBe('Move the Acme call');
+  await f.voice.end(call.id, '');
+});
+
+it('falls back to a templated prompt and the reasoning model when the brief and routing fail', async () => {
+  const f = fixture(
+    { ...live, fastModel: 'fast', voiceTaskModel: 'reasoning' },
+    {
+      planner: {
+        route: async () => null,
+        brief: async () => {
+          throw new Error('brief model down');
+        },
+      },
+    },
+  );
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  const socket = f.sockets[0];
+  socket.emit({
+    type: 'session.input_transcript.delta',
+    delta: 'Plan my week',
+  });
+  delegate(socket, 'item_1');
+  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(1));
+  expect(f.turn.mock.calls[0][1]).toContain(
+    'Work out what the owner wants from their latest words and handle it. Their latest words: Plan my week',
+  );
+  expect(f.turn.mock.calls[0][4]).toEqual({ model: 'reasoning' });
+  await f.voice.end(call.id, '');
+});
+
+it('sends confident simple tasks to the fast model and the rest to the reasoning model', async () => {
+  const answers = [
+    routing({ complexity: { choice: 'simple', confidence: 0.95 } }),
+    routing({ complexity: { choice: 'simple', confidence: 0.6 } }),
+    routing({ complexity: { choice: 'reasoning', confidence: 0.99 } }),
+  ];
+  const f = fixture(
+    { ...live, fastModel: 'fast', voiceTaskModel: 'reasoning' },
+    {
+      planner: {
+        route: async () => answers.shift()!,
+        brief: async () => null,
+      },
+    },
+  );
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  const socket = f.sockets[0];
+  for (const [index, words] of ['Time?', 'Weather?', 'Plan a trip'].entries()) {
+    socket.emit({ type: 'session.input_transcript.delta', delta: words });
+    delegate(socket, `item_${index}`);
+    await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(index + 1));
+  }
+  expect(f.turn.mock.calls.map((args) => args[4]?.model)).toEqual([
+    'fast',
+    'reasoning',
+    'reasoning',
+  ]);
+  expect(f.turn.mock.calls[0][1]).toContain('set escalate');
+  expect(f.turn.mock.calls[1][1]).not.toContain('set escalate');
+  await f.voice.end(call.id, '');
+});
+
+it('runs a fast task again once on the reasoning model when it escalates', async () => {
+  const f = fixture(
+    { ...live, fastModel: 'fast', voiceTaskModel: 'reasoning' },
+    {
+      planner: {
+        route: async () =>
+          routing({ complexity: { choice: 'simple', confidence: 0.99 } }),
+        brief: async () => null,
+      },
+    },
+  );
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  f.turn.mockImplementation(
+    async (childThreadId, _prompt, _signal, _meta, options) => {
+      f.workspace.saveCallTaskReport(childThreadId, {
+        status: 'done',
+        facts: `Answer from ${options?.model}`,
+        spoken: '',
+        details: `Answer from ${options?.model}`,
+        escalate: true,
+      });
+      return 'Reported.';
+    },
+  );
+  const socket = f.sockets[0];
+  socket.emit({
+    type: 'session.input_transcript.delta',
+    delta: 'Compare plans',
+  });
+  delegate(socket, 'item_1');
+  await vi.waitFor(() =>
+    expect(appends(socket, 'commentary', 'item_1')).toHaveLength(1),
+  );
+  expect(f.turn.mock.calls.map((args) => args[4]?.model)).toEqual([
+    'fast',
+    'reasoning',
+  ]);
+  expect(f.turn.mock.calls[0][0]).toBe(f.turn.mock.calls[1][0]);
+  expect(String(appends(socket, 'commentary', 'item_1')[0].content)).toContain(
+    'Answer from reasoning',
+  );
+  await f.voice.end(call.id, '');
+});
+
+it('runs unrelated tasks in parallel and makes a related task wait for the one it follows', async () => {
+  const relations: (string | null)[] = [null, null, 'task_1'];
+  const f = fixture(live, {
+    planner: {
+      route: async () => routing({ relatesTo: relations.shift() ?? null }),
+      brief: async (input) => brief(input.words),
+    },
+  });
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  const releases = new Map<string, () => void>();
+  let running = 0;
+  let peak = 0;
+  f.turn.mockImplementation(async (_thread, prompt) => {
+    running += 1;
+    peak = Math.max(peak, running);
+    const words = /Task: (\w+)/.exec(prompt)![1];
+    await new Promise<void>((resolve) => releases.set(words, resolve));
+    running -= 1;
+    return `${words} done`;
+  });
+  const socket = f.sockets[0];
+  for (const [index, words] of ['First', 'Second', 'Followup'].entries()) {
+    socket.emit({ type: 'session.input_transcript.delta', delta: words });
+    delegate(socket, `item_${index + 1}`);
+    await settle();
+  }
+  await vi.waitFor(() => expect(releases.size).toBe(2));
+  expect(peak).toBe(2);
+  expect([...releases.keys()]).toEqual(['First', 'Second']);
+  releases.get('Second')!();
+  await settle();
+  expect(releases.has('Followup')).toBe(false);
+  releases.get('First')!();
+  await vi.waitFor(() => expect(releases.has('Followup')).toBe(true));
+  releases.get('Followup')!();
+  await vi.waitFor(() =>
+    expect(f.workspace.callTasks(call.id).map((task) => task.status)).toEqual([
+      'done',
+      'done',
+      'done',
+    ]),
+  );
+  await f.voice.end(call.id, '');
+});
+
+it('caps parallel tasks at VOICE_TASK_CONCURRENCY', async () => {
+  const f = fixture({ ...live, voiceTaskConcurrency: 1 });
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  const release = deferred<void>();
+  f.turn.mockImplementationOnce(async () => {
+    await release.promise;
+    return 'First done';
+  });
+  const socket = f.sockets[0];
+  socket.emit({ type: 'session.input_transcript.delta', delta: 'First' });
+  delegate(socket, 'item_1');
+  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(1));
+  socket.emit({ type: 'session.input_transcript.delta', delta: 'Second' });
+  delegate(socket, 'item_2');
+  await settle();
+  expect(f.turn).toHaveBeenCalledTimes(1);
+  release.resolve();
+  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(2));
+  await f.voice.end(call.id, '');
+});
+
+it('supersedes a task the owner corrects and drops its late result', async () => {
+  const answers = [
+    routing(),
+    routing({ relatesTo: 'task_1', isCorrection: 0.95 }),
+  ];
+  const f = fixture(live, {
+    planner: {
+      route: async () => answers.shift()!,
+      brief: async (input) => brief(input.words),
+    },
+  });
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  let aborted = false;
+  const late = deferred<void>();
+  f.turn.mockImplementationOnce(async (_thread, _prompt, signal) => {
+    signal.addEventListener('abort', () => (aborted = true));
+    await late.promise;
+    return 'Booked for 7pm';
+  });
+  f.turn.mockImplementationOnce(async () => 'Booked for 8pm');
+  const socket = f.sockets[0];
+  socket.emit({ type: 'session.input_transcript.delta', delta: 'Book 7pm' });
+  delegate(socket, 'item_1');
+  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(1));
+  socket.emit({
+    type: 'session.input_transcript.delta',
+    delta: 'No, make it 8pm',
+  });
+  delegate(socket, 'item_2');
+  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(2));
+  expect(aborted).toBe(true);
+  late.resolve();
+  await vi.waitFor(() =>
+    expect(appends(socket, 'commentary', 'item_2')).toHaveLength(1),
+  );
+  await settle();
+  const content = String(appends(socket, 'commentary', 'item_2')[0].content);
+  expect(content).toMatch(/^\[Task 1, revision 2: No, make it 8pm\]/);
+  expect(content).toContain('Replaces: the earlier revision');
+  expect(appends(socket, 'commentary', 'item_1')).toHaveLength(0);
+  expect(appends(socket, 'thinking', 'item_1')).toHaveLength(0);
+  expect(
+    f.workspace.callTasks(call.id).map((task) => [task.status, task.revision]),
+  ).toEqual([
+    ['superseded', 1],
+    ['done', 2],
+  ]);
+  expect(
+    f.workspace.threads
+      .messages('thread')
+      .map((message) => message.content)
+      .join('\n'),
+  ).not.toContain('7pm');
+  await f.voice.end(call.id, '');
+});
+
+it('asks a clarifying question instead of starting an unclear task', async () => {
+  const f = fixture(live, {
+    planner: {
+      route: async () => routing({ needsClarification: 0.9 }),
+      brief: async () => ({ ...brief('Unclear'), clarify: 'Which meeting?' }),
+    },
+  });
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  const socket = f.sockets[0];
+  socket.emit({ type: 'session.input_transcript.delta', delta: 'Move it' });
+  delegate(socket, 'item_1');
+  await vi.waitFor(() =>
+    expect(appends(socket, 'thinking', 'item_1')).toContainEqual(
+      expect.objectContaining({
+        content: expect.stringContaining('Ask the owner: Which meeting?'),
+      }),
+    ),
+  );
+  expect(f.turn).not.toHaveBeenCalled();
+  expect(f.workspace.callTasks(call.id)[0].status).toBe('clarify');
+  await f.voice.end(call.id, '');
+});
+
+it('passes a result quietly once the conversation has moved on', async () => {
+  const f = fixture(live);
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  const release = deferred<void>();
+  f.turn.mockImplementationOnce(async () => {
+    await release.promise;
+    return 'Found it';
+  });
+  const socket = f.sockets[0];
+  socket.emit({ type: 'session.input_transcript.delta', delta: 'Look it up' });
+  delegate(socket, 'item_1');
+  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(1));
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  socket.emit({
+    type: 'session.input_transcript.delta',
+    delta: 'Anyway, about lunch',
+  });
+  release.resolve();
+  await vi.waitFor(() =>
+    expect(appends(socket, 'thinking', 'item_1')).toHaveLength(1),
+  );
+  expect(String(appends(socket, 'thinking', 'item_1')[0].content)).toContain(
+    'do not announce them',
+  );
+  expect(appends(socket, 'commentary')).toHaveLength(0);
+  await f.voice.end(call.id, '');
+});
+
+it('speaks a failed delegation even when the conversation has moved on', async () => {
+  const f = fixture(live);
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  f.turn.mockImplementationOnce(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    throw new Error('Provider unavailable');
+  });
+  const socket = f.sockets[0];
+  delegate(socket, 'item_1');
+  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(1));
+  socket.emit({
+    type: 'session.input_transcript.delta',
+    delta: 'Something else',
+  });
+  await vi.waitFor(
+    () =>
+      expect(appends(socket, 'commentary', 'item_1')).toContainEqual(
+        expect.objectContaining({
+          content: expect.stringContaining('Provider unavailable'),
+        }),
+      ),
+    { timeout: 3000 },
+  );
+  expect(f.workspace.callTasks(call.id)[0].status).toBe('failed');
+  await f.voice.end(call.id, '');
+});
+
+it('keeps a task running after hangup, then posts its result to the chat with one notification', async () => {
+  const f = fixture(live, {
+    planner: {
+      route: async () => routing(),
+      brief: async () => brief('Acme research', 'Research Acme.'),
+    },
+  });
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  const release = deferred<void>();
+  let aborted = false;
+  f.turn.mockImplementationOnce(async (_thread, _prompt, signal) => {
+    signal.addEventListener('abort', () => (aborted = true));
+    await release.promise;
+    return 'Acme is growing.';
+  });
+  const socket = f.sockets[0];
+  socket.emit({
+    type: 'session.input_transcript.delta',
+    delta: 'Research Acme',
+  });
+  delegate(socket, 'item_1');
+  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(1));
+  await f.voice.end(call.id, '');
+  expect(f.turn).toHaveBeenCalledTimes(2);
+  expect(f.turn.mock.calls[1][0]).toBe('thread');
+  expect(f.turn.mock.calls[1][1]).toContain('Still working on: Acme research.');
+  expect(aborted).toBe(false);
+  release.resolve();
+  await vi.waitFor(() =>
+    expect(f.workspace.callTasks(call.id)[0].status).toBe('done'),
+  );
+  expect(
+    f.workspace.threads.messages('thread').map((message) => message.content),
+  ).toContain('Acme is growing.');
+  const notes = f.notifications.list();
+  expect(notes).toHaveLength(1);
+  expect(notes[0]).toMatchObject({
+    kind: 'reply',
+    threadId: 'thread',
+    title: expect.stringContaining('"Acme research" after your call'),
+  });
+  expect(
+    socket.sent.filter((event) => event.type === 'session.commentary.append'),
+  ).toHaveLength(0);
+});
+
+it('sends spoken results still waiting at hangup to the chat', async () => {
+  const f = fixture(live, { delivery: { quietMs: 60_000 } });
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  const socket = f.sockets[0];
+  socket.emit({
+    type: 'session.input_transcript.delta',
+    delta: 'Check the time',
+  });
+  delegate(socket, 'item_1');
+  await vi.waitFor(() =>
+    expect(f.workspace.callTasks(call.id)[0]?.status).toBe('done'),
+  );
+  expect(appends(socket, 'commentary')).toHaveLength(0);
+  await f.voice.end(call.id, '');
+  expect(f.notifications.list()).toHaveLength(1);
+  expect(
+    f.workspace.threads.messages('thread').map((message) => message.content),
+  ).toContain('Current answer');
+});
+
+it('stops call tasks when the workspace is paused', async () => {
+  const f = fixture(live);
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  f.turn.mockImplementationOnce(
+    (_thread, _prompt, signal) =>
+      new Promise((_, reject) =>
+        signal.addEventListener('abort', () => reject(signal.reason)),
+      ),
+  );
+  const socket = f.sockets[0];
+  socket.emit({ type: 'session.input_transcript.delta', delta: 'Long job' });
+  delegate(socket, 'item_1');
+  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(1));
+  f.store.updateSettings({ paused: true });
+  f.voice.abortAll();
+  await vi.waitFor(() =>
+    expect(f.workspace.callTasks(call.id)[0].status).toBe('stopped'),
+  );
+});
+
+it('marks running call tasks interrupted after a restart and posts a retry note', () => {
+  const f = fixture(live);
+  const call = f.workspace.createCall('thread', 'live');
+  const task = f.workspace.createCallTask({
+    callId: call.id,
+    delegationId: 'item_1',
+    parentThreadId: 'thread',
+    label: 'Acme research',
+  });
+  f.workspace.updateCallTask(task.id, { status: 'running' });
+  const done = f.workspace.createCallTask({
+    callId: call.id,
+    delegationId: 'item_2',
+    parentThreadId: 'thread',
+    label: 'Weather',
+  });
+  f.workspace.updateCallTask(done.id, { status: 'done' });
+  f.voice.recoverCallTasks();
+  f.voice.recoverCallTasks();
+  expect(f.workspace.callTask(task.id)?.status).toBe('interrupted');
+  expect(f.workspace.callTask(done.id)?.status).toBe('done');
+  const messages = f.workspace.threads.messages('thread');
+  expect(messages).toHaveLength(2);
+  expect(messages[1].content).toContain('interrupted by a restart');
+  expect(f.notifications.list()).toHaveLength(1);
 });
 
 it('allows 20 delegated turns per call when no limit is configured', async () => {
@@ -495,105 +1164,6 @@ it('allows 20 delegated turns per call when no limit is configured', async () =>
     await f.voice.compute(call.id, String(i), 'Research');
   await expect(f.voice.compute(call.id, 'extra', 'Research')).rejects.toThrow(
     'limit of 20 delegated turns',
-  );
-  await f.voice.end(call.id, '');
-});
-
-it('queues overlapping delegations instead of failing the second', async () => {
-  const f = fixture(live);
-  const call = await f.voice.begin(
-    'thread',
-    offer,
-    new AbortController().signal,
-  );
-  let release!: () => void;
-  let running = 0;
-  let overlapped = false;
-  f.turn.mockImplementation(async () => {
-    running += 1;
-    if (running > 1) overlapped = true;
-    if (f.turn.mock.calls.length === 1)
-      await new Promise<void>((resolve) => (release = resolve));
-    running -= 1;
-    return 'Current answer';
-  });
-  const socket = f.sockets[0];
-  socket.emit({ type: 'session.input_transcript.delta', delta: 'First' });
-  socket.emit({
-    type: 'session.delegation.created',
-    delegation: { id: 'item_1', target: 'client' },
-  });
-  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(1));
-  socket.emit({ type: 'session.input_transcript.delta', delta: 'Second' });
-  socket.emit({
-    type: 'session.delegation.created',
-    delegation: { id: 'item_2', target: 'client' },
-  });
-  await settle();
-  expect(f.turn).toHaveBeenCalledTimes(1);
-  release();
-  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(2));
-  expect(overlapped).toBe(false);
-  expect(f.turn.mock.calls[1][1]).toContain('Second');
-  await vi.waitFor(() =>
-    expect(
-      socket.sent.filter(
-        (event) =>
-          event.type === 'session.commentary.append' &&
-          event.delegation_id === 'item_2',
-      ),
-    ).toHaveLength(1),
-  );
-  await f.voice.end(call.id, '');
-});
-
-it('does not spend a turn on a repeat delegation with no new speech', async () => {
-  const f = fixture(live);
-  const call = await f.voice.begin(
-    'thread',
-    offer,
-    new AbortController().signal,
-  );
-  const socket = f.sockets[0];
-  socket.emit({ type: 'session.input_transcript.delta', delta: 'Question' });
-  for (const id of ['item_1', 'item_2'])
-    socket.emit({
-      type: 'session.delegation.created',
-      delegation: { id, target: 'client' },
-    });
-  await vi.waitFor(() =>
-    expect(socket.sent).toContainEqual(
-      expect.objectContaining({
-        type: 'session.thinking.append',
-        delegation_id: 'item_2',
-        content: expect.stringContaining('already answers'),
-      }),
-    ),
-  );
-  expect(f.turn).toHaveBeenCalledTimes(1);
-  await f.voice.end(call.id, '');
-});
-
-it('speaks a failed delegation instead of leaving the caller waiting', async () => {
-  const f = fixture(live);
-  const call = await f.voice.begin(
-    'thread',
-    offer,
-    new AbortController().signal,
-  );
-  f.turn.mockRejectedValueOnce(new Error('Provider unavailable'));
-  const socket = f.sockets[0];
-  socket.emit({
-    type: 'session.delegation.created',
-    delegation: { id: 'item_1', target: 'client' },
-  });
-  await vi.waitFor(() =>
-    expect(socket.sent).toContainEqual(
-      expect.objectContaining({
-        type: 'session.commentary.append',
-        content: expect.stringContaining('Provider unavailable'),
-      }),
-    ),
   );
   await f.voice.end(call.id, '');
 });

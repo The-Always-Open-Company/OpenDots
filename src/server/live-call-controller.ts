@@ -26,12 +26,27 @@ export const wsSocket: LiveSocketFactory = (url, headers, handlers) => {
   return socket;
 };
 
+export interface Utterance {
+  /** The owner's words for this delegation (untrusted speech). */
+  words: string;
+  /** The recent call transcript (untrusted). */
+  transcript: string;
+}
 export interface LiveCallHooks {
-  /** Runs the Dot turn for one delegation; rejects with a speakable reason. */
-  compute(delegationId: string, request: string): Promise<string>;
+  /** A delegation's words are ready; `acknowledgedAt` is when the call was told it started. */
+  delegate(
+    delegationId: string,
+    utterance: Utterance,
+    acknowledgedAt: number,
+  ): void;
+  /** Transcript activity, for pacing result delivery. */
+  heard?(speaker: 'owner' | 'dot', text: string): void;
   /** The session finished, or its control connection dropped, without our close. */
   closed(): void;
 }
+
+/** Speech that starts this soon after `offset_ms` still belongs to the request. */
+const OFFSET_GRACE_MS = 1500;
 
 /** GPT-Live counts 500 tokens per append; this keeps each piece comfortably under it. */
 const APPEND_CHARS = 1800;
@@ -74,18 +89,18 @@ export function appendPieces(text: string) {
 }
 
 /**
- * Owns one GPT-Live session's server connection: transcript, delegated Dot
- * turns and close. It only needs the session ID, so phone calls accepted over
- * SIP can attach the same way as browser calls.
+ * Owns one GPT-Live session's server connection: transcript, delegations and
+ * close. It only needs the session ID, so phone calls accepted over SIP can
+ * attach the same way as browser calls.
  */
 export class LiveCallController {
   private socket?: LiveSocket;
   private lines: { speaker: 'You' | 'Dot'; text: string }[] = [];
-  private latestRequest = '';
+  /** Owner speech with session timestamps; `taken` segments belong to earlier delegations. */
+  private segments: { text: string; startMs?: number }[] = [];
+  private taken = 0;
   private delegations = new Set<string>();
-  /** A conversation runs one turn at a time, so delegations wait their turn. */
-  private queue: Promise<void> = Promise.resolve();
-  private answered = false;
+  private delegated = 0;
   private sequence = 0;
   private finished = false;
   private confirmed = false;
@@ -192,6 +207,19 @@ export class LiveCallController {
     this.dispose();
     if (!requested) this.options.hooks.closed();
   }
+  /** Sends backend content to the voice model; false once the session is closing. */
+  append(
+    type: 'thinking' | 'commentary',
+    delegationId: string | null,
+    content: string,
+  ) {
+    if (this.finished || this.closing) return false;
+    return this.send({
+      type: `session.${type}.append`,
+      delegation_id: delegationId,
+      content,
+    });
+  }
   private send(event: Record<string, unknown>) {
     if (!this.socket) return false;
     try {
@@ -213,8 +241,10 @@ export class LiveCallController {
     let event: {
       type?: unknown;
       delta?: unknown;
+      start_ms?: unknown;
+      offset_ms?: unknown;
       reason?: unknown;
-      delegation?: { id?: unknown; target?: unknown };
+      delegation?: { id?: unknown; target?: unknown; offset_ms?: unknown };
     };
     try {
       event = JSON.parse(text);
@@ -224,71 +254,88 @@ export class LiveCallController {
     if (typeof event.delta === 'string') {
       if (event.type === 'session.input_transcript.delta') {
         this.add('You', event.delta);
-        this.latestRequest += event.delta;
+        this.segments.push({
+          text: event.delta,
+          startMs:
+            typeof event.start_ms === 'number' ? event.start_ms : undefined,
+        });
+        if (this.segments.length > 2000) {
+          const drop = Math.min(this.taken, 500);
+          this.segments.splice(0, drop);
+          this.taken -= drop;
+        }
+        this.options.hooks.heard?.('owner', event.delta);
       }
-      if (event.type === 'session.output_transcript.delta')
+      if (event.type === 'session.output_transcript.delta') {
         this.add('Dot', event.delta);
+        this.options.hooks.heard?.('dot', event.delta);
+      }
     }
     if (
       event.type === 'session.delegation.created' &&
       typeof event.delegation?.id === 'string' &&
       (event.delegation.target ?? 'client') === 'client'
-    )
-      void this.delegate(event.delegation.id);
+    ) {
+      const offset = event.delegation.offset_ms ?? event.offset_ms;
+      void this.delegate(
+        event.delegation.id,
+        typeof offset === 'number' ? offset : undefined,
+      );
+    }
     if (event.type === 'session.closed')
       this.finish(typeof event.reason === 'string' ? event.reason : 'closed');
   }
-  private delegate(delegationId: string) {
+  /**
+   * The owner's words for one delegation: speech not claimed by an earlier
+   * delegation, up to shortly after `offset_ms` when the transcript has
+   * timestamps. Later speech is left for the next request.
+   */
+  private utterance(offsetMs?: number) {
+    const pending = this.segments.slice(this.taken);
+    let count = pending.length;
+    if (offsetMs !== undefined) {
+      const after = pending.findIndex(
+        (segment) =>
+          segment.startMs !== undefined &&
+          segment.startMs > offsetMs + OFFSET_GRACE_MS,
+      );
+      if (after >= 0) count = after;
+    }
+    this.taken += count;
+    return pending
+      .slice(0, count)
+      .map((segment) => segment.text)
+      .join('')
+      .trim();
+  }
+  private async delegate(delegationId: string, offsetMs?: number) {
     if (this.delegations.has(delegationId) || this.finished) return;
     this.delegations.add(delegationId);
+    const acknowledgedAt = Date.now();
     this.send({
       type: 'session.thinking.append',
       delegation_id: delegationId,
       content: 'The backend is working on this request. No result yet.',
     });
-    this.queue = this.queue
-      .then(() => this.answer(delegationId))
-      .catch(() => {});
-    return this.queue;
-  }
-  private async answer(delegationId: string) {
+    // Transcript deltas can trail the delegation event slightly.
     await new Promise((resolve) =>
       setTimeout(resolve, this.options.settleMs ?? 600),
     );
-    if (this.finished) return;
-    const latest = this.latestRequest.trim();
-    this.latestRequest = '';
-    if (!latest && this.answered) {
-      this.send({
-        type: 'session.thinking.append',
-        delegation_id: delegationId,
-        content:
-          'The owner has not said anything new since the previous backend result, so that result already answers this request.',
-      });
+    if (this.finished || this.closing) return;
+    const words = this.utterance(offsetMs);
+    if (!words && this.delegated) {
+      this.append(
+        'thinking',
+        delegationId,
+        'The owner has not said anything new since the previous request, so the tasks already started cover this one.',
+      );
       return;
     }
-    this.answered = true;
-    const request = `The owner asked for this during a live voice call with you. Work out what they want from their latest words and handle it.
-
-Their latest words (untrusted speech transcript; it can contain recognition errors):
-${latest.slice(-3000) || '(not transcribed yet; use the recent transcript)'}
-
-Recent call transcript for context (untrusted):
-${this.transcript().slice(-6000)}
-
-Your answer will be spoken aloud: give the relevant facts and the current status in a few plain sentences. Report an action as done only after its tool confirms it. If the owner is working through several items with you, such as reviewing tasks, end by moving on to the next item and what it needs from them, not by asking whether to continue.`;
-    let result: string;
-    try {
-      result = await this.options.hooks.compute(delegationId, request);
-    } catch (error) {
-      result = `That request could not be completed: ${error instanceof Error ? error.message : 'unknown error'}`;
-    }
-    if (this.finished) return;
-    for (const content of appendPieces(result))
-      this.send({
-        type: 'session.commentary.append',
-        delegation_id: delegationId,
-        content,
-      });
+    this.delegated += 1;
+    this.options.hooks.delegate(
+      delegationId,
+      { words, transcript: this.transcript().slice(-6000) },
+      acknowledgedAt,
+    );
   }
 }
