@@ -47,11 +47,49 @@ export type Decide = (request: {
   input: string;
   questions: DecisionQuestion[];
   signal?: AbortSignal;
+  /** Which caller asked, for the log line. */
+  purpose?: string;
 }) => Promise<Record<string, DecisionAnswer> | null>;
+
+type Outcome =
+  | 'ok'
+  | 'http_error'
+  | 'bad_response'
+  | 'refusal'
+  | 'missing_answer'
+  | 'timeout'
+  | 'aborted'
+  | 'error';
+
+/** The provider's error message, without echoing request content. */
+function errorMessage(body: string) {
+  try {
+    const message = (JSON.parse(body) as { error?: { message?: unknown } })
+      .error?.message;
+    if (typeof message === 'string') return message.slice(0, 300);
+  } catch {
+    // Not JSON; fall through to the raw text.
+  }
+  return body.slice(0, 300);
+}
+
+function summary(answers: Record<string, DecisionAnswer>) {
+  return Object.fromEntries(
+    Object.values(answers).map((item) => [
+      item.name,
+      item.type === 'predicate'
+        ? { probability: item.probability }
+        : item.type === 'choice'
+          ? { choice: item.choice, confidence: item.confidence }
+          : { score: item.score, confidence: item.confidence },
+    ]),
+  );
+}
 
 /**
  * A client for `POST /decisions`. Any refusal, HTTP error, malformed answer or
- * timeout returns null, so callers fall back to their default.
+ * timeout returns null, so callers fall back to their default. Every call logs
+ * one line with its outcome and timing; inputs and keys are never logged.
  */
 export function decisionsClient(
   config: {
@@ -61,11 +99,40 @@ export function decisionsClient(
     timeoutMs?: number;
   },
   transport: typeof fetch = fetch,
+  log: (line: string) => void = console.info,
 ): Decide {
-  return ({ input, questions, signal }) => {
+  return async ({ input, questions, signal, purpose }) => {
     const ms = config.timeoutMs ?? DECISIONS_TIMEOUT_MS;
     const timeout = AbortSignal.timeout(ms);
-    return withTimeout(ask(), ms).catch(() => null);
+    const started = Date.now();
+    const report = (outcome: Outcome, detail: Record<string, unknown> = {}) =>
+      log(
+        `Decisions ${outcome}: ${JSON.stringify({
+          purpose,
+          model: config.model,
+          questions: questions.map((question) => question.name),
+          inputChars: input.length,
+          ms: Date.now() - started,
+          timeoutMs: ms,
+          ...detail,
+        })}`,
+      );
+    try {
+      return await withTimeout(ask(), ms);
+    } catch (error) {
+      const outcome: Outcome = signal?.aborted
+        ? 'aborted'
+        : timeout.aborted || Date.now() - started >= ms
+          ? 'timeout'
+          : 'error';
+      report(outcome, {
+        error:
+          error instanceof Error
+            ? `${error.name}: ${error.message}`.slice(0, 200)
+            : 'unknown',
+      });
+      return null;
+    }
     async function ask() {
       const reply = await transport(
         `${config.baseUrl.replace(/\/$/, '')}/decisions`,
@@ -79,17 +146,39 @@ export function decisionsClient(
           signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
         },
       );
-      if (!reply.ok) return null;
+      if (!reply.ok) {
+        report('http_error', {
+          status: reply.status,
+          error: errorMessage(await reply.text().catch(() => '')),
+        });
+        return null;
+      }
       const parsed = response.safeParse(await reply.json());
-      if (!parsed.success) return null;
+      if (!parsed.success) {
+        report('bad_response', {
+          issues: parsed.error.issues
+            .slice(0, 5)
+            .map((issue) => `${issue.path.join('.')}: ${issue.message}`),
+        });
+        return null;
+      }
       const answers: Record<string, DecisionAnswer> = {};
       for (const item of parsed.data.answers) {
-        if (item.type === 'refusal') return null;
+        if (item.type === 'refusal') {
+          report('refusal', { refused: item.name ?? null });
+          return null;
+        }
         answers[item.name] = item;
       }
-      return questions.every((question) => answers[question.name])
-        ? answers
-        : null;
+      const missing = questions
+        .map((question) => question.name)
+        .filter((name) => !answers[name]);
+      if (missing.length) {
+        report('missing_answer', { missing, answers: summary(answers) });
+        return null;
+      }
+      report('ok', { answers: summary(answers) });
+      return answers;
     }
   };
 }

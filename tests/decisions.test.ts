@@ -58,8 +58,13 @@ it('posts the model, input and questions and returns answers keyed by name', asy
 });
 
 it('returns null for a refusal, an HTTP error, a malformed or missing answer, and a timeout', async () => {
+  const quiet = () => {};
   const reply = (body: unknown, status = 200) =>
-    decisionsClient(config, async () => Response.json(body, { status }))({
+    decisionsClient(
+      config,
+      async () => Response.json(body, { status }),
+      quiet,
+    )({
       input: 'x',
       questions,
     });
@@ -81,12 +86,117 @@ it('returns null for a refusal, an HTTP error, a malformed or missing answer, an
   const hung = decisionsClient(
     { ...config, timeoutMs: 20 },
     () => new Promise<Response>(() => {}),
+    quiet,
   );
   await expect(hung({ input: 'x', questions })).resolves.toBeNull();
-  const offline = decisionsClient(config, async () => {
+  const offline = decisionsClient(
+    config,
+    async () => {
+      throw new TypeError('fetch failed');
+    },
+    quiet,
+  );
+  await expect(offline({ input: 'x', questions })).resolves.toBeNull();
+});
+
+it('logs each outcome with timing and the reason, never the input', async () => {
+  const run = async (
+    transport: typeof fetch,
+    request: Partial<Parameters<ReturnType<typeof decisionsClient>>[0]> = {},
+    timeoutMs?: number,
+  ) => {
+    const lines: string[] = [];
+    await decisionsClient({ ...config, timeoutMs }, transport, (line) =>
+      lines.push(line),
+    )({ input: 'secret owner words', questions, purpose: 'chat', ...request });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).not.toContain('secret owner words');
+    expect(lines[0]).not.toContain('key');
+    const [, outcome, detail] = lines[0].match(/^Decisions (\w+): (.*)$/)!;
+    return { outcome, detail: JSON.parse(detail) };
+  };
+  const answered = {
+    answers: [
+      { type: 'predicate', name: 'is_correction', probability: 0.2 },
+      {
+        type: 'choice',
+        name: 'complexity',
+        choice: 'simple',
+        confidence: 0.9,
+      },
+    ],
+  };
+
+  const ok = await run(async () => Response.json(answered));
+  expect(ok.outcome).toBe('ok');
+  expect(ok.detail).toMatchObject({
+    purpose: 'chat',
+    model: 'gpt-6-luna',
+    questions: ['is_correction', 'complexity'],
+    inputChars: 18,
+    timeoutMs: 1000,
+    answers: {
+      is_correction: { probability: 0.2 },
+      complexity: { choice: 'simple', confidence: 0.9 },
+    },
+  });
+  expect(typeof ok.detail.ms).toBe('number');
+
+  const http = await run(async () =>
+    Response.json(
+      { error: { message: 'Model gpt-6-luna is not available.' } },
+      { status: 403 },
+    ),
+  );
+  expect(http).toMatchObject({
+    outcome: 'http_error',
+    detail: { status: 403, error: 'Model gpt-6-luna is not available.' },
+  });
+
+  const bad = await run(async () =>
+    Response.json({ answers: [{ type: 'choice', name: 'complexity' }] }),
+  );
+  expect(bad.outcome).toBe('bad_response');
+  expect(bad.detail.issues.join(' ')).toMatch(/answers\.0/);
+
+  const refused = await run(async () =>
+    Response.json({ answers: [{ type: 'refusal', name: 'complexity' }] }),
+  );
+  expect(refused).toMatchObject({
+    outcome: 'refusal',
+    detail: { refused: 'complexity' },
+  });
+
+  const missing = await run(async () =>
+    Response.json({ answers: [answered.answers[0]] }),
+  );
+  expect(missing).toMatchObject({
+    outcome: 'missing_answer',
+    detail: { missing: ['complexity'] },
+  });
+
+  const slow = await run(() => new Promise<Response>(() => {}), {}, 20);
+  expect(slow).toMatchObject({ outcome: 'timeout', detail: { timeoutMs: 20 } });
+  expect(slow.detail.ms).toBeGreaterThanOrEqual(20);
+
+  const stopped = new AbortController();
+  stopped.abort();
+  const aborted = await run(
+    async (_url, init) => {
+      init?.signal?.throwIfAborted();
+      return Response.json(answered);
+    },
+    { signal: stopped.signal },
+  );
+  expect(aborted.outcome).toBe('aborted');
+
+  const offline = await run(async () => {
     throw new TypeError('fetch failed');
   });
-  await expect(offline({ input: 'x', questions })).resolves.toBeNull();
+  expect(offline).toMatchObject({
+    outcome: 'error',
+    detail: { error: 'TypeError: fetch failed' },
+  });
 });
 
 it('routes a call task and ignores a relation to a task that is not open', async () => {

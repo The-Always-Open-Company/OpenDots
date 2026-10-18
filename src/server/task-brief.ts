@@ -133,6 +133,7 @@ export async function routeTask(
       },
     ],
     signal,
+    purpose: 'call_task',
   });
   if (!answers) return null;
   const relation = choiceAnswer(answers, 'relates_to')?.choice;
@@ -242,6 +243,7 @@ export async function classifyTurn(
     input: `Recent conversation:\n${turn.history.slice(-1500) || '(none)'}\n\nOwner's latest message:\n${turn.latest.slice(-3000)}`,
     questions: [complexityQuestion],
     signal,
+    purpose: 'chat',
   });
   return complexityFrom(answers) ?? null;
 }
