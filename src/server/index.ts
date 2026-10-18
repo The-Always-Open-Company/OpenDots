@@ -13,6 +13,7 @@ import { Platform } from './platform.js';
 import {
   contextMaxTokensFromEnv,
   decisionsModelFromEnv,
+  fastModelFromEnv,
   DEFAULT_EMBEDDING_MODEL,
   DEFAULT_LIVE_VOICE_MODEL,
   DEFAULT_VOICE_QUIET_MS,
@@ -84,7 +85,7 @@ const config: PlatformConfig = {
   memoryModel: process.env.MEMORY_MODEL || undefined,
   enrichmentModel: process.env.ENRICHMENT_MODEL || undefined,
   rerankModel: process.env.RERANK_MODEL || undefined,
-  fastModel: process.env.FAST_MODEL || undefined,
+  fastModel: fastModelFromEnv(process.env.FAST_MODEL),
   decisionsModel: decisionsModelFromEnv(process.env.DECISIONS_MODEL),
   routerMinConfidence: routerMinConfidenceFromEnv(
     process.env.ROUTER_MIN_CONFIDENCE,

@@ -22,6 +22,8 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-6.1-sol}
       OPENAI_API: ${OPENAI_API:-responses}
       SUMMARY_MODEL: ${SUMMARY_MODEL:-gpt-5.4-mini}
+      FAST_MODEL: ${FAST_MODEL:-gpt-6-luna}
+      DECISIONS_MODEL: ${DECISIONS_MODEL:-gpt-6-luna}
       CONTEXT_MAX_TOKENS: ${CONTEXT_MAX_TOKENS:-}
       MAX_AGENT_TURNS: ${MAX_AGENT_TURNS:-}
       LAZY_TOOLS: ${LAZY_TOOLS:-}

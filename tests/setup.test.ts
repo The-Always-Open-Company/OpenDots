@@ -2,6 +2,10 @@ import { expect, it } from 'vitest';
 import {
   contextMaxTokensFromEnv,
   DEFAULT_CONTEXT_MAX_TOKENS,
+  DEFAULT_DECISIONS_MODEL,
+  DEFAULT_FAST_MODEL,
+  decisionsModelFromEnv,
+  fastModelFromEnv,
   maxAgentTurnsFromEnv,
   setupStatus,
   voiceProviderFromEnv,
@@ -61,6 +65,16 @@ it('reports activation failure until the channel recovers online', () => {
     'activation_failed',
   );
   expect(setupStatus(declared, 'online', true).slack).toBe('online');
+});
+it('defaults routing and simple turns to gpt-6-luna', () => {
+  for (const unset of [undefined, '', ' ']) {
+    expect(decisionsModelFromEnv(unset)).toBe(DEFAULT_DECISIONS_MODEL);
+    expect(fastModelFromEnv(unset)).toBe(DEFAULT_FAST_MODEL);
+  }
+  expect(decisionsModelFromEnv('off')).toBeUndefined();
+  expect(fastModelFromEnv('OFF')).toBeUndefined();
+  expect(decisionsModelFromEnv('gpt-6-luna')).toBe('gpt-6-luna');
+  expect(fastModelFromEnv('gpt-5.4-mini')).toBe('gpt-5.4-mini');
 });
 it('parses the context budget and rejects unusable values', () => {
   expect(contextMaxTokensFromEnv(undefined)).toBe(DEFAULT_CONTEXT_MAX_TOKENS);

@@ -583,7 +583,7 @@ it('routes chat turns by the Decisions complexity answer, defaulting to the reas
   expect(decide.mock.calls[0][0].input).toContain('Question 0');
 });
 
-it('does not route without FAST_MODEL', async () => {
+it('does not route when the fast model is off', async () => {
   const decide = vi.fn<Decide>(async () => null);
   vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
     completion({ role: 'assistant', content: 'Answer.' }),

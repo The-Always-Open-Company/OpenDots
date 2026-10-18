@@ -70,14 +70,25 @@ export function voiceTaskLimitFromEnv(value: string | undefined): number {
 }
 
 export const DEFAULT_DECISIONS_MODEL = 'gpt-6-luna';
+export const DEFAULT_FAST_MODEL = 'gpt-6-luna';
+
+/** Unset means the default model; `off` leaves the setting unset. */
+function modelOrOff(value: string | undefined, fallback: string) {
+  const raw = value?.trim();
+  if (!raw) return fallback;
+  return raw.toLowerCase() === 'off' ? undefined : raw;
+}
 
 /** Unset means `gpt-6-luna`; `off` turns routing and correction detection off. */
 export function decisionsModelFromEnv(
   value: string | undefined,
 ): string | undefined {
-  const raw = value?.trim();
-  if (!raw) return DEFAULT_DECISIONS_MODEL;
-  return raw.toLowerCase() === 'off' ? undefined : raw;
+  return modelOrOff(value, DEFAULT_DECISIONS_MODEL);
+}
+
+/** Unset means `gpt-6-luna`; `off` keeps every turn on the reasoning model. */
+export function fastModelFromEnv(value: string | undefined): string | undefined {
+  return modelOrOff(value, DEFAULT_FAST_MODEL);
 }
 
 export const DEFAULT_ROUTER_MIN_CONFIDENCE = 0.8;
@@ -168,9 +179,9 @@ export interface PlatformConfig extends WebConfig {
   enrichmentModel?: string;
   /** Model that plans document searches and reranks passages; defaults to `model`. */
   rerankModel?: string;
-  /** Model for simple turns and voice task briefs; unset keeps every turn on `model`. */
+  /** Model for simple turns and voice task briefs; unset in config keeps every turn on `model`. */
   fastModel?: string;
-  /** Decisions API model for routing and correction detection; unset turns them off. */
+  /** Decisions API model for routing and correction detection; unset in config turns them off. */
   decisionsModel?: string;
   /** Lowest `simple` confidence that sends a turn to `fastModel`; defaults to 0.8. */
   routerMinConfidence?: number;
