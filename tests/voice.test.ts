@@ -14,6 +14,7 @@ import type {
   Routing,
   TaskBrief,
   TaskPlanner,
+  TaskSplit,
 } from '../src/server/task-brief.js';
 import type { DeliveryTiming } from '../src/server/call-tasks.js';
 const resources: (() => void)[] = [];
@@ -136,7 +137,7 @@ function fixture(
       closeTimeoutMs: 50,
       planner: options.planner ?? {
         route: async () => null,
-        brief: async () => null,
+        split: async () => null,
       },
       delivery: {
         quietMs: 0,
@@ -493,6 +494,7 @@ const brief = (label: string, task = label): TaskBrief => ({
   task,
   context: '',
 });
+const one = (task: TaskBrief): TaskSplit => ({ tasks: [task] });
 const routing = (patch: Partial<Routing> = {}): Routing => ({
   relatesTo: null,
   isCorrection: 0,
@@ -547,7 +549,8 @@ it('appends a compact exchange for each finished task to the main thread', async
   const f = fixture(live, {
     planner: {
       route: async () => routing(),
-      brief: async () => brief('Acme renewal', 'Find the Acme renewal date.'),
+      split: async () =>
+        one(brief('Acme renewal', 'Find the Acme renewal date.')),
     },
   });
   const call = await f.voice.begin(
@@ -652,12 +655,12 @@ it('does not start a task for a repeat delegation with no new speech', async () 
 
 it('writes the brief and routes at the same time, using the brief for the prompt', async () => {
   const route = deferred<Routing | null>();
-  const written = deferred<TaskBrief | null>();
+  const written = deferred<TaskSplit | null>();
   const started: string[] = [];
   const f = fixture(live, {
     planner: {
       route: () => (started.push('route'), route.promise),
-      brief: () => (started.push('brief'), written.promise),
+      split: () => (started.push('split'), written.promise),
     },
   });
   const call = await f.voice.begin(
@@ -671,12 +674,14 @@ it('writes the brief and routes at the same time, using the brief for the prompt
     delta: 'uh the second one',
   });
   delegate(socket, 'item_1');
-  await vi.waitFor(() => expect(started).toEqual(['route', 'brief']));
-  written.resolve({
-    label: 'Move the Acme call',
-    task: 'Move the Acme call to Friday at 3pm.',
-    context: 'The owner has two calls with Acme this week.',
-  });
+  await vi.waitFor(() => expect(started).toEqual(['route', 'split']));
+  written.resolve(
+    one({
+      label: 'Move the Acme call',
+      task: 'Move the Acme call to Friday at 3pm.',
+      context: 'The owner has two calls with Acme this week.',
+    }),
+  );
   await settle();
   expect(f.turn).not.toHaveBeenCalled();
   route.resolve(routing());
@@ -689,13 +694,13 @@ it('writes the brief and routes at the same time, using the brief for the prompt
   await f.voice.end(call.id, '');
 });
 
-it('falls back to a templated prompt and the reasoning model when the brief and routing fail', async () => {
+it('falls back to a templated prompt and the fast model when the split and routing fail', async () => {
   const f = fixture(
     { ...live, fastModel: 'fast', voiceTaskModel: 'reasoning' },
     {
       planner: {
         route: async () => null,
-        brief: async () => {
+        split: async () => {
           throw new Error('brief model down');
         },
       },
@@ -716,11 +721,12 @@ it('falls back to a templated prompt and the reasoning model when the brief and 
   expect(f.turn.mock.calls[0][1]).toContain(
     'Work out what the owner wants from their latest words and handle it. Their latest words: Plan my week',
   );
-  expect(f.turn.mock.calls[0][4]).toEqual({ model: 'reasoning' });
+  expect(f.turn.mock.calls[0][4]).toEqual({ model: 'fast' });
+  expect(f.turn.mock.calls[0][1]).toContain('set escalate');
   await f.voice.end(call.id, '');
 });
 
-it('sends confident simple tasks to the fast model and the rest to the reasoning model', async () => {
+it('sends tasks to the fast model unless routing says reasoning', async () => {
   const answers = [
     routing({ complexity: { choice: 'simple', confidence: 0.95 } }),
     routing({ complexity: { choice: 'simple', confidence: 0.6 } }),
@@ -731,7 +737,7 @@ it('sends confident simple tasks to the fast model and the rest to the reasoning
     {
       planner: {
         route: async () => answers.shift()!,
-        brief: async () => null,
+        split: async () => null,
       },
     },
   );
@@ -748,11 +754,11 @@ it('sends confident simple tasks to the fast model and the rest to the reasoning
   }
   expect(f.turn.mock.calls.map((args) => args[4]?.model)).toEqual([
     'fast',
-    'reasoning',
+    'fast',
     'reasoning',
   ]);
-  expect(f.turn.mock.calls[0][1]).toContain('set escalate');
-  expect(f.turn.mock.calls[1][1]).not.toContain('set escalate');
+  expect(f.turn.mock.calls[1][1]).toContain('set escalate');
+  expect(f.turn.mock.calls[2][1]).not.toContain('set escalate');
   await f.voice.end(call.id, '');
 });
 
@@ -763,7 +769,7 @@ it('runs a fast task again once on the reasoning model when it escalates', async
       planner: {
         route: async () =>
           routing({ complexity: { choice: 'simple', confidence: 0.99 } }),
-        brief: async () => null,
+        split: async () => null,
       },
     },
   );
@@ -809,7 +815,7 @@ it('runs unrelated tasks in parallel and makes a related task wait for the one i
   const f = fixture(live, {
     planner: {
       route: async () => routing({ relatesTo: relations.shift() ?? null }),
-      brief: async (input) => brief(input.words),
+      split: async (input) => one(brief(input.words)),
     },
   });
   const call = await f.voice.begin(
@@ -886,7 +892,7 @@ it('supersedes a task the owner corrects and drops its late result', async () =>
   const f = fixture(live, {
     planner: {
       route: async () => answers.shift()!,
-      brief: async (input) => brief(input.words),
+      split: async (input) => one(brief(input.words)),
     },
   });
   const call = await f.voice.begin(
@@ -942,7 +948,10 @@ it('asks a clarifying question instead of starting an unclear task', async () =>
   const f = fixture(live, {
     planner: {
       route: async () => routing({ needsClarification: 0.9 }),
-      brief: async () => ({ ...brief('Unclear'), clarify: 'Which meeting?' }),
+      split: async () => ({
+        tasks: [brief('Unclear')],
+        clarify: 'Which meeting?',
+      }),
     },
   });
   const call = await f.voice.begin(
@@ -962,6 +971,145 @@ it('asks a clarifying question instead of starting an unclear task', async () =>
   );
   expect(f.turn).not.toHaveBeenCalled();
   expect(f.workspace.callTasks(call.id)[0].status).toBe('clarify');
+  await f.voice.end(call.id, '');
+});
+
+it('splits one delegation into labelled tasks that report on their own and wait for earlier results', async () => {
+  const f = fixture(
+    { ...live, fastModel: 'fast', voiceTaskModel: 'reasoning' },
+    {
+      planner: {
+        route: async () =>
+          routing({ complexity: { choice: 'reasoning', confidence: 0.9 } }),
+        split: async () => ({
+          tasks: [
+            { ...brief('Weather', 'Check the weather.'), complexity: 'simple' },
+            { ...brief('Book a table'), complexity: 'reasoning' },
+            { ...brief('Text Sam', 'Text Sam the plan.'), after: [0] },
+          ],
+        }),
+      },
+    },
+  );
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  const releases = new Map<string, () => void>();
+  f.turn.mockImplementation(async (_thread, prompt) => {
+    const label = /Task: (.*)/.exec(prompt)![1];
+    await new Promise<void>((resolve) => releases.set(label, resolve));
+    return `${label} done`;
+  });
+  const socket = f.sockets[0];
+  socket.emit({
+    type: 'session.input_transcript.delta',
+    delta: 'Check the weather, book a table and text Sam',
+  });
+  delegate(socket, 'item_1');
+  await vi.waitFor(() => expect(releases.size).toBe(2));
+  expect([...releases.keys()]).toEqual(['Check the weather.', 'Book a table']);
+  expect(f.turn.mock.calls.map((args) => args[4]?.model)).toEqual([
+    'fast',
+    'reasoning',
+  ]);
+  const tasks = f.workspace.callTasks(call.id);
+  expect(tasks.map((task) => [task.label, task.delegationId])).toEqual([
+    ['Weather', 'item_1'],
+    ['Book a table', 'item_1'],
+    ['Text Sam', 'item_1'],
+  ]);
+  releases.get('Check the weather.')!();
+  await vi.waitFor(() => expect(releases.has('Text Sam the plan.')).toBe(true));
+  expect(f.turn.mock.calls[2][1]).toContain(
+    '- Weather: Check the weather. done',
+  );
+  expect(f.turn.mock.calls[2][4]).toEqual({ model: 'fast' });
+  releases.get('Text Sam the plan.')!();
+  releases.get('Book a table')!();
+  await vi.waitFor(() =>
+    expect(appends(socket, 'commentary', 'item_1')).toHaveLength(3),
+  );
+  expect(
+    appends(socket, 'commentary', 'item_1').map(
+      (event) => /^\[(Task \d+: [^\]]+)\]/.exec(String(event.content))![1],
+    ),
+  ).toEqual(
+    expect.arrayContaining([
+      'Task 1: Weather',
+      'Task 2: Book a table',
+      'Task 3: Text Sam',
+    ]),
+  );
+  expect(
+    f.workspace.threads
+      .messages('thread')
+      .filter((message) => message.role === 'user')
+      .map((message) => String(message.content).split('\n')[0]),
+  ).toEqual(
+    expect.arrayContaining([
+      'Call task 1: Weather',
+      'Call task 2: Book a table',
+      'Call task 3: Text Sam',
+    ]),
+  );
+  await f.voice.end(call.id, '');
+});
+
+it('keeps a correction of an open task as one task even when the split finds several', async () => {
+  const answers = [
+    routing(),
+    routing({ relatesTo: 'task_1', isCorrection: 0.95 }),
+  ];
+  const splits = [
+    one(brief('Book 7pm')),
+    {
+      tasks: [
+        brief('Book 8pm', 'Book for 8pm.'),
+        brief('Tell Sam', 'Tell Sam.'),
+      ],
+    },
+  ];
+  const f = fixture(live, {
+    planner: {
+      route: async () => answers.shift()!,
+      split: async () => splits.shift()!,
+    },
+  });
+  const call = await f.voice.begin(
+    'thread',
+    offer,
+    new AbortController().signal,
+  );
+  const first = deferred<void>();
+  f.turn.mockImplementationOnce(async () => {
+    await first.promise;
+    return 'Booked for 7pm';
+  });
+  const socket = f.sockets[0];
+  socket.emit({ type: 'session.input_transcript.delta', delta: 'Book 7pm' });
+  delegate(socket, 'item_1');
+  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(1));
+  socket.emit({
+    type: 'session.input_transcript.delta',
+    delta: 'No, 8pm, and tell Sam',
+  });
+  delegate(socket, 'item_2');
+  await vi.waitFor(() => expect(f.turn).toHaveBeenCalledTimes(2));
+  first.resolve();
+  await settle();
+  expect(f.turn.mock.calls[1][1]).toContain(
+    'Task: 1. Book for 8pm.\n2. Tell Sam.',
+  );
+  expect(
+    f.workspace
+      .callTasks(call.id)
+      .map((task) => [task.label, task.status, task.revision]),
+  ).toEqual([
+    ['Book 7pm', 'superseded', 1],
+    ['Book 8pm and Tell Sam', 'done', 2],
+  ]);
   await f.voice.end(call.id, '');
 });
 
@@ -1032,7 +1180,7 @@ it('keeps a task running after hangup, then posts its result to the chat with on
   const f = fixture(live, {
     planner: {
       route: async () => routing(),
-      brief: async () => brief('Acme research', 'Research Acme.'),
+      split: async () => one(brief('Acme research', 'Research Acme.')),
     },
   });
   const call = await f.voice.begin(

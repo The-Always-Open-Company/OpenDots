@@ -44,7 +44,13 @@ export interface AuthSnapshot {
   skillAllowed: (name: string) => boolean;
   rules: RuleRow[];
   blockedOnConsultation: ReadonlySet<string>;
+  /** A hidden task thread, where an approval card would never be seen. */
+  taskThread?: boolean;
 }
+
+/** Why a task thread cannot ask for approval, and what the Dot should do instead. */
+export const TASK_APPROVAL_BLOCKED =
+  "This action needs the owner's approval, which cannot be given in a background task. Do not retry it here. Prepare everything else, then call report_call_result with status needs_owner and say exactly what you would do, so the owner can confirm it in the chat.";
 
 export type Decision =
   | { effect: 'allow' }
@@ -180,13 +186,17 @@ export function decide(
   const rule = matching(snapshot.rules, ctx.actorId, toolName);
   if (rule?.mode === 'block')
     return { effect: 'block', reason: 'Rule blocked this action.' };
-  if (rule?.mode === 'ask' && ctx.cause === 'model')
-    return { effect: 'pending', ruleId: rule.id };
-  // Unlike rules, an Ask first grant also holds background work and polls.
-  if (plugin && policy?.ask && ctx.cause !== 'approved_action')
-    return {
-      effect: 'pending',
-      ruleId: `grant:${plugin.pluginId}/${plugin.toolName}`,
-    };
-  return { effect: 'allow' };
+  const pending: Decision | null =
+    rule?.mode === 'ask' && ctx.cause === 'model'
+      ? { effect: 'pending', ruleId: rule.id }
+      : // Unlike rules, an Ask first grant also holds background work and polls.
+        plugin && policy?.ask && ctx.cause !== 'approved_action'
+        ? {
+            effect: 'pending',
+            ruleId: `grant:${plugin.pluginId}/${plugin.toolName}`,
+          }
+        : null;
+  if (pending && snapshot.taskThread)
+    return { effect: 'block', reason: TASK_APPROVAL_BLOCKED };
+  return pending ?? { effect: 'allow' };
 }

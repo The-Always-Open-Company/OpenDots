@@ -33,6 +33,14 @@ export function lazyToolsFromEnv(value: string | undefined): boolean {
   throw new Error('LAZY_TOOLS must be on or off.');
 }
 
+/** Unset means on: one message with several requests becomes several tasks. */
+export function taskSplitFromEnv(value: string | undefined): boolean {
+  const raw = value?.trim().toLowerCase();
+  if (!raw || raw === 'on') return true;
+  if (raw === 'off') return false;
+  throw new Error('TASK_SPLIT must be on or off.');
+}
+
 export type ModelApi = 'chat-completions' | 'responses';
 
 /** Unset means chat completions, which every OpenAI-compatible endpoint speaks. */
@@ -87,7 +95,9 @@ export function decisionsModelFromEnv(
 }
 
 /** Unset means `gpt-6-luna`; `off` keeps every turn on the reasoning model. */
-export function fastModelFromEnv(value: string | undefined): string | undefined {
+export function fastModelFromEnv(
+  value: string | undefined,
+): string | undefined {
   return modelOrOff(value, DEFAULT_FAST_MODEL);
 }
 
@@ -183,8 +193,10 @@ export interface PlatformConfig extends WebConfig {
   fastModel?: string;
   /** Decisions API model for routing and correction detection; unset in config turns them off. */
   decisionsModel?: string;
-  /** Lowest `simple` confidence that sends a turn to `fastModel`; defaults to 0.8. */
+  /** Lowest `simple` confidence that sends a main chat turn to `fastModel`; defaults to 0.8. */
   routerMinConfidence?: number;
+  /** Split a message with several requests into separate tasks; unset in config means on. */
+  taskSplit?: boolean;
   documentsDir?: string;
   maxUploadBytes?: number;
   computerSupervisorUrl?: string;

@@ -1,7 +1,5 @@
 import type { Platform } from './platform.js';
 import type { CallReceipt, Dot } from '../shared/types.js';
-import type { Message } from '@ag-ui/core';
-import { randomUUID } from 'node:crypto';
 import {
   DEFAULT_VOICE_QUIET_MS,
   DEFAULT_VOICE_TASK_LIMIT,
@@ -16,7 +14,6 @@ import {
 import {
   CallTaskScheduler,
   ResultDelivery,
-  reportFromText,
   type CallTask,
   type DeliveryTiming,
 } from './call-tasks.js';
@@ -25,7 +22,7 @@ import {
   type CallReport,
   type TaskPlanner,
 } from './task-brief.js';
-import { callTaskMessagePrefix } from '../shared/call-task.js';
+import { appendTaskResult, runChildTurn } from './task-queue.js';
 
 export interface SpeechContext {
   dot: Dot;
@@ -373,34 +370,41 @@ export class VoiceService {
               `This call reached its limit of ${limit} delegated turns. Start another call to continue.`,
             );
           attempts += 1;
-          workspace.clearCallTaskReport(task.id);
-          let text = '';
-          let failure: unknown;
-          try {
-            text = await this.platform.turn(
-              task.childThreadId,
-              prompt,
-              AbortSignal.any([
-                signal,
-                AbortSignal.timeout(CALL_TASK_TIME_LIMIT_MS),
-              ]),
-              {
-                opendotsSource: 'call_task',
-                callId: call.id,
-                callTaskId: task.id,
-              },
-              { model },
-            );
-          } catch (error) {
-            failure = error;
-          }
-          const report = workspace.callTask(task.id)?.report;
-          if (report) return report;
-          if (failure) throw failure;
-          return reportFromText(text);
+          return runChildTurn(
+            workspace,
+            () =>
+              this.platform.turn(
+                task.childThreadId,
+                prompt,
+                AbortSignal.any([
+                  signal,
+                  AbortSignal.timeout(CALL_TASK_TIME_LIMIT_MS),
+                ]),
+                {
+                  opendotsSource: 'call_task',
+                  callId: call.id,
+                  callTaskId: task.id,
+                },
+                { model },
+              ),
+            task.id,
+          );
         },
         record: (task, report) =>
-          this.recordResult(call.threadId, dot.id, task, report),
+          appendTaskResult(
+            this.platform.runner,
+            call.threadId,
+            dot.id,
+            {
+              id: task.id,
+              number: task.number,
+              revision: task.revision,
+              label: task.label,
+              task: task.brief?.task ?? task.input.words,
+              source: 'call',
+            },
+            report,
+          ),
         notify,
       },
     });
@@ -421,38 +425,7 @@ export class VoiceService {
       )
       .join('\n');
   }
-  /** The task, then its full answer, as a compact exchange in the main thread. */
-  private recordResult(
-    threadId: string,
-    dotId: string,
-    task: Pick<
-      CallTask,
-      'id' | 'number' | 'revision' | 'label' | 'brief' | 'input'
-    > & {
-      callId?: string;
-    },
-    report: CallReport,
-  ) {
-    const prompt = {
-      id: `${callTaskMessagePrefix}${randomUUID()}`,
-      role: 'user',
-      content: `Call task ${task.number}${task.revision > 1 ? `, revision ${task.revision}` : ''}: ${task.label}\n\n${task.brief?.task ?? task.input.words}`,
-      metadata: {
-        opendotsSource: 'call_task',
-        callTaskId: task.id,
-        label: task.label,
-      },
-    } as Message;
-    this.platform.runner.appendExchange(
-      threadId,
-      dotId,
-      prompt,
-      report.needsOwner
-        ? `${report.details}\n\n**Question for you:** ${report.needsOwner}`
-        : report.details,
-    );
-  }
-  /** After a restart, tasks that were running are reported as interrupted. */
+  /** After a restart, call and chat tasks that were running are reported as interrupted. */
   recoverCallTasks() {
     for (const record of this.platform.workspace.interruptCallTasks()) {
       let dotId: string;
@@ -464,7 +437,8 @@ export class VoiceService {
         continue;
       }
       const text = `This task was interrupted by a restart before it finished. Ask me to retry it.`;
-      this.recordResult(
+      appendTaskResult(
+        this.platform.runner,
         record.parentThreadId,
         dotId,
         {
@@ -472,15 +446,8 @@ export class VoiceService {
           number: 0,
           revision: record.revision,
           label: record.label,
-          brief: record.task
-            ? { label: record.label, task: record.task, context: '' }
-            : undefined,
-          input: {
-            words: record.label,
-            transcript: '',
-            chat: '',
-            openTasks: [],
-          },
+          task: record.task || record.label,
+          source: record.source,
         },
         { status: 'failed', facts: text, spoken: text, details: text },
       );

@@ -15,6 +15,7 @@ import { voiceReceiptMessagePrefix } from '../shared/voice-receipt.js';
 import { setupStatus, type PlatformConfig } from './platform-config.js';
 import { validateRuntimeScope } from './runtime-scope.js';
 import { SqliteThreadRunner } from './thread-runner.js';
+import { ChatTaskService } from './chat-tasks.js';
 import type { MemoryProvider } from './memory.js';
 import type { DocumentLibrary } from './document-library.js';
 import type { DocumentRetriever } from './document-retrieval.js';
@@ -40,6 +41,7 @@ export class Platform {
   readonly pages: PageService;
   readonly computers: ComputerService;
   readonly runner: SqliteThreadRunner;
+  readonly chatTasks: ChatTaskService;
   readonly handler: CopilotHonoApp;
   consultationLimitMs = CONSULTATION_TIME_LIMIT_MS;
   constructor(
@@ -55,6 +57,7 @@ export class Platform {
     );
     this.pages = new PageService(workspace, () => this.requireReady());
     this.runner = new SqliteThreadRunner(workspace.threads);
+    this.chatTasks = new ChatTaskService(this);
     const runtime = new CopilotRuntime({
       runner: this.runner,
       agents: async () =>
@@ -154,6 +157,7 @@ export class Platform {
       ...this.services,
       consult: (from, to, question, signal) =>
         this.consult(from, to, question, signal),
+      chatTasks: this.chatTasks,
     };
     return new DotAgent(
       this.store,

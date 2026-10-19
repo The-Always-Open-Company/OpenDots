@@ -58,10 +58,14 @@ import type { Decide } from './decisions.js';
 import {
   callReportSchema,
   classifyTurn,
+  PREDICATE_THRESHOLD,
   routedModel,
   routingDecide,
-  type Complexity,
+  type TaskSplit,
+  type TurnClass,
 } from './task-brief.js';
+import { chatTaskReply, type ChatTaskStarter } from './chat-tasks.js';
+import { randomUUID } from 'node:crypto';
 const channelError = () => ({
   type: EventType.RUN_ERROR,
   message:
@@ -136,6 +140,8 @@ export interface DotServices {
   notifications?: NotificationService;
   /** Decisions client for model routing; defaults to one built from the config. */
   decide?: Decide;
+  /** Splits a chat message with several requests into background tasks. */
+  chatTasks?: ChatTaskStarter;
 }
 
 /** Sums the per-model-call usage a run reports, as one entry or a list. */
@@ -484,57 +490,143 @@ export class DotAgent extends AbstractAgent {
             newRequest
               ? (this.services.decide ?? routingDecide(this.config))
               : undefined;
-          const [learned, passages, complexity] = await Promise.all([
+          const prepStarted = Date.now();
+          const prepTimings: Record<string, number> = {};
+          const timed = <T>(name: string, work: Promise<T>) =>
+            work.finally(() => {
+              prepTimings[`${name}Ms`] = Date.now() - prepStarted;
+            });
+          const chatTasks =
+            this.config.taskSplit !== false && !this.channel
+              ? this.services.chatTasks
+              : undefined;
+          const recent = turns
+            .slice(-4)
+            .map((turn) => `${turn.role}: ${turn.content.slice(0, 400)}`)
+            .join('\n');
+          const classified = decide
+            ? timed(
+                'decisions',
+                classifyTurn(
+                  decide,
+                  { latest: newRequest, history: recent },
+                  controller.signal,
+                  { multipleRequests: !!chatTasks },
+                ).catch(() => null),
+              )
+            : Promise.resolve<TurnClass | null>(null);
+          const prep = Promise.all([
             memory
-              ? withTimeout(
-                  memory.search(scope, latestUser, LEARNED_MEMORIES_PER_TURN),
-                  MEMORY_SEARCH_TIMEOUT_MS,
+              ? timed(
+                  'memory',
+                  withTimeout(
+                    memory.search(scope, latestUser, LEARNED_MEMORIES_PER_TURN),
+                    MEMORY_SEARCH_TIMEOUT_MS,
+                  )
+                    .then((items) => items.map((item) => item.text))
+                    .catch(() => {
+                      console.error(
+                        'Learned memory search failed; continuing without it.',
+                      );
+                      return [] as string[];
+                    }),
                 )
-                  .then((items) => items.map((item) => item.text))
-                  .catch(() => {
-                    console.error(
-                      'Learned memory search failed; continuing without it.',
-                    );
-                    return [] as string[];
-                  })
               : ([] as string[]),
             retriever &&
             latestUser.length >= 2 &&
             catalog.some((entry) => entry.searchable)
-              ? withTimeout(
-                  retriever.retrieve({
-                    dotId: dot.id,
-                    message: latestUser,
-                    turns,
-                    signal: controller.signal,
+              ? timed(
+                  'documents',
+                  withTimeout(
+                    retriever.retrieve({
+                      dotId: dot.id,
+                      message: latestUser,
+                      turns,
+                      signal: controller.signal,
+                    }),
+                    DOCUMENT_SEARCH_TIMEOUT_MS,
+                  ).catch(() => {
+                    if (!controller.signal.aborted)
+                      console.error(
+                        'Document search failed; continuing without retrieved passages.',
+                      );
+                    return [] as RetrievedPassage[];
                   }),
-                  DOCUMENT_SEARCH_TIMEOUT_MS,
-                ).catch(() => {
-                  if (!controller.signal.aborted)
-                    console.error(
-                      'Document search failed; continuing without retrieved passages.',
-                    );
-                  return [] as RetrievedPassage[];
-                })
+                )
               : ([] as RetrievedPassage[]),
-            decide
-              ? classifyTurn(
-                  decide,
-                  {
-                    latest: newRequest,
-                    history: turns
-                      .slice(-4)
-                      .map(
-                        (turn) => `${turn.role}: ${turn.content.slice(0, 400)}`,
-                      )
-                      .join('\n'),
-                  },
-                  controller.signal,
-                ).catch(() => null)
-              : Promise.resolve<Complexity | null>(null),
+            classified,
           ]);
+          // Several requests in one message become separate tasks; the turn
+          // stops waiting on memory and document search once they are planned.
+          const splitting: Promise<TaskSplit | null> = chatTasks
+            ? classified.then(async (turnClass) => {
+                if ((turnClass?.multipleRequests ?? 0) <= PREDICATE_THRESHOLD)
+                  return null;
+                const split = await timed(
+                  'split',
+                  chatTasks
+                    .split(
+                      {
+                        words: newRequest,
+                        transcript: '',
+                        chat: recent,
+                        openTasks: [],
+                      },
+                      controller.signal,
+                    )
+                    .catch(() => null),
+                );
+                return split && split.tasks.length >= 2 && !split.clarify
+                  ? split
+                  : null;
+              })
+            : Promise.resolve(null);
+          type Outcome =
+            { values: Awaited<typeof prep> } | { split: TaskSplit };
+          const outcome = await splitting.then(
+            (split): Outcome | Promise<Outcome> =>
+              split ? { split } : prep.then((values) => ({ values })),
+          );
+          console.info(
+            `Turn preparation for ${dot.id}: ${JSON.stringify({ ...prepTimings, totalMs: Date.now() - prepStarted })}`,
+          );
           if (closed) return;
           check();
+          if ('split' in outcome) {
+            const { tasks } = outcome.split;
+            console.info(
+              `Chat split for ${dot.id}: ${JSON.stringify({ tasks: tasks.length, multipleRequests: (await classified)?.multipleRequests })}`,
+            );
+            const messageId = randomUUID();
+            const { threadId, runId } = input;
+            finished = true;
+            for (const event of [
+              { type: EventType.RUN_STARTED, threadId, runId },
+              {
+                type: EventType.TEXT_MESSAGE_START,
+                messageId,
+                role: 'assistant',
+              },
+              {
+                type: EventType.TEXT_MESSAGE_CONTENT,
+                messageId,
+                delta: chatTaskReply(tasks),
+              },
+              { type: EventType.TEXT_MESSAGE_END, messageId },
+              { type: EventType.RUN_FINISHED, threadId, runId },
+            ] as BaseEvent[])
+              subscriber.next(event);
+            chatTasks?.start({
+              parentThreadId: threadId,
+              dotId: dot.id,
+              runId,
+              tasks,
+            });
+            subscriber.complete();
+            return;
+          }
+          const [learned, passages, turnClass] = outcome.values;
+          const complexity = turnClass?.complexity ?? null;
           if (memory)
             tools.push(
               defineTool({
@@ -625,7 +717,7 @@ export class DotAgent extends AbstractAgent {
             this.config.model;
           if (decide)
             console.info(
-              `Model route for ${dot.id}: ${JSON.stringify({ model, complexity })}`,
+              `Model route for ${dot.id}: ${JSON.stringify({ model, complexity, multipleRequests: turnClass?.multipleRequests ?? undefined })}`,
             );
           const adapter = openaiCompatibleText(model, {
             apiKey: this.config.apiKey,
@@ -709,6 +801,7 @@ export class DotAgent extends AbstractAgent {
                         dot,
                         consultation,
                         turnContext().workItemId,
+                        callTask,
                       ),
                     ensureWork: () => {
                       const existing = engine.workForThread(input.threadId);

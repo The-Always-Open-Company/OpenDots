@@ -8,8 +8,8 @@ import {
 } from './platform-config.js';
 import {
   fallbackBrief,
+  joinBriefs,
   PREDICATE_THRESHOLD,
-  routedModel,
   taskPrompt,
   type CallReport,
   type Routing,
@@ -17,34 +17,28 @@ import {
   type TaskInput,
   type TaskPlanner,
 } from './task-brief.js';
-import type { CallTaskStatus } from './workspace.js';
+import {
+  earlierResults,
+  isOpen,
+  TaskQueue,
+  taskState,
+  type QueuedTask,
+} from './task-queue.js';
 
-export interface CallTask {
-  /** The persisted record's ID. */
-  id: string;
-  childThreadId: string;
+export { failedReport, reportFromText } from './task-queue.js';
+
+export interface CallTask extends QueuedTask {
   /** Shown to the voice model as `Task <number>`; a revision keeps its number. */
   number: number;
   revision: number;
+  /** Shared by every task split from one delegation. */
   delegationId: string;
-  label: string;
-  status: CallTaskStatus;
   input: TaskInput;
-  brief?: TaskBrief;
-  routing?: Routing | null;
-  model?: string;
-  /** A related open task that must finish first. */
-  waitFor?: CallTask;
+  /** Related open tasks that must finish first. */
+  waitFor?: CallTask[];
   /** The task this one replaced, if it is a correction. */
   replaces?: CallTask;
   acknowledgedAt: number;
-  finishedAt?: number;
-  report?: CallReport;
-  controller: AbortController;
-  /** Why the task was stopped, when it was. */
-  stopReason?: string;
-  settled: Promise<void>;
-  settle(): void;
 }
 
 /** What the scheduler needs from storage and the Dot runtime. */
@@ -68,26 +62,15 @@ export interface CallTaskRunner {
   notify(task: CallTask, report: CallReport): void;
 }
 
-/** A result for the chat and the voice model when the child turn failed. */
-export function failedReport(reason: string): CallReport {
-  const text = `That request could not be completed: ${reason}`;
-  return { status: 'failed', facts: text, spoken: text, details: text };
-}
-
-/** The final reply stands in for a `report_call_result` the Dot did not make. */
-export function reportFromText(text: string): CallReport {
-  const facts = speakable(text).slice(0, 1800) || 'Done.';
-  return { status: 'done', facts, spoken: '', details: text.trim() || facts };
-}
-
 const superseded = (task: CallTask) => task.status === 'superseded';
-const isOpen = (task: CallTask) =>
-  task.status === 'planning' ||
-  task.status === 'waiting' ||
-  task.status === 'running';
 
+/**
+ * Plans the tasks a live call delegates: routing, corrections, clarification
+ * and splitting one delegation into several tasks. Running them is the
+ * `TaskQueue`'s job; results go to the call, or to the chat after it ends.
+ */
 export class CallTaskScheduler {
-  private tasks: CallTask[] = [];
+  private queue: TaskQueue<CallTask>;
   private numbers = 0;
   private detached = false;
   private afterCall?: ReturnType<typeof setTimeout>;
@@ -98,22 +81,38 @@ export class CallTaskScheduler {
       delivery: ResultDelivery;
       config: Pick<
         PlatformConfig,
-        | 'fastModel'
-        | 'routerMinConfidence'
-        | 'voiceTaskConcurrency'
-        | 'voiceTaskAfterCallMs'
+        'fastModel' | 'voiceTaskConcurrency' | 'voiceTaskAfterCallMs'
       >;
       /** Model for tasks that are not routed to `fastModel`. */
       reasoningModel?: string;
       /** The last few main-thread messages, for briefs. */
       chat: () => string;
     },
-  ) {}
+  ) {
+    const { runner, delivery, config } = options;
+    this.queue = new TaskQueue<CallTask>({
+      name: 'call',
+      config,
+      reasoningModel: options.reasoningModel,
+      concurrency: () =>
+        config.voiceTaskConcurrency ?? DEFAULT_VOICE_TASK_CONCURRENCY,
+      prompt: (task, canEscalate) =>
+        taskPrompt(task.brief!, canEscalate, {
+          source: 'call',
+          earlier: earlierResults(task),
+        }),
+      run: (task, prompt, model, signal) =>
+        runner.run(task, prompt, model, signal),
+      save: (task) => runner.save(task),
+      record: (task, report) => runner.record(task, report),
+      deliver: (task, report) => delivery.deliver(task, report),
+    });
+  }
   get delivery() {
     return this.options.delivery;
   }
   open() {
-    return this.tasks.filter(isOpen);
+    return this.queue.open();
   }
   /** Labels of tasks still working, for the call receipt. */
   running() {
@@ -121,7 +120,7 @@ export class CallTaskScheduler {
   }
   /** Settles once every task submitted so far has finished or stopped. */
   settled() {
-    return Promise.all(this.tasks.map((task) => task.settled)).then(() => {});
+    return this.queue.settled();
   }
   /** Starts planning a delegated request; returns the task right away. */
   submit(
@@ -137,14 +136,23 @@ export class CallTaskScheduler {
         label: task.label,
       })),
     };
-    const label = fallbackBrief(input).label;
-    const record = this.options.runner.create(delegationId, label);
-    let settle!: () => void;
-    const settled = new Promise<void>((resolve) => {
-      settle = resolve;
-    });
+    const task = this.create(
+      delegationId,
+      fallbackBrief(input).label,
+      input,
+      acknowledgedAt,
+    );
+    void this.plan(task);
+    return task;
+  }
+  private create(
+    delegationId: string,
+    label: string,
+    input: TaskInput,
+    acknowledgedAt: number,
+  ): CallTask {
     const task: CallTask = {
-      ...record,
+      ...taskState(this.options.runner.create(delegationId, label)),
       number: ++this.numbers,
       revision: 1,
       delegationId,
@@ -152,12 +160,8 @@ export class CallTaskScheduler {
       status: 'planning',
       input,
       acknowledgedAt,
-      controller: new AbortController(),
-      settled,
-      settle,
     };
-    this.tasks.push(task);
-    void this.plan(task);
+    this.queue.add(task);
     return task;
   }
   /** The call ended: results go to the chat, and tasks get a time limit. */
@@ -178,24 +182,25 @@ export class CallTaskScheduler {
     void this.settled().then(() => clearTimeout(this.afterCall));
   }
   stopAll(reason: string) {
-    for (const task of this.open()) this.stop(task, reason);
-  }
-  private stop(task: CallTask, reason: string) {
-    task.stopReason = reason;
-    if (task.status === 'running') task.controller.abort(new Error(reason));
-    else this.finish(task, failedReport(reason), 'stopped');
+    this.queue.stopAll(reason);
   }
   private async plan(task: CallTask) {
     const { planner } = this.options;
     const signal = task.controller.signal;
     const routing = planner.route(task.input, signal).catch(() => null);
-    const brief = planner.brief(task.input, signal).catch(() => null);
-    // Corrections take effect before the brief is written.
+    const split = planner.split(task.input, signal).catch(() => null);
+    // Corrections take effect before the briefs are written.
     void routing.then((answers) => this.relate(task, answers));
-    const [answers, written] = await Promise.all([routing, brief]);
+    const [answers, written] = await Promise.all([routing, split]);
     if (task.status !== 'planning') return;
     task.routing = answers;
-    task.brief = written ?? fallbackBrief(task.input);
+    let briefs: TaskBrief[] = written?.tasks.length
+      ? written.tasks
+      : [fallbackBrief(task.input)];
+    // A follow-up or correction changes one open task, so it stays one task.
+    if (briefs.length > 1 && (answers?.relatesTo || task.replaces))
+      briefs = [joinBriefs(briefs)];
+    task.brief = briefs[0];
     task.label = task.brief.label;
     if (
       written?.clarify &&
@@ -203,19 +208,38 @@ export class CallTaskScheduler {
     ) {
       this.options.delivery.clarify(task, written.clarify);
       task.status = 'clarify';
-      this.save(task);
+      this.queue.save(task);
       task.settle();
       return;
     }
-    task.status = 'waiting';
-    this.save(task);
-    this.pump();
+    const group = [
+      task,
+      ...briefs.slice(1).map((brief) => {
+        const sibling = this.create(
+          task.delegationId,
+          brief.label,
+          task.input,
+          task.acknowledgedAt,
+        );
+        sibling.brief = brief;
+        sibling.routing = answers;
+        return sibling;
+      }),
+    ];
+    if (group.length > 1)
+      for (const member of group) {
+        member.split = true;
+        const after = (member.brief?.after ?? []).map((index) => group[index]);
+        if (after.length)
+          member.waitFor = [...(member.waitFor ?? []), ...after];
+      }
+    for (const member of group) this.queue.enqueue(member);
   }
   private relate(task: CallTask, answers: Routing | null) {
     if (task.status !== 'planning' || !answers?.relatesTo) return;
-    const related = this.tasks.find(
-      (other) => other !== task && key(other) === answers.relatesTo,
-    );
+    const related = this.queue
+      .all()
+      .find((other) => other !== task && key(other) === answers.relatesTo);
     if (!related || !isOpen(related)) return;
     if (answers.isCorrection > PREDICATE_THRESHOLD) {
       task.number = related.number;
@@ -224,92 +248,9 @@ export class CallTaskScheduler {
       task.waitFor = related.waitFor;
       related.status = 'superseded';
       related.controller.abort(new Error('Superseded by a correction.'));
-      this.save(related);
+      this.queue.save(related);
       related.settle();
-    } else task.waitFor = related;
-  }
-  private save(task: CallTask) {
-    try {
-      this.options.runner.save(task);
-    } catch (error) {
-      console.error(
-        'A call task status could not be saved:',
-        error instanceof Error ? error.name : 'Error',
-      );
-    }
-  }
-  private pump() {
-    const limit =
-      this.options.config.voiceTaskConcurrency ??
-      DEFAULT_VOICE_TASK_CONCURRENCY;
-    for (const task of this.tasks) {
-      if (
-        this.tasks.filter((other) => other.status === 'running').length >= limit
-      )
-        return;
-      if (task.status !== 'waiting') continue;
-      if (task.waitFor && isOpen(task.waitFor)) continue;
-      void this.start(task);
-    }
-  }
-  private async start(task: CallTask) {
-    const { config, reasoningModel } = this.options;
-    task.status = 'running';
-    task.model = routedModel(task.routing?.complexity, config, reasoningModel);
-    this.save(task);
-    let report = await this.attempt(task);
-    if (
-      report?.escalate &&
-      config.fastModel &&
-      task.model === config.fastModel &&
-      reasoningModel !== config.fastModel
-    ) {
-      task.model = reasoningModel;
-      this.save(task);
-      report = await this.attempt(task);
-    }
-    if (superseded(task)) return;
-    this.finish(
-      task,
-      report ?? failedReport(task.stopReason ?? 'The task was stopped.'),
-      task.stopReason ? 'stopped' : undefined,
-    );
-  }
-  /** One child turn; null once the task is superseded or stopped. */
-  private async attempt(task: CallTask): Promise<CallReport | null> {
-    const fast =
-      !!this.options.config.fastModel &&
-      task.model === this.options.config.fastModel;
-    try {
-      return await this.options.runner.run(
-        task,
-        taskPrompt(task.brief!, fast),
-        task.model,
-        task.controller.signal,
-      );
-    } catch (error) {
-      if (task.controller.signal.aborted) return null;
-      return failedReport(
-        error instanceof Error ? error.message : 'unknown error',
-      );
-    }
-  }
-  private finish(task: CallTask, report: CallReport, status?: CallTaskStatus) {
-    task.report = report;
-    task.finishedAt = Date.now();
-    task.status = status ?? (report.status === 'failed' ? 'failed' : 'done');
-    this.save(task);
-    try {
-      this.options.runner.record(task, report);
-    } catch (error) {
-      console.error(
-        'A call task result could not be added to the conversation:',
-        error instanceof Error ? error.name : 'Error',
-      );
-    }
-    this.options.delivery.deliver(task, report);
-    task.settle();
-    this.pump();
+    } else task.waitFor = [related];
   }
 }
 

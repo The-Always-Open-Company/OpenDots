@@ -111,8 +111,7 @@ const strings = z
   .catch([])
   .transform((values) =>
     values.filter(
-      (value): value is string =>
-        typeof value === 'string' && !!value.trim(),
+      (value): value is string => typeof value === 'string' && !!value.trim(),
     ),
   );
 
@@ -132,7 +131,10 @@ const rerankSchema = z.object({
 
 /** Reciprocal rank fusion of ranked lists; earlier lists win ties. */
 export function fuse(lists: ChunkHit[][], k = RRF_K): ChunkHit[] {
-  const scored = new Map<string, { hit: ChunkHit; score: number; first: number }>();
+  const scored = new Map<
+    string,
+    { hit: ChunkHit; score: number; first: number }
+  >();
   let order = 0;
   for (const list of lists)
     list.forEach((hit, index) => {
@@ -331,16 +333,35 @@ export class DocumentRetriever {
         : ids;
     const allowed = restrict(this.library.readableIds(dotId));
     if (!allowed.length) return [];
+    const timings: Record<string, number> = {};
+    let stageStarted = Date.now();
+    const stage = (name: string) => {
+      const now = Date.now();
+      timings[`${name}Ms`] = now - stageStarted;
+      stageStarted = now;
+    };
+    const report = (passages: number) =>
+      console.info(
+        `Document retrieval for ${dotId}: ${JSON.stringify({ ...timings, passages })}`,
+      );
     const plan = await this.plan(
       message,
       request.turns ?? [],
       this.library.catalog(dotId).filter((entry) => entry.searchable),
       signal,
     );
-    if (!plan.needsDocuments && !request.force) return [];
+    stage('plan');
+    if (!plan.needsDocuments && !request.force) {
+      report(0);
+      return [];
+    }
     signal?.throwIfAborted();
-    const texts = [...plan.queries, ...(plan.hypothetical ? [plan.hypothetical] : [])];
+    const texts = [
+      ...plan.queries,
+      ...(plan.hypothetical ? [plan.hypothetical] : []),
+    ];
     const embeddings = await this.library.embedTexts(texts, signal);
+    stage('embed');
     const terms = normalizeTerms([...plan.tags, ...(request.tags ?? [])], 12);
     const { perList } = this.options;
     const lists = await Promise.all([
@@ -359,16 +380,21 @@ export class DocumentRetriever {
         : []),
       this.library.tagSearch(terms, allowed, perList),
     ]);
+    stage('search');
     signal?.throwIfAborted();
     const pool = fuse(lists).slice(0, this.options.pool);
     const reranked = await this.rerank(plan.standalone, pool, signal);
+    stage('rerank');
     // Access can change while the model calls run.
     const readable = new Set(restrict(this.library.readableIds(dotId)));
     const chosen = diversify(
       reranked.filter((hit) => readable.has(hit.documentId)),
       this.options,
     );
-    return this.expand(chosen, readable);
+    const passages = await this.expand(chosen, readable);
+    stage('expand');
+    report(passages.length);
+    return passages;
   }
 
   /** Adds neighbouring passages within a budget, and related references. */
@@ -382,21 +408,32 @@ export class DocumentRetriever {
       stored.set(
         id,
         new Map(
-          (await this.library.passages(id)).map((chunk) => [chunk.ordinal, chunk]),
+          (await this.library.passages(id)).map((chunk) => [
+            chunk.ordinal,
+            chunk,
+          ]),
         ),
       );
     const chosen = new Set(hits.map(passageRef));
     const links = await this.library
       .related(
-        hits.map((hit) => ({ documentId: hit.documentId, ordinal: hit.ordinal })),
+        hits.map((hit) => ({
+          documentId: hit.documentId,
+          ordinal: hit.ordinal,
+        })),
         [...readable],
         this.options.relatedPerPassage + 2,
       )
       .catch(() => []);
     let budget = this.options.expansionChars;
-    const neighbour = (chunks: Map<number, StoredChunk> | undefined, hit: ChunkHit, ordinal: number) => {
+    const neighbour = (
+      chunks: Map<number, StoredChunk> | undefined,
+      hit: ChunkHit,
+      ordinal: number,
+    ) => {
       const chunk = chunks?.get(ordinal);
-      if (!chunk || sectionOf(chunk) !== hit.section || budget <= 0) return undefined;
+      if (!chunk || sectionOf(chunk) !== hit.section || budget <= 0)
+        return undefined;
       const text = clip(bodyOf(chunk), Math.min(NEIGHBOUR_CHARS, budget));
       budget -= text.length;
       return text;
@@ -415,15 +452,13 @@ export class DocumentRetriever {
             !chosen.has(passageRef(link)),
         )
         .slice(0, this.options.relatedPerPassage)
-        .map(
-          (link): RelatedRef => ({
-            ref: passageRef(link),
-            title: this.library.title(link.documentId),
-            section: link.section,
-            pages: pageLabel(link.pageFrom, link.pageTo),
-            kind: link.kind,
-          }),
-        );
+        .map((link): RelatedRef => ({
+          ref: passageRef(link),
+          title: this.library.title(link.documentId),
+          section: link.section,
+          pages: pageLabel(link.pageFrom, link.pageTo),
+          kind: link.kind,
+        }));
       return {
         ref: passageRef(hit),
         documentId: hit.documentId,
@@ -468,15 +503,13 @@ export class DocumentRetriever {
       pages: pageLabel(target.pageFrom, target.pageTo),
       context: target.context ?? '',
       text: clip(chunksToMarkdown(window), PASSAGE_CHARS * 4),
-      related: links.map(
-        (link): RelatedRef => ({
-          ref: passageRef(link),
-          title: this.library.title(link.documentId),
-          section: link.section,
-          pages: pageLabel(link.pageFrom, link.pageTo),
-          kind: link.kind,
-        }),
-      ),
+      related: links.map((link): RelatedRef => ({
+        ref: passageRef(link),
+        title: this.library.title(link.documentId),
+        section: link.section,
+        pages: pageLabel(link.pageFrom, link.pageTo),
+        kind: link.kind,
+      })),
     };
   }
 }

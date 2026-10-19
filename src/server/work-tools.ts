@@ -61,6 +61,7 @@ export function snapshotFor(
   actor: Dot,
   consultation: boolean,
   workItemId?: string,
+  taskThread = false,
 ): Omit<AuthSnapshot, 'rules'> {
   const settings = deps.store.settings();
   const item = workItemId ? deps.engine.workItem(workItemId) : undefined;
@@ -68,6 +69,7 @@ export function snapshotFor(
     paused: settings.paused || item?.status === 'paused',
     cancelled: item?.status === 'cancelled',
     consultation,
+    taskThread,
     researchAllowed: settings.researchAllowed && actor.researchAllowed,
     memoryAllowed: settings.memoryAllowed && actor.memoryAllowed,
     spaceAllowed: (spaceId) => deps.workspace.canAccessSpace(actor.id, spaceId),

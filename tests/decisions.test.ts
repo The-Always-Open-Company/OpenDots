@@ -134,7 +134,9 @@ it('logs each outcome with timing and the reason, never the input', async () => 
     model: 'gpt-6-luna',
     questions: ['is_correction', 'complexity'],
     inputChars: 18,
-    timeoutMs: 1000,
+    timeoutMs: 2500,
+    attempts: 1,
+    winner: 1,
     answers: {
       is_correction: { probability: 0.2 },
       complexity: { choice: 'simple', confidence: 0.9 },
@@ -195,8 +197,95 @@ it('logs each outcome with timing and the reason, never the input', async () => 
   });
   expect(offline).toMatchObject({
     outcome: 'error',
-    detail: { error: 'TypeError: fetch failed' },
+    detail: { error: 'TypeError: fetch failed', attempts: 2 },
   });
+
+  const timed = await run(async () =>
+    Response.json(answered, {
+      headers: { 'openai-processing-ms': '87', 'x-request-id': 'req_1' },
+    }),
+  );
+  expect(timed.detail).toMatchObject({ processingMs: 87, requestId: 'req_1' });
+
+  const perCall = await run(() => new Promise<Response>(() => {}), {
+    timeoutMs: 15,
+  });
+  expect(perCall).toMatchObject({
+    outcome: 'timeout',
+    detail: { timeoutMs: 15 },
+  });
+});
+
+const answered = {
+  answers: [
+    { type: 'predicate', name: 'is_correction', probability: 0.2 },
+    { type: 'choice', name: 'complexity', choice: 'simple', confidence: 0.9 },
+  ],
+};
+
+it('sends a duplicate when the first request is slow and aborts the loser', async () => {
+  const lines: string[] = [];
+  const signals: AbortSignal[] = [];
+  const transport = vi.fn<typeof fetch>(async (_url, init) => {
+    signals.push(init!.signal!);
+    if (signals.length === 1)
+      return new Promise<Response>((_, reject) =>
+        init!.signal!.addEventListener('abort', () =>
+          reject(init!.signal!.reason),
+        ),
+      );
+    return Response.json(answered);
+  });
+  const answers = await decisionsClient(
+    { ...config, hedgeMs: 10 },
+    transport,
+    (line) => lines.push(line),
+  )({ input: 'x', questions });
+  expect(answers?.complexity).toMatchObject({ choice: 'simple' });
+  expect(transport).toHaveBeenCalledTimes(2);
+  expect(signals[0].aborted).toBe(true);
+  expect(JSON.parse(lines[0].replace(/^Decisions ok: /, ''))).toMatchObject({
+    attempts: 2,
+    winner: 2,
+  });
+});
+
+it('does not send a duplicate when the first answer is quick', async () => {
+  const transport = vi.fn<typeof fetch>(async () => Response.json(answered));
+  await decisionsClient({ ...config, hedgeMs: 50 }, transport, () => {})({
+    input: 'x',
+    questions,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  expect(transport).toHaveBeenCalledTimes(1);
+});
+
+it('retries a server error at once and returns null when both fail', async () => {
+  const lines: string[] = [];
+  const transport = vi.fn<typeof fetch>(async () =>
+    Response.json({ error: { message: 'overloaded' } }, { status: 503 }),
+  );
+  const answers = await decisionsClient(
+    { ...config, hedgeMs: 5000 },
+    transport,
+    (line) => lines.push(line),
+  )({ input: 'x', questions });
+  expect(answers).toBeNull();
+  expect(transport).toHaveBeenCalledTimes(2);
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toMatch(/^Decisions http_error: /);
+  expect(
+    JSON.parse(lines[0].replace(/^Decisions http_error: /, '')),
+  ).toMatchObject({ attempts: 2, status: 503 });
+
+  const forbidden = vi.fn<typeof fetch>(async () =>
+    Response.json({ error: { message: 'no' } }, { status: 403 }),
+  );
+  await decisionsClient({ ...config, hedgeMs: 5000 }, forbidden, () => {})({
+    input: 'x',
+    questions,
+  });
+  expect(forbidden).toHaveBeenCalledTimes(1);
 });
 
 it('routes a call task and ignores a relation to a task that is not open', async () => {

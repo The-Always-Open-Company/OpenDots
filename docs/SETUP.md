@@ -53,27 +53,34 @@ A reply can take several model turns: each turn may call tools, and the next tur
 
 Edit `.env` on the server and restart after changes:
 
-| Variable                         | Purpose                                                            |
-| -------------------------------- | ------------------------------------------------------------------ |
-| `OPENAI_API_KEY`, `OPENAI_MODEL` | Model credential and model identifier                              |
-| `OPENAI_BASE_URL`                | Compatible model API endpoint                                      |
-| `OPENAI_API`                     | `chat-completions` (default) or `responses`; see below             |
-| `CONTEXT_MAX_TOKENS`             | Estimated token budget for history sent to the model               |
-| `SUMMARY_MODEL`                  | Model for summaries of older turns; defaults to the model          |
-| `FAST_MODEL`                     | Simple turns and briefs; default `gpt-6-luna`, `off` uses the main model |
-| `DECISIONS_MODEL`                | Decisions router; default `gpt-6-luna`, `off` skips classification |
-| `ROUTER_MIN_CONFIDENCE`          | Lowest `simple` confidence for `FAST_MODEL`, 0–1; default 0.8      |
-| `MAX_AGENT_TURNS`                | Model turns per reply, 2–100; unset or `off` means no limit        |
-| `LAZY_TOOLS`                     | `on` (default) loads rarely used tools on demand; `off` sends all  |
-| `LOG_CONTEXT_SIZE`               | `1` logs estimated prompt and tool tokens per reply                |
-| `OWNER_ID`                       | Stable identity used for this deployment's conversations           |
-| `DATABASE_PATH`                  | SQLite file containing conversations, pages, and metadata          |
-| `OWNER_TOKEN`                    | Application access token; required for external bindings           |
-| `APP_ORIGIN`                     | Comma-separated exact browser origins for a proxy or custom domain |
+| Variable                         | Purpose                                                                         |
+| -------------------------------- | ------------------------------------------------------------------------------- |
+| `OPENAI_API_KEY`, `OPENAI_MODEL` | Model credential and model identifier                                           |
+| `OPENAI_BASE_URL`                | Compatible model API endpoint                                                   |
+| `OPENAI_API`                     | `chat-completions` (default) or `responses`; see below                          |
+| `CONTEXT_MAX_TOKENS`             | Estimated token budget for history sent to the model                            |
+| `SUMMARY_MODEL`                  | Model for summaries of older turns; defaults to the model                       |
+| `FAST_MODEL`                     | Simple turns, tasks and briefs; default `gpt-6-luna`, `off` uses the main model |
+| `DECISIONS_MODEL`                | Decisions router; default `gpt-6-luna`, `off` skips classification              |
+| `ROUTER_MIN_CONFIDENCE`          | Lowest `simple` confidence for a chat turn on `FAST_MODEL`, 0–1; default 0.8    |
+| `TASK_SPLIT`                     | `on` (default) splits several requests into parallel tasks; `off` keeps one     |
+| `MAX_AGENT_TURNS`                | Model turns per reply, 2–100; unset or `off` means no limit                     |
+| `LAZY_TOOLS`                     | `on` (default) loads rarely used tools on demand; `off` sends all               |
+| `LOG_CONTEXT_SIZE`               | `1` logs estimated prompt and tool tokens per reply                             |
+| `OWNER_ID`                       | Stable identity used for this deployment's conversations                        |
+| `DATABASE_PATH`                  | SQLite file containing conversations, pages, and metadata                       |
+| `OWNER_TOKEN`                    | Application access token; required for external bindings                        |
+| `APP_ORIGIN`                     | Comma-separated exact browser origins for a proxy or custom domain              |
 
 `.env.example` and `compose.yml` default to `gpt-6.1-sol` for conversations, `gpt-5.4-mini` for the four background models, and `gpt-6-luna` for `FAST_MODEL` and `DECISIONS_MODEL`. `gpt-6.1-sol` only calls tools through the Responses API, so they also set `OPENAI_API=responses`. Without `OPENAI_API`, conversations use the chat-completions API, which every OpenAI-compatible endpoint serves; set `OPENAI_API=chat-completions` when you point `OPENAI_BASE_URL` and `OPENAI_MODEL` at another provider. That setting applies to conversations only. Summaries, memory extraction, document indexing and search reranking still use chat completions, so point `SUMMARY_MODEL`, `MEMORY_MODEL`, `ENRICHMENT_MODEL` and `RERANK_MODEL` at a model that serves it, typically a small, fast one.
 
-Each chat turn is classified by the [Decisions API](https://developers.openai.com/api/docs/guides/decisions) with `DECISIONS_MODEL` (`gpt-6-luna`; the Decisions API only answers on Luna). Classification takes about a quarter of a second and runs alongside memory and document search. Turns it rates `simple` with at least `ROUTER_MIN_CONFIDENCE` confidence use `FAST_MODEL`, which also defaults to `gpt-6-luna`. Every other turn, and every turn when the classification fails or times out, uses `OPENAI_MODEL`. Background work and consultations always use `OPENAI_MODEL`. Set `FAST_MODEL=off` to keep every turn on `OPENAI_MODEL`, or `DECISIONS_MODEL=off` to skip classification. `FAST_MODEL` turns go through `OPENAI_API`, so it must serve that API.
+Each chat turn is classified by the [Decisions API](https://developers.openai.com/api/docs/guides/decisions) with `DECISIONS_MODEL` (`gpt-6-luna`; the Decisions API only answers on Luna). Classification usually takes 0.2 to 1.2 seconds and runs alongside memory and document search. A call that has not answered after 400 ms is sent once more and the first answer wins; after 2.5 seconds the turn goes on without it. Turns it rates `simple` with at least `ROUTER_MIN_CONFIDENCE` confidence use `FAST_MODEL`, which also defaults to `gpt-6-luna`. Every other turn, and every turn when the classification fails or times out, uses `OPENAI_MODEL`. Background work and consultations always use `OPENAI_MODEL`. Set `FAST_MODEL=off` to keep every turn on `OPENAI_MODEL`, or `DECISIONS_MODEL=off` to skip classification. `FAST_MODEL` turns go through `OPENAI_API`, so it must serve that API.
+
+The same Decisions call asks whether the message holds several independent requests, such as "check the weather and book a table". Above a 0.7 probability, `FAST_MODEL` splits it into up to four tasks, each with a label, its own brief, a `simple` or `reasoning` rating, and the earlier tasks it needs results from. The turn then answers with the list of tasks, without a model call, and each task runs in a hidden thread of its own, three at a time, for up to 90 seconds. Each result is posted to the chat on its own, with a notification, as soon as it is ready. A message the splitter returns as one task, or a split that fails, runs as a normal turn. Set `TASK_SPLIT=off` to answer every message in one turn.
+
+Tasks, both split chat tasks and call tasks, run on `FAST_MODEL` unless their rating is an explicit `reasoning`; a low-confidence `simple`, a missing rating or a failed classification all use `FAST_MODEL`. A task on `FAST_MODEL` that reports it needs more reasoning runs once more on the reasoning model. Actions that need the owner's approval cannot be approved inside a task: the task prepares them and reports what it would do, and you confirm in the chat.
+
+Logs show where a turn's time goes: `Decisions ok` (with `ms`, OpenAI's `processingMs`, `requestId`, `attempts` and which attempt won), `Turn preparation` (memory, documents, Decisions and split timings), `Document retrieval` (plan, embed, search, rerank and expand timings), and `Model route` for each turn and task, with `source` set to `decisions`, `splitter` or `default`.
 
 Provider credentials belong in `.env`, not client-side variables or source code. CopilotKit and mem0 telemetry are disabled in code; no telemetry setting is needed.
 
@@ -287,7 +294,7 @@ Calls use [GPT-Live](https://developers.openai.com/api/docs/models/gpt-live-1) a
 
 A call uses two models. The voice model listens, speaks and decides when it needs help. When it does, it delegates to the server, which turns the owner's words into a short task brief and runs it as a call task: a turn of the selected Dot with the same tools and permissions, in a hidden thread of its own. Each finished task adds a compact exchange (the task, then the full answer) to the conversation, and a call receipt is added when the call ends. Each call allows 20 delegated turns (`VOICE_TASK_LIMIT`, 1 to 100, or `off`) and lasts at most 15 minutes.
 
-- **Briefs and routing.** `FAST_MODEL` (default `gpt-6-luna`; `RERANK_MODEL` when `FAST_MODEL=off`) writes each brief within about three seconds; otherwise a templated brief from the owner's words is used. At the same time, the Decisions API (`DECISIONS_MODEL`, default `gpt-6-luna`) rates the request, links it to an open task it follows up or corrects, and flags requests too unclear to start, which get a clarifying question instead. Tasks rated `simple` with at least `ROUTER_MIN_CONFIDENCE` confidence run on `FAST_MODEL`; the rest use `VOICE_TASK_MODEL`, or `OPENAI_MODEL` when unset. A fast task that reports it needs more reasoning is run once more on that model.
+- **Briefs and routing.** `FAST_MODEL` (default `gpt-6-luna`; `RERANK_MODEL` when `FAST_MODEL=off`) writes the briefs within about three seconds; otherwise a templated brief from the owner's words is used. A request with several separate parts becomes up to four tasks under the same delegation, each reported on its own; a follow-up or correction of an open task always stays one task, and `TASK_SPLIT=off` keeps every delegation as one task. At the same time, the Decisions API (`DECISIONS_MODEL`, default `gpt-6-luna`) rates the request, links it to an open task it follows up or corrects, and flags requests too unclear to start, which get a clarifying question instead. Tasks run on `FAST_MODEL` unless they are rated `reasoning` (by Decisions for a single task, by the splitter for each of several); those use `VOICE_TASK_MODEL`, or `OPENAI_MODEL` when unset. A fast task that reports it needs more reasoning is run once more on that model.
 - **Parallel tasks.** Up to `VOICE_TASK_CONCURRENCY` tasks (default 3) run at once. A follow-up waits for the task it follows; a correction stops the task it corrects and replaces its result.
 - **Results on the call.** A result is passed to the voice model quietly unless the owner is still waiting for it, it failed, or the owner must decide something; then it is spoken at the next pause (`VOICE_QUIET_MS`, default 1000 ms of silence). `VOICE_RESULT_DELIVERY` sets the pacing: `sequential` (default) speaks one result at a time, `batch` combines results that finish together, and `quiet` never pushes a result to speech. Delivery statistics are logged when each call ends.
 - **After the call.** Tasks keep running for up to `VOICE_TASK_AFTER_CALL_MS` (default 10 minutes). Their results, and spoken results that were still waiting at hangup, go to the conversation with one notification each, and the receipt lists tasks still running. Pausing Dot stops them. Tasks cut short by a restart are reported in the conversation as interrupted.

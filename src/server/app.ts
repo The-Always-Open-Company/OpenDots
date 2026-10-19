@@ -383,8 +383,10 @@ export function createApp({
       previous.memoryAllowed !== settings.memoryAllowed
     )
       runner.abortAll();
-    if (settings.paused) voice?.abortAll();
-    else void voice?.resumePending();
+    if (settings.paused) {
+      voice?.abortAll();
+      platform?.chatTasks.stopAll('Dot was paused.');
+    } else void voice?.resumePending();
     return c.json(settings);
   });
   app.post('/api/memories', async (c) => {

@@ -28,6 +28,9 @@ export type CallTaskStatus =
   | 'stopped';
 export interface CallTaskRecord {
   id: string;
+  /** `call` tasks come from a voice call; `chat` tasks from a split chat message. */
+  source: 'call' | 'chat';
+  /** The call's ID, or the chat message's run ID. */
   callId: string;
   delegationId: string;
   parentThreadId: string;
@@ -96,6 +99,7 @@ export class WorkspaceStore {
     addColumn('dots', 'mascot', 'TEXT');
     addColumn('dots', 'replyMode', "TEXT NOT NULL DEFAULT 'text'");
     addColumn('thread_bindings', 'kind', "TEXT NOT NULL DEFAULT 'chat'");
+    addColumn('call_tasks', 'source', "TEXT NOT NULL DEFAULT 'call'");
     this.db.exec(
       'CREATE TABLE IF NOT EXISTS consultations(fromDotId TEXT NOT NULL, toDotId TEXT NOT NULL, threadId TEXT NOT NULL, PRIMARY KEY(fromDotId, toDotId))',
     );
@@ -332,8 +336,9 @@ export class WorkspaceStore {
       ? row.kind
       : 'chat';
   }
-  /** Starts a call task record with its own hidden child thread. */
+  /** Starts a call or chat task record with its own hidden child thread. */
   createCallTask(input: {
+    source?: CallTaskRecord['source'];
     callId: string;
     delegationId: string;
     parentThreadId: string;
@@ -346,13 +351,19 @@ export class WorkspaceStore {
     const now = Date.now();
     this.db.exec('BEGIN');
     try {
-      this.bindThread(childThreadId, parent.dotId, 'Call task', 'call_task');
+      this.bindThread(
+        childThreadId,
+        parent.dotId,
+        input.source === 'chat' ? 'Chat task' : 'Call task',
+        'call_task',
+      );
       this.db
         .prepare(
-          'INSERT INTO call_tasks (id, callId, delegationId, parentThreadId, childThreadId, label, task, status, revision, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)',
+          'INSERT INTO call_tasks (id, source, callId, delegationId, parentThreadId, childThreadId, label, task, status, revision, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)',
         )
         .run(
           id,
+          input.source ?? 'call',
           input.callId,
           input.delegationId,
           parent.id,
@@ -653,6 +664,7 @@ function callTaskRecord(row: Record<string, unknown>): CallTaskRecord {
     typeof value === 'string' ? JSON.parse(value) : null;
   return {
     id: String(row.id),
+    source: row.source === 'chat' ? 'chat' : 'call',
     callId: String(row.callId),
     delegationId: String(row.delegationId),
     parentThreadId: String(row.parentThreadId),

@@ -17,6 +17,7 @@ import type {
   PlatformConfig,
 } from '../src/server/platform-config.js';
 import type { Decide } from '../src/server/decisions.js';
+import { chatTaskReply } from '../src/server/chat-tasks.js';
 
 const databases: Array<{ close(): void }> = [];
 afterEach(() => {
@@ -591,6 +592,129 @@ it('does not route when the fast model is off', async () => {
   const f = fixture(undefined, undefined, { decide });
   await lastValueFrom(f.agent.run(f.input).pipe(toArray()));
   expect(decide).not.toHaveBeenCalled();
+});
+
+const classification =
+  (multipleRequests: number): Decide =>
+  async ({ questions }) =>
+    Object.fromEntries(
+      questions.map((question) => [
+        question.name,
+        question.name === 'multiple_requests'
+          ? {
+              type: 'predicate' as const,
+              name: question.name,
+              probability: multipleRequests,
+            }
+          : {
+              type: 'choice' as const,
+              name: question.name,
+              choice: 'reasoning',
+              confidence: 0.9,
+            },
+      ]),
+    );
+const splitTasks = [
+  { label: 'Weather', task: 'Check the weather.', context: '' },
+  { label: 'Booking', task: 'Book a table.', context: '' },
+];
+
+it('answers a message with several requests with the task list and hands the tasks off without a model call', async () => {
+  const decide = vi.fn(classification(0.92));
+  const chatTasks = {
+    split: vi.fn(async () => ({ tasks: splitTasks })),
+    start: vi.fn(),
+  };
+  const network = vi.spyOn(globalThis, 'fetch');
+  vi.spyOn(console, 'info').mockImplementation(() => {});
+  const f = fixture(
+    undefined,
+    undefined,
+    { decide, chatTasks },
+    { fastModel: 'fast' },
+  );
+  const events = await lastValueFrom(f.agent.run(f.input).pipe(toArray()));
+  expect(network).not.toHaveBeenCalled();
+  expect(
+    decide.mock.calls[0][0].questions.map((question) => question.name),
+  ).toEqual(['complexity', 'multiple_requests']);
+  expect(chatTasks.split).toHaveBeenCalledWith(
+    expect.objectContaining({ words: 'Create a page called Notes.' }),
+    expect.any(AbortSignal),
+  );
+  expect(chatTasks.start).toHaveBeenCalledWith({
+    parentThreadId: 'thread',
+    dotId: f.dot.id,
+    runId: 'run',
+    tasks: splitTasks,
+  });
+  expect(
+    events
+      .filter((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)
+      .map((event) => (event as { delta?: string }).delta)
+      .join(''),
+  ).toBe(chatTaskReply(splitTasks));
+  expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
+});
+
+it('runs a normal turn when the message is one request or the split finds one task', async () => {
+  vi.spyOn(console, 'info').mockImplementation(() => {});
+  const network = vi
+    .spyOn(globalThis, 'fetch')
+    .mockImplementation(async () =>
+      completion({ role: 'assistant', content: 'Answer.' }),
+    );
+  const below = {
+    split: vi.fn(async () => ({ tasks: splitTasks })),
+    start: vi.fn(),
+  };
+  const single = fixture(
+    undefined,
+    undefined,
+    { decide: classification(0.4), chatTasks: below },
+    { fastModel: 'fast' },
+  );
+  await lastValueFrom(single.agent.run(single.input).pipe(toArray()));
+  expect(below.split).not.toHaveBeenCalled();
+  expect(below.start).not.toHaveBeenCalled();
+
+  const oneTask = {
+    split: vi.fn(async () => ({ tasks: splitTasks.slice(0, 1) })),
+    start: vi.fn(),
+  };
+  const split = fixture(
+    undefined,
+    undefined,
+    { decide: classification(0.95), chatTasks: oneTask },
+    { fastModel: 'fast' },
+  );
+  await lastValueFrom(split.agent.run(split.input).pipe(toArray()));
+  expect(oneTask.split).toHaveBeenCalledTimes(1);
+  expect(oneTask.start).not.toHaveBeenCalled();
+  expect(network).toHaveBeenCalledTimes(2);
+});
+
+it('does not ask about several requests when TASK_SPLIT is off', async () => {
+  vi.spyOn(console, 'info').mockImplementation(() => {});
+  vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+    completion({ role: 'assistant', content: 'Answer.' }),
+  );
+  const decide = vi.fn(classification(0.95));
+  const chatTasks = {
+    split: vi.fn(async () => ({ tasks: splitTasks })),
+    start: vi.fn(),
+  };
+  const f = fixture(
+    undefined,
+    undefined,
+    { decide, chatTasks },
+    { fastModel: 'fast', taskSplit: false },
+  );
+  await lastValueFrom(f.agent.run(f.input).pipe(toArray()));
+  expect(
+    decide.mock.calls[0][0].questions.map((question) => question.name),
+  ).toEqual(['complexity']);
+  expect(chatTasks.split).not.toHaveBeenCalled();
 });
 
 it('offers report_call_result on call task threads, saves the report and sends no reply notification', async () => {

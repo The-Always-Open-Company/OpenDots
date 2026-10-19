@@ -24,6 +24,7 @@ import {
   millisecondsFromEnv,
   modelApiFromEnv,
   routerMinConfidenceFromEnv,
+  taskSplitFromEnv,
   voiceProviderFromEnv,
   voiceResultDeliveryFromEnv,
   voiceTaskConcurrencyFromEnv,
@@ -90,6 +91,7 @@ const config: PlatformConfig = {
   routerMinConfidence: routerMinConfidenceFromEnv(
     process.env.ROUTER_MIN_CONFIDENCE,
   ),
+  taskSplit: taskSplitFromEnv(process.env.TASK_SPLIT),
   documentsDir:
     process.env.DOCUMENTS_DIR || join(dirname(database), 'documents'),
   maxUploadBytes: maxUploadBytesFromEnv(process.env.MAX_UPLOAD_MB),

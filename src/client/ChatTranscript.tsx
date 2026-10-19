@@ -1,13 +1,16 @@
 import { openPageLink } from './page-navigation';
 import { Fragment, type ReactNode } from 'react';
-import { Clock3, Mic, Phone, PhoneOff } from 'lucide-react';
+import { Clock3, ListChecks, Mic, Phone, PhoneOff } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import type { AssistantMessage, Message } from '@ag-ui/core';
 import type { CallReceipt } from '../shared/types';
 import { voiceReceiptMessagePrefix } from '../shared/voice-receipt';
 import { isVoiceNote, voiceNoteReplyIds } from '../shared/voice-note';
 import { workPromptKind, workPromptLabel } from '../shared/work-marker';
-import { callTaskMessagePrefix } from '../shared/call-task';
+import {
+  callTaskMessagePrefix,
+  chatTaskMessagePrefix,
+} from '../shared/call-task';
 // These markers only control rendering; they do not confer trust or permissions.
 export function isInternalVoiceReceipt(message: Message): boolean {
   const metadata = message.metadata;
@@ -20,12 +23,22 @@ export function isInternalVoiceReceipt(message: Message): boolean {
         metadata.opendotsSource === 'voice_receipt'))
   );
 }
-/** The task line of a call task result, which the app wrote rather than the owner. */
-function callTaskLabel(message: Message): string | null {
-  if (message.role !== 'user' || !message.id.startsWith(callTaskMessagePrefix))
-    return null;
+/** The task line of a call or chat task result, which the app wrote rather than the owner. */
+function taskMarker(
+  message: Message,
+): { kind: 'call' | 'chat'; label: string } | null {
+  if (message.role !== 'user') return null;
+  const kind = message.id.startsWith(callTaskMessagePrefix)
+    ? 'call'
+    : message.id.startsWith(chatTaskMessagePrefix)
+      ? 'chat'
+      : null;
+  if (!kind) return null;
   const content = typeof message.content === 'string' ? message.content : '';
-  return content.split('\n')[0] || 'Call task';
+  return {
+    kind,
+    label: content.split('\n')[0] || (kind === 'call' ? 'Call task' : 'Task'),
+  };
 }
 function Receipt({ call }: { call: CallReceipt }) {
   return (
@@ -67,7 +80,7 @@ export function ChatTranscript({
         ))}
       {messages.map((message) => {
         const marker = workPromptKind(message);
-        const callTask = callTaskLabel(message);
+        const task = taskMarker(message);
         return (
           <Fragment key={message.id}>
             {marker ? (
@@ -75,10 +88,14 @@ export function ChatTranscript({
                 <Clock3 size={13} />
                 <span>{workPromptLabel(marker)}</span>
               </div>
-            ) : callTask ? (
+            ) : task ? (
               <div className="work-marker">
-                <Phone size={13} />
-                <span>{callTask}</span>
+                {task.kind === 'call' ? (
+                  <Phone size={13} />
+                ) : (
+                  <ListChecks size={13} />
+                )}
+                <span>{task.label}</span>
               </div>
             ) : (
               typeof message.content === 'string' &&
