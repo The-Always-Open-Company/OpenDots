@@ -18,7 +18,7 @@ import {
 } from './platform-config.js';
 
 /** A split slower than this is replaced by the templated single task. */
-export const BRIEF_TIMEOUT_MS = 3000;
+export const BRIEF_TIMEOUT_MS = 10_000;
 /** Corrections, unclear requests and several-request messages act above this probability. */
 export const PREDICATE_THRESHOLD = 0.7;
 /** The most tasks one message is split into. */
