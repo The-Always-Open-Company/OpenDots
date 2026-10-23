@@ -119,7 +119,7 @@ export class PluginOAuth {
       );
     if (!data.refresh_token)
       throw new Error(
-        'The provider did not return a refresh token. Remove OpenDots from your account permissions and connect again.',
+        'The provider did not return a refresh token. Remove Pods from your account permissions and connect again.',
       );
     this.cache.set(claim.pluginId, {
       token: data.access_token,

@@ -30,7 +30,7 @@ export function approvalDenied(
   action: ActionRow,
 ): string | null {
   const dot = deps.workspace.dot(String(action.actorId));
-  if (!dot) return 'Dot not found.';
+  if (!dot) return 'Pod not found.';
   const workItemId = action.workItemId ? String(action.workItemId) : undefined;
   const decision = decide(
     {
@@ -72,7 +72,7 @@ export async function applyApprovedAction(
   const dot = deps.workspace.dot(String(action.actorId));
   if (!dot) {
     deps.engine.completeApprovedAction(id, 'declined', {
-      error: 'Dot not found.',
+      error: 'Pod not found.',
     });
     return;
   }
@@ -357,7 +357,7 @@ function applyProfile(
   args: Record<string, unknown>,
 ) {
   const dot = workspace.dot(actorId);
-  if (!dot) throw new Error('Dot not found.');
+  if (!dot) throw new Error('Pod not found.');
   const name = String(args.name ?? '').trim();
   if (name.length < 1 || name.length > 40)
     throw new Error('Name must be 1 to 40 characters.');
@@ -379,7 +379,7 @@ function createPage(
   operationId: string,
 ) {
   const dot = workspace.dot(actorId);
-  if (!dot) throw new Error('Dot not found.');
+  if (!dot) throw new Error('Pod not found.');
   const spaceId = typeof args.spaceId === 'string' ? args.spaceId : dot.spaceId;
   if (!workspace.canAccessSpace(actorId, spaceId))
     throw new Error('Space access has been revoked or was not granted.');
@@ -401,7 +401,7 @@ function editPage(
   args: Record<string, unknown>,
 ) {
   const dot = workspace.dot(actorId);
-  if (!dot) throw new Error('Dot not found.');
+  if (!dot) throw new Error('Pod not found.');
   const spaceId = typeof args.spaceId === 'string' ? args.spaceId : dot.spaceId;
   if (!workspace.canAccessSpace(actorId, spaceId))
     throw new Error('Space access has been revoked or was not granted.');

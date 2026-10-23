@@ -204,5 +204,5 @@ it('refuses a Dot that cannot read the document or use the Space', () => {
       dotId: 'missing',
       target: { kind: 'document', documentId: document.id },
     }),
-  ).toThrow(/Dot not found/);
+  ).toThrow(/Pod not found/);
 });

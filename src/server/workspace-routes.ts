@@ -94,7 +94,7 @@ export function workspaceRoutes(platform: Platform, voice: VoiceService) {
     if (!data.success)
       return c.json({ error: 'Invalid specialist settings.' }, 400);
     if (!platform.workspace.dot(c.req.param('id')))
-      return c.json({ error: 'Dot not found.' }, 404);
+      return c.json({ error: 'Pod not found.' }, 404);
     return c.json(platform.workspace.updateDot(c.req.param('id'), data.data));
   });
   app.post('/conversations', async (c) => {
@@ -106,7 +106,7 @@ export function workspaceRoutes(platform: Platform, voice: VoiceService) {
       .strict()
       .safeParse(await c.req.json());
     if (!data.success)
-      return c.json({ error: 'Select a Dot and a conversation title.' }, 400);
+      return c.json({ error: 'Select a Pod and a conversation title.' }, 400);
     if (platform.setup().missing.length)
       return c.json(
         { error: `Setup required: ${platform.setup().missing.join(', ')}.` },
@@ -222,7 +222,7 @@ export function workspaceRoutes(platform: Platform, voice: VoiceService) {
     !platform.setup().voiceNotes
       ? 'Voice note setup required: VOICE_API_KEY.'
       : platform.store.settings().paused
-        ? 'Dot is paused.'
+        ? 'Pod is paused.'
         : null;
   app.post('/voice/notes/transcribe', async (c) => {
     const blocked = voiceNotesBlocked();
@@ -282,7 +282,7 @@ export function workspaceRoutes(platform: Platform, voice: VoiceService) {
   app.onError((error, c) => {
     const text = error.message;
     const known =
-      /^(Setup|Voice setup|Voice note|Dot |Space |Specialist |Conversation |Call |This call|End the current|Voice provider|An audio|This conversation is already)/.test(
+      /^(Setup|Voice setup|Voice note|Pod |Space |Specialist |Conversation |Call |This call|End the current|Voice provider|An audio|This conversation is already)/.test(
         text,
       );
     return c.json(

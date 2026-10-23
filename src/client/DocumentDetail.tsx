@@ -25,7 +25,7 @@ import { documentReaders } from './send-to-dot';
 
 const PREVIEW_CHARS = 20_000;
 const REASONS: Record<DocumentAccessReason, string> = {
-  all: 'shared with all Dots',
+  all: 'shared with all Pods',
   granted: 'granted directly',
   space: 'through a Space',
 };
@@ -128,7 +128,7 @@ export function DocumentDetail({
       </main>
     );
   const dotName = (dotId: string) =>
-    workspace.dots.find((dot) => dot.id === dotId)?.name ?? 'Removed Dot';
+    workspace.dots.find((dot) => dot.id === dotId)?.name ?? 'Removed Pod';
   const spaceName = (spaceId: string) =>
     workspace.spaces.find((space) => space.id === spaceId)?.name ?? 'Space';
   const sourceThread = workspace.conversations.find(
@@ -214,7 +214,7 @@ export function DocumentDetail({
               <SendToDot
                 dots={documentReaders(workspace.dots, document.readers)}
                 target={{ kind: 'document', documentId: document.id }}
-                emptyHint="No Dot can read this document yet. Change its access first."
+                emptyHint="No Pod can read this document yet. Change its access first."
               />
             )}
           <button
@@ -287,7 +287,7 @@ export function DocumentDetail({
             onClick={() => {
               if (
                 window.confirm(
-                  `Delete “${document.title}”? Dots will lose access and its search index is removed.`,
+                  `Delete “${document.title}”? Pods will lose access and its search index is removed.`,
                 )
               )
                 void act(async () => {
@@ -372,10 +372,10 @@ export function DocumentDetail({
               <>
                 <p className="muted">
                   {document.allDots
-                    ? 'Shared with all Dots, including new ones.'
+                    ? 'Shared with all Pods, including new ones.'
                     : document.dotIds.length
                       ? `Granted to ${document.dotIds.map(dotName).join(', ')}.`
-                      : 'Not granted to any Dot directly.'}
+                      : 'Not granted to any Pod directly.'}
                   {document.spaceIds.length
                     ? ` Linked to ${document.spaceIds.map(spaceName).join(', ')}.`
                     : ''}
@@ -399,11 +399,11 @@ export function DocumentDetail({
                     ))}
                   </ul>
                 ) : (
-                  <p className="muted">No Dot can read this document yet.</p>
+                  <p className="muted">No Pod can read this document yet.</p>
                 )}
                 {document.indexedVersion === null && (
                   <p className="muted">
-                    Dots can search it once processing finishes.
+                    Pods can search it once processing finishes.
                   </p>
                 )}
               </>
@@ -426,7 +426,7 @@ export function DocumentDetail({
                 {text.length > PREVIEW_CHARS && (
                   <p className="muted">
                     Preview shows the first {PREVIEW_CHARS.toLocaleString()}{' '}
-                    characters. Dots can read the rest.
+                    characters. Pods can read the rest.
                   </p>
                 )}
               </>

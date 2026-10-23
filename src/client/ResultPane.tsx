@@ -47,7 +47,7 @@ export function ResultPane({
             className={resultTab === 'Computer' ? 'selected' : ''}
             onClick={() => setResultTab('Computer')}
           >
-            <Monitor size={15} /> {computerDot?.name ?? 'Dot'}’s computer
+            <Monitor size={15} /> {computerDot?.name ?? 'Pod'}’s computer
           </button>
         </div>
         <button
@@ -65,7 +65,7 @@ export function ResultPane({
             <select
               value={computerDot?.id ?? ''}
               onChange={(event) => setComputerDotId(event.target.value)}
-              aria-label="Select Dot computer"
+              aria-label="Select Pod computer"
             >
               {dots.map((dot) => (
                 <option key={dot.id} value={dot.id}>
@@ -78,7 +78,7 @@ export function ResultPane({
             <ComputerPanel key={computerDot.id} dot={computerDot} />
           ) : (
             <p className="computer-panel">
-              Create a Dot to give it a computer.
+              Create a Pod to give it a computer.
             </p>
           )}
         </>
@@ -105,7 +105,7 @@ export function ResultPane({
                 const url = URL.createObjectURL(blob);
                 const anchor = document.createElement('a');
                 anchor.href = url;
-                anchor.download = 'opendots-brief.txt';
+                anchor.download = 'pods-brief.txt';
                 anchor.click();
                 URL.revokeObjectURL(url);
               }}
@@ -115,7 +115,7 @@ export function ResultPane({
           </div>
           {latest.sample && (
             <div className="sample-note">
-              An example of what Dot can do. The findings and sources below are
+              An example of what a Pod can do. The findings and sources below are
               invented.
             </div>
           )}

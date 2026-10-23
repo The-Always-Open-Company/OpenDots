@@ -90,7 +90,7 @@ const MAX_ATTEMPTS = 3;
 
 /**
  * Document metadata, Space links and direct Dot grants. A Dot can read a
- * document that is shared with all Dots, granted to it, or linked to one of
+ * document that is shared with all Pods, granted to it, or linked to one of
  * its Spaces, once a version has been indexed.
  */
 export class Documents {
@@ -179,7 +179,7 @@ export class Documents {
   }
   private validate(dotIds: string[], spaceIds: string[]) {
     if (dotIds.some((id) => !this.exists.dot(id)))
-      throw new Error('Document access names a Dot that does not exist.');
+      throw new Error('Document access names a Pod that does not exist.');
     if (spaceIds.some((id) => !this.exists.space(id)))
       throw new Error('Document access names a Space that does not exist.');
   }

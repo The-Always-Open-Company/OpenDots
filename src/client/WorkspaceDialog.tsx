@@ -122,13 +122,13 @@ export function WorkspaceDialog({
       ? 'A space for something.'
       : dialog.type === 'dot'
         ? dialog.dot
-          ? 'Make this Dot yours.'
+          ? 'Make this Pod yours.'
           : 'Meet your next specialist.'
         : dialog.type === 'settings'
           ? 'Your workspace, your rules.'
           : dialog.type === 'memory'
             ? 'Something to remember.'
-            : 'Let your Dot keep time.';
+            : 'Let your Pod keep time.';
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <section
@@ -146,7 +146,7 @@ export function WorkspaceDialog({
         >
           <X size={18} />
         </button>
-        <span className="eyebrow">OPENDOTS TEMPLATE</span>
+        <span className="eyebrow">PODS TEMPLATE</span>
         <h2 id="dialog-title">{title}</h2>
         <form
           onSubmit={async (e) => {
@@ -246,7 +246,7 @@ export function WorkspaceDialog({
                     value={mascot}
                     onChange={(event) => setMascot(event.target.value)}
                   >
-                    <option value="">Color from this Dot’s id</option>
+                    <option value="">Color from this Pod’s id</option>
                     <option value="blue">Blue</option>
                     <option value="mint">Mint</option>
                     <option value="orange">Orange</option>
@@ -299,7 +299,7 @@ export function WorkspaceDialog({
             <fieldset className="space-access-fields">
               <legend>Space access</legend>
               <p className="muted">
-                Choose where this Dot can read and edit pages.
+                Choose where this Pod can read and edit pages.
               </p>
               {workspace.spaces.map((space) => (
                 <label className="permission-row" key={space.id}>
@@ -354,7 +354,7 @@ export function WorkspaceDialog({
               />
               <p className="muted">
                 Separate names with commas. When notes or documents use one of
-                these names, Dots know it means you, so those tasks are yours.
+                these names, Pods know it means you, so those tasks are yours.
               </p>
               <label className="permission-row">
                 <input
@@ -365,7 +365,7 @@ export function WorkspaceDialog({
                 <span>
                   <strong>Send voice notes right away</strong>
                   <small>
-                    Skip transcript review: a voice note goes to the Dot as soon
+                    Skip transcript review: a voice note goes to the Pod as soon
                     as it is transcribed. Leave off to check or edit the text in
                     the message box first.
                   </small>
@@ -386,7 +386,7 @@ export function WorkspaceDialog({
               />
               <p className="muted">
                 Messages you send are held this long so you can add more lines
-                before the Dot replies. Typing keeps holding them. Use 0 to send
+                before the Pod replies. Typing keeps holding them. Use 0 to send
                 right away.
               </p>
               <label className="field-label" htmlFor="typing-nudge">
@@ -417,7 +417,7 @@ export function WorkspaceDialog({
               />
               <p className="muted">
                 If held messages are waiting and the message box keeps unsent
-                text, the Dot asks whether you want to add something, then sends
+                text, the Pod asks whether you want to add something, then sends
                 what you already sent. Your unsent text stays in the box.
               </p>
             </>
@@ -461,9 +461,9 @@ export function WorkspaceDialog({
                     onChange={(e) => setConsultable(e.target.checked)}
                   />
                   <span>
-                    <strong>Other Dots can consult this Dot</strong>
+                    <strong>Other Pods can consult this Pod</strong>
                     <small>
-                      Lets other Dots ask it questions. It answers from its own
+                      Lets other Pods ask it questions. It answers from its own
                       memories, documents, and Spaces, but can’t edit pages
                       while consulted.
                     </small>
@@ -576,7 +576,7 @@ export function WorkspaceDialog({
           )}
           {dialog.type === 'memory' && (
             <p className="muted">
-              Every Dot with memory enabled sees this. Avoid secrets; memories
+              Every Pod with memory enabled sees this. Avoid secrets; memories
               go to your model provider with each turn.
             </p>
           )}

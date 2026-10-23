@@ -95,7 +95,7 @@ export function appendPieces(text: string) {
  */
 export class LiveCallController {
   private socket?: LiveSocket;
-  private lines: { speaker: 'You' | 'Dot'; text: string }[] = [];
+  private lines: { speaker: 'You' | 'Pod'; text: string }[] = [];
   /** Owner speech with session timestamps; `taken` segments belong to earlier delegations. */
   private segments: { text: string; startMs?: number }[] = [];
   private taken = 0;
@@ -231,7 +231,7 @@ export class LiveCallController {
       return false;
     }
   }
-  private add(speaker: 'You' | 'Dot', delta: string) {
+  private add(speaker: 'You' | 'Pod', delta: string) {
     const last = this.lines.at(-1);
     if (last?.speaker === speaker) last.text += delta;
     else this.lines.push({ speaker, text: delta });
@@ -267,7 +267,7 @@ export class LiveCallController {
         this.options.hooks.heard?.('owner', event.delta);
       }
       if (event.type === 'session.output_transcript.delta') {
-        this.add('Dot', event.delta);
+        this.add('Pod', event.delta);
         this.options.hooks.heard?.('dot', event.delta);
       }
     }

@@ -19,7 +19,7 @@ export function Mascot({
   small = false,
   identity,
   character,
-  name = 'Dot',
+  name = 'Pod',
   decorative = false,
 }: {
   state?: string;

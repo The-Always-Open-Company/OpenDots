@@ -18,7 +18,7 @@ export function memoryRoutes(platform: Platform) {
     const memory = provider();
     if (!memory) return c.json(unavailable, 503);
     if (!platform.workspace.dot(c.req.param('id')))
-      return c.json({ error: 'Dot not found.' }, 404);
+      return c.json({ error: 'Pod not found.' }, 404);
     return c.json(await memory.list(scope(c.req.param('id'))));
   });
   app.put('/dots/:id/memories/:memoryId', async (c) => {
@@ -36,7 +36,7 @@ export function memoryRoutes(platform: Platform) {
       parsed.data.text,
     ))
       ? c.json({ ok: true })
-      : c.json({ error: 'Memory not found for this Dot.' }, 404);
+      : c.json({ error: 'Memory not found for this Pod.' }, 404);
   });
   app.delete('/dots/:id/memories/:memoryId', async (c) => {
     const memory = provider();
@@ -46,7 +46,7 @@ export function memoryRoutes(platform: Platform) {
       c.req.param('memoryId'),
     ))
       ? c.json({ ok: true })
-      : c.json({ error: 'Memory not found for this Dot.' }, 404);
+      : c.json({ error: 'Memory not found for this Pod.' }, 404);
   });
   app.get('/consultations', (c) => c.json(platform.consultations()));
   return app;

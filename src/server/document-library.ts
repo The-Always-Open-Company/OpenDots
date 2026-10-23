@@ -503,7 +503,7 @@ export class DocumentLibrary {
   async read(dotId: string, id: string, fromPage?: number, toPage?: number) {
     if (!this.documents.canRead(dotId, id))
       throw new Error(
-        'Document not found, still processing, or not shared with this Dot.',
+        'Document not found, still processing, or not shared with this Pod.',
       );
     const document = this.documents.require(id);
     const version = document.indexedVersion!;

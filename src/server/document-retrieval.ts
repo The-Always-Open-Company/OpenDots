@@ -480,13 +480,13 @@ export class DocumentRetriever {
     const parsed = parseRef(ref);
     if (!parsed || !this.library.readableIds(dotId).includes(parsed.documentId))
       throw new Error(
-        'Passage not found, still processing, or not shared with this Dot.',
+        'Passage not found, still processing, or not shared with this Pod.',
       );
     const chunks = await this.library.passages(parsed.documentId);
     const target = chunks.find((chunk) => chunk.ordinal === parsed.ordinal);
     if (!target)
       throw new Error(
-        'Passage not found, still processing, or not shared with this Dot.',
+        'Passage not found, still processing, or not shared with this Pod.',
       );
     const span = Math.max(0, Math.min(3, around));
     const window = chunks.filter(

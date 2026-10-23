@@ -418,7 +418,7 @@ export function App() {
             onChange={(e) => setAuth(e.target.value)}
             required
           />
-          <button className="primary">Unlock OpenDots</button>
+          <button className="primary">Unlock Pods</button>
         </form>
         {error && (
           <p className="chat-error" role="alert">
@@ -432,7 +432,7 @@ export function App() {
     return (
       <main className="unlock">
         <Mascot state="working" />
-        <h1>Finding your dots…</h1>
+        <h1>Finding your pods…</h1>
         {error && (
           <>
             <p className="chat-error">{error}</p>
@@ -457,7 +457,7 @@ export function App() {
       <nav className="icon-rail" aria-label="Workspace navigation">
         <button
           className="rail-brand"
-          aria-label="OpenDots home"
+          aria-label="Pods home"
           title="Home"
           onClick={() => {
             railView('chat');
@@ -622,7 +622,7 @@ export function App() {
             <i />
             <i />
           </span>
-          OpenDots<span className="wordmark-dot">•</span>
+          Pods<span className="wordmark-dot">•</span>
         </button>
         <button
           className="new-chat nav-item"
@@ -633,10 +633,10 @@ export function App() {
           <span>New chat</span>
         </button>
         <div className="spaces-heading nav-label">
-          DOTS
+          PODS
           <button
             className="icon-button"
-            aria-label="Create Dot"
+            aria-label="Create Pod"
             onClick={() =>
               setDialog({ type: 'dot', spaceId: workspace.spaces[0].id })
             }
@@ -644,7 +644,7 @@ export function App() {
             <Plus size={14} />
           </button>
         </div>
-        <nav className="dots-nav" aria-label="Dots">
+        <nav className="dots-nav" aria-label="Pods">
           {workspace.dots.map((item) => (
             <div className="dot-nav-row" key={item.id}>
               <button
@@ -735,7 +735,7 @@ export function App() {
                 ? workspace.spaces.find((space) => space.id === spaceId)?.name
                 : view === 'documents'
                   ? 'Library'
-                  : 'Dots'}
+                  : 'Pods'}
             </span>
             <span>/</span>
             <strong>
@@ -763,7 +763,7 @@ export function App() {
             <button
               className="pause-button"
               aria-label={
-                state.settings.paused ? 'Resume all Dots' : 'Pause all Dots'
+                state.settings.paused ? 'Resume all Pods' : 'Pause all Pods'
               }
               onClick={() =>
                 void mutate('/settings', 'PATCH', {
@@ -798,7 +798,7 @@ export function App() {
         )}
         {state.settings.paused && (
           <div className="notice">
-            All Dots are paused. Active compute stops and scheduled tasks wait.
+            All Pods are paused. Active compute stops and scheduled tasks wait.
           </div>
         )}
         {view === 'space' ? (
@@ -927,10 +927,10 @@ export function App() {
                         <Settings2 size={20} />
                       </span>
                       <div>
-                        <strong>Connect your Dot</strong>
+                        <strong>Connect your Pod</strong>
                         <p>
                           Connect your model and conversation service in
-                          Settings to start chatting. Your Spaces and Dot
+                          Settings to start chatting. Your Spaces and Pod
                           preferences are ready to use.
                         </p>
                         <a
@@ -1030,7 +1030,7 @@ export function App() {
                 </h1>
                 <p>
                   {view === 'memories'
-                    ? 'What you share with every Dot, and the preferences each Dot has learned about you.'
+                    ? 'What you share with every Pod, and the preferences each Pod has learned about you.'
                     : 'Scheduled turns run on the server in their original conversation.'}
                 </p>
               </div>
@@ -1048,7 +1048,7 @@ export function App() {
               <>
                 <div className="memory-section-heading">
                   <div>
-                    <h2>About me, shared with every Dot</h2>
+                    <h2>About me, shared with every Pod</h2>
                     <p className="muted">
                       Preferences and context you write yourself.
                     </p>
@@ -1062,7 +1062,7 @@ export function App() {
                       <div>
                         <small>
                           {state.settings.memoryAllowed
-                            ? 'Available to permitted Dots'
+                            ? 'Available to permitted Pods'
                             : 'Memory use disabled'}
                         </small>
                         <button

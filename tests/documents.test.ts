@@ -68,7 +68,7 @@ it('revokes access when grants, Space links or Space membership change', async (
   });
   expect(f.workspace.documents.canRead(f.second.id, spaced)).toBe(false);
   await expect(f.library.read(f.second.id, spaced)).rejects.toThrow(
-    /not shared with this Dot/,
+    /not shared with this Pod/,
   );
 });
 

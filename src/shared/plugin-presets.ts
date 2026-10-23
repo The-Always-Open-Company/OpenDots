@@ -33,7 +33,7 @@ export const PLUGIN_PRESETS: PluginPreset[] = [
     group: 'native',
     kind: 'google-calendar',
     summary:
-      'Read and schedule events. OpenDots limits which calendars and attendees a Dot may use.',
+      'Read and schedule events. Pods limits which calendars and attendees a Pod may use.',
     authMode: 'oauth',
     defaultId: 'google-calendar',
     scopeSets: [
@@ -45,7 +45,7 @@ export const PLUGIN_PRESETS: PluginPreset[] = [
       'Configure the OAuth consent screen and add the scopes you choose below.',
       'Create an OAuth client of type Web application.',
       'Add the redirect URI shown below to the client, then paste its id and secret here.',
-      'Save, then Connect to sign in with the Google account the Dots should use.',
+      'Save, then Connect to sign in with the Google account the Pods should use.',
     ],
     docsUrl:
       'https://developers.google.com/workspace/calendar/api/quickstart/js',
@@ -65,9 +65,9 @@ export const PLUGIN_PRESETS: PluginPreset[] = [
     ],
     setup: [
       'In Linear, open Settings, then Security & access, and create a dedicated API key.',
-      'Give the key only the permissions and teams the Dots need. A Read key keeps them read-only.',
-      'Choose the read-only endpoint for Dots that should never change anything.',
-      'Paste the key here. To give some Dots write access, add a second Linear plugin with its own key.',
+      'Give the key only the permissions and teams the Pods need. A Read key keeps them read-only.',
+      'Choose the read-only endpoint for Pods that should never change anything.',
+      'Paste the key here. To give some Pods write access, add a second Linear plugin with its own key.',
     ],
     docsUrl: 'https://linear.app/docs/mcp',
   },
@@ -82,9 +82,9 @@ export const PLUGIN_PRESETS: PluginPreset[] = [
     defaultId: 'zoho',
     setup: [
       'Sign in at mcp.zoho.com, or the domain for your region (.eu, .in, .com.au or .jp).',
-      'Create an MCP server and add only the tools the Dots should have.',
-      'Under Connection, choose Authorization via Connection and authorize it, so Dots can work without a browser.',
-      'Copy the server URL from Connect and paste it here. It contains an API key, so OpenDots stores it encrypted.',
+      'Create an MCP server and add only the tools the Pods should have.',
+      'Under Connection, choose Authorization via Connection and authorize it, so Pods can work without a browser.',
+      'Copy the server URL from Connect and paste it here. It contains an API key, so Pods stores it encrypted.',
       'If the URL leaks, use Regenerate API Key in Zoho and paste the new one.',
     ],
     docsUrl:

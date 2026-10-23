@@ -232,7 +232,7 @@ const settleHandoffs = (id?: string) => {
   try {
     handoffs.sweep(id);
   } catch {
-    console.error('Could not start a document sent to a Dot.');
+    console.error('Could not start a document sent to a Pod.');
   }
 };
 workspace.documents.onReady = (id) => {
@@ -326,14 +326,14 @@ const work = new WorkRunner(
         action,
         outcome,
       ).catch(() =>
-        console.error('Could not tell the Dot how an approved action went.'),
+        console.error('Could not tell the Pod how an approved action went.'),
       );
   },
 );
 runner.attachWork(work);
 if (config.slackChannel)
   console.warn(
-    'Slack settings are ignored: Slack ran on CopilotKit Intelligence Channels, which OpenDots no longer uses.',
+    'Slack settings are ignored: Slack ran on CopilotKit Intelligence Channels, which Pods no longer uses.',
   );
 const app = createApp({
   store,
@@ -363,7 +363,7 @@ app.get('/api/*', (c) => c.json({ error: 'Not found.' }, 404));
 app.use('/*', serveStatic({ root: './dist/client' }));
 app.get('*', serveStatic({ path: './dist/client/index.html' }));
 const server = serve({ fetch: app.fetch, hostname: host, port }, (info) => {
-  console.log(`OpenDots template listening on http://${host}:${info.port}`);
+  console.log(`Pods template listening on http://${host}:${info.port}`);
   runner.start();
   ingestor?.start();
   settleHandoffs();

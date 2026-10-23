@@ -15,7 +15,7 @@ import type {
 
 export type Claim = Task & { lease: string };
 const defaults: Settings = {
-  name: 'Dot',
+  name: 'Pod',
   paused: false,
   researchAllowed: true,
   memoryAllowed: true,

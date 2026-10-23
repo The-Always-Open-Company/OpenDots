@@ -103,7 +103,7 @@ export class VoiceService {
     const call = this.platform.workspace.call(id);
     if (call.endedAt) throw new Error('This call has ended.');
     if (this.platform.store.settings().paused)
-      throw new Error('Dot is paused.');
+      throw new Error('Pod is paused.');
     return call;
   }
   async begin(threadId: string, sdp: string, signal: AbortSignal) {
@@ -119,7 +119,7 @@ export class VoiceService {
           : 'Voice setup required: VOICE_API_KEY.',
       );
     if (this.platform.store.settings().paused)
-      throw new Error('Dot is paused.');
+      throw new Error('Pod is paused.');
     if (!sdp.startsWith('v=0') || !sdp.includes('m=audio'))
       throw new Error('An audio WebRTC SDP offer is required.');
     if (this.jobs.size)
@@ -188,7 +188,7 @@ export class VoiceService {
                 job.live?.append(
                   'thinking',
                   delegationId,
-                  'Dot is paused, so this request was not started.',
+                  'Pod is paused, so this request was not started.',
                 );
                 return;
               }
@@ -364,7 +364,7 @@ export class VoiceService {
           }),
         run: async (task, prompt, model, signal) => {
           if (this.platform.store.settings().paused)
-            throw new Error('Dot is paused.');
+            throw new Error('Pod is paused.');
           if (attempts >= limit)
             throw new Error(
               `This call reached its limit of ${limit} delegated turns. Start another call to continue.`,
@@ -455,7 +455,7 @@ export class VoiceService {
       this.platform.services.notifications?.publish({
         kind: 'work_failed',
         dotId,
-        title: `${dot?.name ?? 'Dot'} could not finish "${record.label}"`,
+        title: `${dot?.name ?? 'Pod'} could not finish "${record.label}"`,
         body: text,
         threadId: record.parentThreadId,
       });
@@ -537,6 +537,6 @@ export class VoiceService {
     for (const id of this.jobs.keys())
       void this.expire(id, 'Call stopped because the workspace was paused.');
     for (const scheduler of this.schedulers.values())
-      scheduler.stopAll('Dot was paused.');
+      scheduler.stopAll('Pod was paused.');
   }
 }

@@ -114,7 +114,7 @@ export class WorkspaceStore {
       );
       this.createDot(
         space.id,
-        'Dot',
+        'Pod',
         'Be thoughtful, practical, and concise. Help the user think clearly and follow through.',
         true,
         true,
@@ -239,7 +239,7 @@ export class WorkspaceStore {
     },
   ): Dot {
     const current = this.dot(id);
-    if (!current) throw new Error('Dot not found.');
+    if (!current) throw new Error('Pod not found.');
     const defaultSpace = patch.spaceId ?? current.spaceId;
     const spaceIds = patch.spaceIds ?? current.spaceIds;
     this.validateSpaceAccess(defaultSpace, spaceIds);
@@ -301,7 +301,7 @@ export class WorkspaceStore {
     title: string,
     kind: ThreadKind = 'chat',
   ): Conversation {
-    if (!this.dot(dotId)) throw new Error('Dot not found.');
+    if (!this.dot(dotId)) throw new Error('Pod not found.');
     const value: Conversation = {
       id,
       dotId,
@@ -324,7 +324,7 @@ export class WorkspaceStore {
       )
       .get(id, this.ownerId) as unknown as Conversation | undefined;
     if (!thread || (dotId && thread.dotId !== dotId))
-      throw new Error('Conversation does not belong to this Dot and owner.');
+      throw new Error('Conversation does not belong to this Pod and owner.');
     return thread;
   }
   threadKind(id: string): ThreadKind {
@@ -468,7 +468,7 @@ export class WorkspaceStore {
       .get(fromDotId, toDotId);
     if (typeof existing?.threadId === 'string') return existing.threadId;
     const from = this.dot(fromDotId);
-    if (!from) throw new Error('Dot not found.');
+    if (!from) throw new Error('Pod not found.');
     const id = randomUUID();
     this.db.exec('BEGIN');
     try {

@@ -727,7 +727,7 @@ it('searches through the pipeline and opens related passages only when readable'
   expect(wide.text).toContain('Holiday allowance');
   expect(wide.text).toContain('# Expenses');
   await expect(run('read_passage', { ref: `${secret}#0` })).rejects.toThrow(
-    /not shared with this Dot/,
+    /not shared with this Pod/,
   );
   await expect(run('read_passage', { ref: 'not-a-ref' })).rejects.toThrow(
     /not found/,

@@ -20,7 +20,7 @@ const labels: Record<string, string> = {
   list_notes: 'Reading notes',
   update_note: 'Updating a note',
   forget: 'Forgetting a note',
-  ask_dot: 'Asking another Dot',
+  ask_dot: 'Asking another Pod',
   load_skill: 'Loading a skill',
   list_work: 'Checking objectives',
   read_work: 'Reading an objective',

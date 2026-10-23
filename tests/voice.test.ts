@@ -1332,7 +1332,7 @@ it('closes gracefully on end and keeps the server transcript', async () => {
   socket.emit({ type: 'session.closed', reason: 'close_requested' });
   const ended = await ending;
   expect(ended.status).toBe('ended');
-  expect(ended.transcript).toBe('You: Hello\nDot: Hi there');
+  expect(ended.transcript).toBe('You: Hello\nPod: Hi there');
   expect(ended.error).toBeNull();
   expect(
     f.transport.mock.calls.some(([url]) => String(url).endsWith('/hangup')),

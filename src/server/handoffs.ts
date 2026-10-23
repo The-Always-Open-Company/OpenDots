@@ -51,7 +51,7 @@ export class HandoffService {
 
   create(input: HandoffInput): HandoffResult {
     const dot = this.workspace.dot(input.dotId);
-    if (!dot) throw new HandoffError('Dot not found.', 404);
+    if (!dot) throw new HandoffError('Pod not found.', 404);
     const note = input.note?.trim().slice(0, 1000) || undefined;
     if (input.target.kind === 'page') {
       const { spaceId, pageId } = input.target;

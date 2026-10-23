@@ -146,7 +146,7 @@ export function createApp({
         !timingSafeEqual(expected, supplied)
       )
         return c.json(
-          { error: 'Enter your owner access token to unlock OpenDots.' },
+          { error: 'Enter your owner access token to unlock Pods.' },
           401,
         );
     }
@@ -385,7 +385,7 @@ export function createApp({
       runner.abortAll();
     if (settings.paused) {
       voice?.abortAll();
-      platform?.chatTasks.stopAll('Dot was paused.');
+      platform?.chatTasks.stopAll('Pod was paused.');
     } else void voice?.resumePending();
     return c.json(settings);
   });

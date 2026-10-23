@@ -74,7 +74,7 @@ export function pageTools(access: ReturnType<typeof pageAccess>) {
   return [
     defineTool({
       name: 'list_authorized_spaces',
-      description: 'List Spaces this Dot has permission to use.',
+      description: 'List Spaces this Pod has permission to use.',
       parameters: z.object({}),
       execute: async () => access.spaces(),
     }),

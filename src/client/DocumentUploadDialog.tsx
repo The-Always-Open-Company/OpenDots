@@ -32,12 +32,12 @@ export function AccessFields({
   return (
     <>
       <fieldset className="space-access-fields">
-        <legend>Which Dots can read it?</legend>
+        <legend>Which Pods can read it?</legend>
         {(
           [
-            ['none', 'No Dots', 'Only through linked Spaces, if any.'],
-            ['dots', 'Specific Dots', 'Choose below.'],
-            ['all', 'All Dots', 'Includes Dots you create later.'],
+            ['none', 'No Pods', 'Only through linked Spaces, if any.'],
+            ['dots', 'Specific Pods', 'Choose below.'],
+            ['all', 'All Pods', 'Includes Pods you create later.'],
           ] as const
         ).map(([value, label, hint]) => (
           <label className="permission-row" key={value}>
@@ -70,7 +70,7 @@ export function AccessFields({
       <fieldset className="space-access-fields">
         <legend>Spaces</legend>
         <p className="muted">
-          Dots that work in a linked Space can read it too.
+          Pods that work in a linked Space can read it too.
         </p>
         {workspace.spaces.map((space) => (
           <label className="permission-row" key={space.id}>
@@ -163,7 +163,7 @@ export function DocumentUploadDialog({
       [
         uploadError,
         unsent.length
-          ? `Could not send ${unsent.join(', ')} to ${recipient?.name}; use Send to Dot on the document.`
+          ? `Could not send ${unsent.join(', ')} to ${recipient?.name}; use Send to Pod on the document.`
           : '',
       ]
         .filter(Boolean)
@@ -239,13 +239,13 @@ export function DocumentUploadDialog({
             onSpaceIds={setSpaceIds}
           />
           <fieldset className="space-access-fields">
-            <legend>Send to a Dot when ready</legend>
+            <legend>Send to a Pod when ready</legend>
             <p className="muted">
-              The Dot reads it in the background once processing finishes, files
+              The Pod reads it in the background once processing finishes, files
               action items, and lets you know when it’s done.
             </p>
             <select
-              aria-label="Dot to send it to"
+              aria-label="Pod to send it to"
               value={sendTo}
               onChange={(event) => setSendTo(event.target.value)}
             >

@@ -45,7 +45,7 @@ export class ComputerService {
   }
   private requireDot(id: string) {
     if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id) || !this.workspace.dot(id))
-      throw new Error('Dot not found.');
+      throw new Error('Pod not found.');
   }
   private allowed(
     id: string,
@@ -171,7 +171,7 @@ export class ComputerService {
       url.hash ||
       (!network && !local)
     )
-      throw new Error('Computer endpoint is not bound to this Dot.');
+      throw new Error('Computer endpoint is not bound to this Pod.');
     return url.origin;
   }
   private async existing(id: string, signal?: AbortSignal) {
@@ -183,7 +183,7 @@ export class ComputerService {
   private async running(id: string, signal?: AbortSignal) {
     const state = await this.existing(id, signal);
     if (!state || state.status !== 'running')
-      throw new Error('Start this Dot’s computer first.');
+      throw new Error('Start this Pod’s computer first.');
     return this.endpoint(id, state);
   }
   async status(id: string): Promise<ComputerStatus> {

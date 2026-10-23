@@ -221,9 +221,9 @@ export function PluginLibrary({ dots }: { dots: Dot[] }) {
           <span className="eyebrow">YOUR WORKSPACE</span>
           <h1>Plugins</h1>
           <p>
-            Connect external systems, then decide what each Dot may do with
+            Connect external systems, then decide what each Pod may do with
             them. Read tools can run on their own; writes ask you first unless
-            you allow them. Limits pin the values a Dot may use.
+            you allow them. Limits pin the values a Pod may use.
           </p>
         </div>
         <div className="skill-heading-actions">
@@ -282,10 +282,10 @@ export function PluginLibrary({ dots }: { dots: Dot[] }) {
         !picking && (
           <div className="large-empty">
             <Plug size={32} />
-            <h2>Give your Dots access to your tools.</h2>
+            <h2>Give your Pods access to your tools.</h2>
             <p>
               Add Google Calendar, Linear, Zoho or any MCP server, then choose
-              what each Dot may do with it.
+              what each Pod may do with it.
             </p>
           </div>
         )
@@ -335,12 +335,12 @@ export function PresetPicker({
     <section className="skill-editor" aria-label="Choose a plugin">
       <h2>Native integrations</h2>
       <p className="muted">
-        Built into OpenDots, with limits it enforces itself.
+        Built into Pods, with limits it enforces itself.
       </p>
       <div className="plugin-presets">{native.map(option)}</div>
       <h2>MCP servers</h2>
       <p className="muted">
-        Hosted by the provider. OpenDots pins their tools and controls access.
+        Hosted by the provider. Pods pins their tools and controls access.
       </p>
       <div className="plugin-presets">
         {mcp.map(option)}
@@ -539,7 +539,7 @@ function PluginForm({
               <code>{`${location.origin}/oauth/callback`}</code>
             </p>
             <label>
-              Calendars Dots may use
+              Calendars Pods may use
               <input
                 value={draft.calendars}
                 placeholder="primary"
@@ -725,7 +725,7 @@ export function PluginCard({
             onClick={() => {
               if (
                 window.confirm(
-                  `Delete ${plugin.name}? Every Dot loses its tools, and watches that poll it stop.`,
+                  `Delete ${plugin.name}? Every Pod loses its tools, and watches that poll it stop.`,
                 )
               )
                 void run(
@@ -746,7 +746,7 @@ export function PluginCard({
               onClick={() => {
                 if (
                   window.confirm(
-                    'Accept the new tool definitions? Dots keep access only to tools that did not change.',
+                    'Accept the new tool definitions? Pods keep access only to tools that did not change.',
                   )
                 )
                   void run(

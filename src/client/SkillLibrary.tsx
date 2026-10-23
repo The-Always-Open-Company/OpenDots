@@ -89,8 +89,8 @@ export function SkillLibrary({ dots }: { dots: Dot[] }) {
           <span className="eyebrow">YOUR WORKSPACE</span>
           <h1>Skills</h1>
           <p>
-            Instructions a Dot loads when a request fits, or when you mention it
-            as @name. Choose which Dots may use each one. Scripts in a skill are
+            Instructions a Pod loads when a request fits, or when you mention it
+            as @name. Choose which Pods may use each one. Scripts in a skill are
             never run.
           </p>
         </div>
@@ -132,7 +132,7 @@ export function SkillLibrary({ dots }: { dots: Dot[] }) {
             Start with frontmatter: a lowercase <code>name</code> using letters,
             numbers, and hyphens, and a one-line <code>description</code> of
             when to use it. The body after the second <code>---</code> is what
-            the Dot reads.
+            the Pod reads.
           </p>
           <textarea
             aria-label="SKILL.md"
@@ -161,9 +161,9 @@ export function SkillLibrary({ dots }: { dots: Dot[] }) {
       ) : !skills.length ? (
         <div className="large-empty">
           <WandSparkles size={32} />
-          <h2>Teach your Dots a way of working.</h2>
+          <h2>Teach your Pods a way of working.</h2>
           <p>
-            Upload a SKILL.md or write a new skill, then turn it on for the Dots
+            Upload a SKILL.md or write a new skill, then turn it on for the Pods
             that should use it.
           </p>
         </div>
@@ -201,7 +201,7 @@ export function SkillLibrary({ dots }: { dots: Dot[] }) {
                     onClick={() => {
                       if (
                         window.confirm(
-                          `Delete the ${skill.name} skill? Dots that use it lose it.`,
+                          `Delete the ${skill.name} skill? Pods that use it lose it.`,
                         )
                       )
                         void run(() =>
@@ -220,7 +220,7 @@ export function SkillLibrary({ dots }: { dots: Dot[] }) {
                 </p>
               )}
               <fieldset className="skill-dots">
-                <legend>Dots that can use it</legend>
+                <legend>Pods that can use it</legend>
                 {dots.map((dot) => {
                   const enabled = skill.dotIds.includes(dot.id);
                   return (

@@ -281,7 +281,7 @@ it.each([
     );
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({
-      error: 'Conversation does not belong to this Dot and owner.',
+      error: 'Conversation does not belong to this Pod and owner.',
     });
   },
 );

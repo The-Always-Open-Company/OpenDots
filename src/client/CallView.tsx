@@ -78,7 +78,7 @@ export function CallView({
           )}
           <p>
             <small>{dot.name}</small>
-            {voice.caption || 'Speak naturally. Your Dot is here with you.'}
+            {voice.caption || 'Speak naturally. Your Pod is here with you.'}
           </p>
         </div>
       )}

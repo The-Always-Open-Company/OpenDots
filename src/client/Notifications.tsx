@@ -162,7 +162,7 @@ export function NotificationPanel({
       {error && <p className="chat-error">{error}</p>}
       {items && !items.length && (
         <p className="muted notification-empty">
-          Nothing yet. Your Dots will let you know here when they finish work,
+          Nothing yet. Your Pods will let you know here when they finish work,
           need your approval, or reply.
         </p>
       )}

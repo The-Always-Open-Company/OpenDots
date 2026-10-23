@@ -55,7 +55,7 @@ export function capabilityRoutes(
     if (!parsed.success)
       return c.json({ error: 'Enter a title and an objective.' }, 400);
     if (platform && !platform.workspace.dot(parsed.data.dotId))
-      return c.json({ error: 'Dot not found.' }, 404);
+      return c.json({ error: 'Pod not found.' }, 404);
     const item = engine.createWorkItem({
       actorId: parsed.data.dotId,
       title: parsed.data.title,
@@ -244,7 +244,7 @@ export function capabilityRoutes(
     if (!parsed.success)
       return c.json({ error: 'Name a skill to enable.' }, 400);
     if (platform && !platform.workspace.dot(c.req.param('id')))
-      return c.json({ error: 'Dot not found.' }, 404);
+      return c.json({ error: 'Pod not found.' }, 404);
     if (!loadSkills(skillsDir).some((skill) => skill.name === parsed.data.name))
       return c.json({ error: 'Skill not found.' }, 404);
     engine.grantSkill(c.req.param('id'), parsed.data.name);
@@ -408,7 +408,7 @@ export function capabilityRoutes(
     )
       return c.json({ error: 'Invalid plugin grant.' }, 400);
     if (platform && !platform.workspace.dot(parsed.data.dotId))
-      return c.json({ error: 'Dot not found.' }, 404);
+      return c.json({ error: 'Pod not found.' }, 404);
     const names = parsed.data.toolNames ?? [parsed.data.toolName!];
     try {
       const modes = names.map((name) =>

@@ -218,7 +218,7 @@ export function ActionItems({
             <span className="library-eyebrow">FOLLOW-UP</span>
             <h1>Action items</h1>
             <p>
-              What you have to do and what others owe you, filed by your Dots
+              What you have to do and what others owe you, filed by your Pods
               from meetings, documents and conversations.
             </p>
           </div>
@@ -427,7 +427,7 @@ export function ActionItems({
                   <p>
                     {filtered
                       ? 'Try a different search or filter.'
-                      : 'Give a Dot meeting notes or a document and it will file the action items it finds.'}
+                      : 'Give a Pod meeting notes or a document and it will file the action items it finds.'}
                   </p>
                 </div>
               )
@@ -673,7 +673,7 @@ function ActionItemPanel({
   const actorName = (actor: string) =>
     actor === 'owner'
       ? 'You'
-      : (workspace.dots.find((dot) => dot.id === actor)?.name ?? 'A Dot');
+      : (workspace.dots.find((dot) => dot.id === actor)?.name ?? 'A Pod');
   const when = (ms: number) =>
     new Date(ms).toLocaleString(undefined, {
       dateStyle: 'medium',

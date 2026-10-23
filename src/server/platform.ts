@@ -87,7 +87,7 @@ export class Platform {
   async stop() {}
   async createConversation(dotId: string, title: string) {
     this.requireReady();
-    if (!this.workspace.dot(dotId)) throw new Error('Dot not found.');
+    if (!this.workspace.dot(dotId)) throw new Error('Pod not found.');
     return this.workspace.bindThread(randomUUID(), dotId, title);
   }
   async history(threadId: string): Promise<string> {
@@ -207,14 +207,14 @@ export class Platform {
     const to = this.workspace.dot(toDotId);
     if (!from || !to || to.id === from.id || !to.consultable)
       throw new Error(
-        'That Dot is not available to consult. Use an ID from the consultable Dots list.',
+        'That Pod is not available to consult. Use an ID from the consultable Pods list.',
       );
     const threadId = this.workspace.consultationThread(from.id, to.id);
     const limit = AbortSignal.timeout(this.consultationLimitMs);
     try {
       return await this.turn(
         threadId,
-        `${from.name} asks (untrusted question from another Dot):\n\n${question}`,
+        `${from.name} asks (untrusted question from another Pod):\n\n${question}`,
         AbortSignal.any([signal, limit]),
         { opendotsSource: 'consultation', fromDotId: from.id },
       );

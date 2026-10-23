@@ -144,7 +144,7 @@ export function decide(
   )
     return {
       effect: 'block',
-      reason: 'A consulted Dot cannot change anything.',
+      reason: 'A consulted Pod cannot change anything.',
     };
   if (RESEARCH_TOOLS.has(toolName) && !snapshot.researchAllowed)
     return { effect: 'block', reason: 'Research permission is disabled.' };
@@ -181,7 +181,7 @@ export function decide(
   if (toolName === 'load_skill') {
     const name = typeof args.name === 'string' ? args.name : '';
     if (!snapshot.skillAllowed(name))
-      return { effect: 'block', reason: 'Skill is not enabled for this Dot.' };
+      return { effect: 'block', reason: 'Skill is not enabled for this Pod.' };
   }
   const rule = matching(snapshot.rules, ctx.actorId, toolName);
   if (rule?.mode === 'block')

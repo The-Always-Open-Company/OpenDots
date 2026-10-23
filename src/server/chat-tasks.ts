@@ -75,7 +75,7 @@ export class ChatTaskService implements ChatTaskStarter {
           earlier: earlierResults(task),
         }),
       run: async (task, prompt, model, signal) => {
-        if (platform.store.settings().paused) throw new Error('Dot is paused.');
+        if (platform.store.settings().paused) throw new Error('Pod is paused.');
         return runChildTurn(
           workspace,
           () =>
@@ -172,7 +172,7 @@ export class ChatTaskService implements ChatTaskStarter {
       this.platform.services.notifications?.publish({
         kind: 'reply',
         dotId: task.dotId,
-        title: `${dot?.name ?? 'Dot'} finished "${task.label}"`,
+        title: `${dot?.name ?? 'Pod'} finished "${task.label}"`,
         body: report.needsOwner
           ? `${report.needsOwner} ${report.spoken || report.facts}`
           : report.spoken || report.facts,

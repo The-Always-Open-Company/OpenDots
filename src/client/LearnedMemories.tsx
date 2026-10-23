@@ -51,15 +51,15 @@ export function LearnedMemories({
     <section className="memory-section" aria-labelledby="learned-heading">
       <div className="memory-section-heading">
         <div>
-          <h2 id="learned-heading">Preferences each Dot learned</h2>
+          <h2 id="learned-heading">Preferences each Pod learned</h2>
           <p className="muted">
-            Preferences this Dot has learned about you. Only that Dot uses them;
-            other Dots can ask it with ask_dot.
+            Preferences this Pod has learned about you. Only that Pod uses them;
+            other Pods can ask it with ask_dot.
           </p>
         </div>
         {dots.length > 1 && (
           <label className="memory-dot-picker">
-            <span className="sr-only">Dot</span>
+            <span className="sr-only">Pod</span>
             <select
               aria-label="Show memories learned by"
               value={dot?.id}

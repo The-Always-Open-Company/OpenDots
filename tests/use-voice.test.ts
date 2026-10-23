@@ -190,7 +190,7 @@ it('saves the GPT-Live transcript when the session closes', async () => {
   await receive({ type: 'session.output_transcript.delta', delta: 'Hi' });
   await receive({ type: 'session.closed', reason: 'remote_hangup' });
   const [, , body] = ends().at(-1)!;
-  expect(body.transcript).toBe('You: Hello\nDot: Hi');
+  expect(body.transcript).toBe('You: Hello\nPod: Hi');
   expect(voice.status).toBe('idle');
 });
 it('clears disconnect timers on unmount', async () => {

@@ -57,7 +57,7 @@ it('exports canonical user/assistant text and rejects empty or oversized history
     { id: 't', role: 'tool', toolCallId: 'x', content: 'Secret tool response' },
   ]);
   const page = await service.saveConversation('thread', 'Saved', null);
-  expect(page.content).toBe('## You\n\nQuestion\n\n## Dot\n\nAnswer');
+  expect(page.content).toBe('## You\n\nQuestion\n\n## Pod\n\nAnswer');
   expect(page.sourceThreadId).toBe('thread');
   ws.bindThread('long', dot.id, 'Long');
   seed(ws, 'long', [

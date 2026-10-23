@@ -134,7 +134,7 @@ export function notifyWork(
   notifications: NotificationService,
 ) {
   const dotName = (id: string | null | undefined) =>
-    (id && workspace.dot(id)?.name) || 'Your Dot';
+    (id && workspace.dot(id)?.name) || 'Your Pod';
   const handle = (
     type: string,
     fields: {

@@ -111,8 +111,8 @@ export function DocumentLibrary({
             <span className="library-eyebrow">LIBRARY</span>
             <h1>Documents</h1>
             <p>
-              Files your Dots can search and cite. Share each one with every
-              Dot, specific Dots, or the Dots in linked Spaces.
+              Files your Pods can search and cite. Share each one with every
+              Pod, specific Pods, or the Pods in linked Spaces.
             </p>
           </div>
           <button
@@ -162,11 +162,11 @@ export function DocumentLibrary({
         </div>
         <div className="document-filters">
           <select
-            aria-label="Filter by Dot"
+            aria-label="Filter by Pod"
             value={dotId}
             onChange={(event) => setDotId(event.target.value)}
           >
-            <option value="">Any Dot</option>
+            <option value="">Any Pod</option>
             {workspace.dots.map((dot) => (
               <option key={dot.id} value={dot.id}>
                 Readable by {dot.name}
@@ -277,7 +277,7 @@ export function DocumentCard({
     document.spaceIds.includes(space.id),
   );
   const access = document.allDots
-    ? 'All Dots'
+    ? 'All Pods'
     : document.dotIds.length
       ? workspace.dots
           .filter((dot) => document.dotIds.includes(dot.id))
@@ -285,7 +285,7 @@ export function DocumentCard({
           .join(', ')
       : spaces.length
         ? 'Space members'
-        : 'No Dots';
+        : 'No Pods';
   return (
     <button className="library-page-card" onClick={onOpen}>
       <span className="library-page-icon">

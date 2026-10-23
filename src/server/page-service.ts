@@ -60,7 +60,7 @@ export class PageService {
           .join('\n');
       }
       if (text.trim())
-        chunks.push(`## ${message.role === 'user' ? 'You' : 'Dot'}\n\n${text}`);
+        chunks.push(`## ${message.role === 'user' ? 'You' : 'Pod'}\n\n${text}`);
     }
     const content = chunks.join('\n\n');
     if (!content)

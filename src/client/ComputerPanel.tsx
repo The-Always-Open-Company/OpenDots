@@ -191,16 +191,16 @@ export function ComputerPanel({ dot }: { dot: Dot }) {
               </button>
             )}
             <span>
-              {busy ? 'Working…' : human ? 'You have control' : 'Dot control'}
+              {busy ? 'Working…' : human ? 'You have control' : 'Pod control'}
             </span>
           </div>
           {!status.configured && (
             <div className="computer-setup">
               <h3>Connect a computer service</h3>
               <p>
-                This Dot does not have a computer service configured. Configure
+                This Pod does not have a computer service configured. Configure
                 the server’s computer service URL and token, then restart. Each
-                Dot gets its own browser and workspace.
+                Pod gets its own browser and workspace.
               </p>
               <a
                 href="https://github.com/CopilotKit/OpenDots/blob/main/docs/COMPUTERS.md"
@@ -467,7 +467,7 @@ export function ComputerPanel({ dot }: { dot: Dot }) {
                 hidden={tab !== 'Files'}
               >
                 <summary>Workspace files</summary>
-                <p>Paths are relative to this Dot’s persistent workspace.</p>
+                <p>Paths are relative to this Pod’s persistent workspace.</p>
                 <label>
                   Path
                   <input
@@ -546,7 +546,7 @@ export function ComputerPanel({ dot }: { dot: Dot }) {
               >
                 <summary>Terminal</summary>
                 <p>
-                  Runs inside this Dot’s computer. Commands stop after 30
+                  Runs inside this Pod’s computer. Commands stop after 30
                   seconds.
                 </p>
                 <form
@@ -683,7 +683,7 @@ export function ComputerPanel({ dot }: { dot: Dot }) {
               </button>
             </div>
             <p className="computer-hint">
-              Stopping retains this Dot’s workspace files. Browser sessions may
+              Stopping retains this Pod’s workspace files. Browser sessions may
               require signing in again.
             </p>
           </details>

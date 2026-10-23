@@ -154,7 +154,7 @@ it('rejects foreign targets, nonexistent Dots, traversal, unexpected inputs and 
   await expect(f.service.action(f.id, 'read', {})).rejects.toThrow('endpoint');
   expect(f.calls).toHaveLength(1);
   await expect(f.service.action('missing', 'read', {})).rejects.toThrow(
-    'Dot not found',
+    'Pod not found',
   );
   for (const path of [
     '../secret',

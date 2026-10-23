@@ -14,7 +14,7 @@ export function pageRoutes(platform: Platform) {
     if (!receipt) return c.json(null);
     if (!platform.workspace.canAccessSpace(thread.dotId, receipt.spaceId))
       return c.json(
-        { error: 'This Dot no longer has access to the selected Space.' },
+        { error: 'This Pod no longer has access to the selected Space.' },
         403,
       );
     return c.json({
@@ -31,7 +31,7 @@ export function pageRoutes(platform: Platform) {
     const thread = platform.workspace.requireThread(c.req.param('id'));
     if (!platform.workspace.canAccessSpace(thread.dotId, data.data.spaceId))
       return c.json(
-        { error: 'This Dot no longer has access to the selected Space.' },
+        { error: 'This Pod no longer has access to the selected Space.' },
         403,
       );
     const { spaceId, toolCallId, ...draft } = data.data;
@@ -132,7 +132,7 @@ export function pageRoutes(platform: Platform) {
       : error instanceof PageError
         ? c.json({ error: error.message }, error.status)
         : error.message ===
-            'Conversation does not belong to this Dot and owner.'
+            'Conversation does not belong to this Pod and owner.'
           ? c.json({ error: error.message }, 404)
           : c.json(
               {

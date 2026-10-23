@@ -1,6 +1,6 @@
 <div align="center">
 
-# OpenDots
+# Pods
 
 ### Always-on AI coworkers that move between text and calls.
 
@@ -12,11 +12,11 @@ Built with [CopilotKit](https://github.com/CopilotKit/CopilotKit) and [AG-UI](ht
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 ![Alpha](https://img.shields.io/badge/status-alpha-orange.svg)
 
-<a href="https://trendshift.io/repositories/275323" target="_blank"><img src="https://trendshift.io/api/badge/trendshift/repositories/275323/daily?language=TypeScript" alt="CopilotKit/OpenDots | Trendshift #2 TypeScript Repository Of The Day" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/275323" target="_blank"><img src="https://trendshift.io/api/badge/trendshift/repositories/275323/daily?language=TypeScript" alt="CopilotKit/Pods | Trendshift #2 TypeScript Repository Of The Day" width="250" height="55"/></a>
 
-Host OpenDots on your own infrastructure. Conversations are stored in the app's own SQLite database and answered by any OpenAI-compatible model; no CopilotKit account or cloud service is involved, and no usage telemetry is sent. Clone this template and customize it however you want.
+Host Pods on your own infrastructure. Conversations are stored in the app's own SQLite database and answered by any OpenAI-compatible model; no CopilotKit account or cloud service is involved, and no usage telemetry is sent. Clone this template and customize it however you want.
 
-[**Building on OpenDots? Meet with the CopilotKit team →**](https://www.copilotkit.ai/talk-to-an-engineer?ref=opendots_readme)
+[**Building on Pods? Meet with the CopilotKit team →**](https://www.copilotkit.ai/talk-to-an-engineer?ref=opendots_readme)
 
 </div>
 
@@ -36,15 +36,15 @@ _Ask → browse → approve → save. A live computer view and a human review ca
 
 ## Overview
 
-OpenDots is a starting point for building your own agent workspace. Clone it, define your Dots, connect your services, and adapt the interface and tools to your needs.
+Pods is a starting point for building your own agent workspace. Clone it, define your Pods, connect your services, and adapt the interface and tools to your needs.
 
 **A template, not a hosted product.** You run the application and configure its infrastructure. The template is in early development; the Features section below describes what's included and distinguishes local verification from connected-service testing.
 
 ### Spaces
 
-A Space is a home for working documents. Dots appear separately in navigation and can be granted access to multiple Spaces in their settings. Each Dot has a default destination for saved pages; existing installations retain their original Space access. Browse pages in a searchable library, switch between grid and list views, and organize documents as nested subpages. Open a page in a focused visual editor with formatting, slash commands, and undo/redo. Write directly, save a conversation as a page, or ask a specialist to create and revise content.
+A Space is a home for working documents. Pods appear separately in navigation and can be granted access to multiple Spaces in their settings. Each Pod has a default destination for saved pages; existing installations retain their original Space access. Browse pages in a searchable library, switch between grid and list views, and organize documents as nested subpages. Open a page in a focused visual editor with formatting, slash commands, and undo/redo. Write directly, save a conversation as a page, or ask a specialist to create and revise content.
 
-Pages stay in the local workspace database, alongside their conversations, with a separate conversation for each page and specialist. Page links connect the document workspace to Dot chat. Manual editing works before you configure conversation services. Autosave reports its progress, failed saves retain your draft, and revision checks prevent stale edits from overwriting newer content. Markdown source mode remains available.
+Pages stay in the local workspace database, alongside their conversations, with a separate conversation for each page and specialist. Page links connect the document workspace to Pod chat. Manual editing works before you configure conversation services. Autosave reports its progress, failed saves retain your draft, and revision checks prevent stale edits from overwriting newer content. Markdown source mode remains available.
 
 <div align="center">
 
@@ -56,21 +56,21 @@ https://github.com/user-attachments/assets/d20c3405-4339-49e7-a799-43298728015c
 
 </div>
 
-_Open a Space, navigate to its launch brief, ask Scout about the saved page, and continue in Dot chat. This recording uses live page chat and example launch content._
+_Open a Space, navigate to its launch brief, ask Scout about the saved page, and continue in Pod chat. This recording uses live page chat and example launch content._
 
-### Specialist Dots
+### Specialist Pods
 
-Give each Dot a name, role, instructions, and permitted tools. A researcher can investigate a topic; a writer can turn findings into a draft. Inspect their work and control what they can do.
+Give each Pod a name, role, instructions, and permitted tools. A researcher can investigate a topic; a writer can turn findings into a draft. Inspect their work and control what they can do.
 
-Each Dot learns durable facts from its own conversations and recalls the relevant ones before answering. You can review, edit and delete what each Dot has learned on the Memory screen, next to the **About me** preferences every Dot shares. Dots can ask each other questions with `ask_dot`; each Dot can opt out of being consulted.
+Each Pod learns durable facts from its own conversations and recalls the relevant ones before answering. You can review, edit and delete what each Pod has learned on the Memory screen, next to the **About me** preferences every Pod shares. Pods can ask each other questions with `ask_dot`; each Pod can opt out of being consulted.
 
 ### Documents
 
-Upload files to a document library that Dots can search and cite. Share each document with every Dot, specific Dots, or the Dots working in a linked Space; Spaces show their linked documents beside their pages. Files attached in chat are saved to the library and shared with that Dot. Conversion runs locally with [docling-serve](https://github.com/docling-project/docling-serve). Indexing gives each document a summary and tags, gives each passage a sentence of context, keywords and names, and links related passages across documents. Before each reply, the Dot's question is expanded into several keyword and semantic searches, the results are fused and reranked by a model, and the best passages arrive with their neighbouring text, page numbers and related passages (see [How Dots search](docs/SETUP.md#how-dots-search)).
+Upload files to a document library that Pods can search and cite. Share each document with every Pod, specific Pods, or the Pods working in a linked Space; Spaces show their linked documents beside their pages. Files attached in chat are saved to the library and shared with that Pod. Conversion runs locally with [docling-serve](https://github.com/docling-project/docling-serve). Indexing gives each document a summary and tags, gives each passage a sentence of context, keywords and names, and links related passages across documents. Before each reply, the Pod's question is expanded into several keyword and semantic searches, the results are fused and reranked by a model, and the best passages arrive with their neighbouring text, page numbers and related passages (see [How Pods search](docs/SETUP.md#how-pods-search)).
 
-### Dot computers
+### Pod computers
 
-Each Dot can have its own computer, using [OpenBot](https://github.com/CopilotKit/OpenBot)'s container supervisor and computer service. Its browser profile and workspace files persist across stop/start. The Computer panel exposes browser control, human takeover, files, terminal output, and activity, with browser, file, and shell permissions set per Dot. The application keeps service credentials on the server and derives a different computer credential for each Dot.
+Each Pod can have its own computer, using [OpenBot](https://github.com/CopilotKit/OpenBot)'s container supervisor and computer service. Its browser profile and workspace files persist across stop/start. The Computer panel exposes browser control, human takeover, files, terminal output, and activity, with browser, file, and shell permissions set per Pod. The application keeps service credentials on the server and derives a different computer credential for each Pod.
 
 See [Computer setup](docs/COMPUTERS.md) to build the pinned services and connect your deployment. Computer tools require those services; an unconfigured template does not execute commands on your host.
 
@@ -88,15 +88,15 @@ _Ask Scout to open a website, summarize it, save notes, and verify the file. Eve
 
 ### Review before saving
 
-Ask a Dot to show a draft before saving it. A CopilotKit human-in-the-loop card pauses the conversation for **Approve & save** or **Decline**. Approval creates the page in an authorized Space and returns a link; retries with the same draft recover that saved page. A changed draft needs a new review. The agent continues after your decision.
+Ask a Pod to show a draft before saving it. A CopilotKit human-in-the-loop card pauses the conversation for **Approve & save** or **Decline**. Approval creates the page in an authorized Space and returns a link; retries with the same draft recover that saved page. A changed draft needs a new review. The agent continues after your decision.
 
 ### Text and calls
 
-A continuous conversation keeps the Dot's avatar and status above the messages, with text and call controls close at hand. Work updates, source links, and call receipts appear in the timeline; a side panel shows results or the agent's computer.
+A continuous conversation keeps the Pod's avatar and status above the messages, with text and call controls close at hand. Work updates, source links, and call receipts appear in the timeline; a side panel shows results or the agent's computer.
 
-Calls pair GPT-Live speech with the Dot's own agent, so the conversation can continue while longer work runs. The voice model delegates work to the server, which answers it with the same conversation, tools and permissions as text, optionally on a separate, faster task model. The call screen includes a live timer, separate user and Dot captions, microphone mute, speaker mute, and a minimized view for continuing in chat. Voice needs separate provider configuration.
+Calls pair GPT-Live speech with the Pod's own agent, so the conversation can continue while longer work runs. The voice model delegates work to the server, which answers it with the same conversation, tools and permissions as text, optionally on a separate, faster task model. The call screen includes a live timer, separate user and Pod captions, microphone mute, speaker mute, and a minimized view for continuing in chat. Voice needs separate provider configuration.
 
-Voice notes are the lighter option: record up to 5 minutes from the message box, listen back, and send. The note is transcribed and sent as a normal message with the same tools, permissions and approvals, after you review the text or straight away if you prefer. Each Dot can answer voice notes in text only or also read its reply aloud. OpenDots keeps only the transcript, not the audio (see [Voice notes](docs/SETUP.md#voice-notes)).
+Voice notes are the lighter option: record up to 5 minutes from the message box, listen back, and send. The note is transcribed and sent as a normal message with the same tools, permissions and approvals, after you review the text or straight away if you prefer. Each Pod can answer voice notes in text only or also read its reply aloud. Pods keeps only the transcript, not the audio (see [Voice notes](docs/SETUP.md#voice-notes)).
 
 <div align="center">
 
@@ -126,10 +126,10 @@ Long conversations stay within a configurable context budget (`CONTEXT_MAX_TOKEN
 
 ```mermaid
 flowchart TB
-  Web["Web app: pages, Spaces, Dots, chat"] -->|AG-UI over SSE| Runtime[CopilotKit runtime]
+  Web["Web app: pages, Spaces, Pods, chat"] -->|AG-UI over SSE| Runtime[CopilotKit runtime]
   Runtime --> ThreadRunner[Local thread runner]
   ThreadRunner --> Agents[Specialist compute agents]
-  ThreadRunner <--> DB[(SQLite: conversations, pages, Spaces, Dots, documents, access)]
+  ThreadRunner <--> DB[(SQLite: conversations, pages, Spaces, Pods, documents, access)]
   Agents --> Search[(Postgres + pgvector: learned memories, document passages)]
   Web -->|uploads| Docling[docling-serve conversion]
   Docling --> Search
@@ -146,7 +146,7 @@ flowchart TB
 
 You configure the model provider for your deployment; calls also need a speech provider. Credentials stay on the server. Missing configuration should produce a clear setup state, and test fixtures should remain visibly separate from live integrations.
 
-[OpenMuse](https://github.com/CopilotKit/OpenMuse) and [OpenBot](https://github.com/CopilotKit/openbot) are code references for persistent work, agent computers, and execution controls. OpenDots can be adapted to your own workflows and deployment choices.
+[OpenMuse](https://github.com/CopilotKit/OpenMuse) and [OpenBot](https://github.com/CopilotKit/openbot) are code references for persistent work, agent computers, and execution controls. Pods can be adapted to your own workflows and deployment choices.
 
 ## Get started
 
@@ -160,9 +160,9 @@ cp .env.example .env
 npm run dev
 ```
 
-Open **http://127.0.0.1:5173**. You can create Spaces, write pages, and configure Dots before connecting services. To start chatting, add `OPENAI_API_KEY` and `OPENAI_MODEL` to `.env` and restart `npm run dev`. Learned memory and documents also need Postgres and docling-serve; `docker compose -f compose.dev.yml up -d` runs both locally (see [Setup](docs/SETUP.md#memory-and-documents)).
+Open **http://127.0.0.1:5173**. You can create Spaces, write pages, and configure Pods before connecting services. To start chatting, add `OPENAI_API_KEY` and `OPENAI_MODEL` to `.env` and restart `npm run dev`. Learned memory and documents also need Postgres and docling-serve; `docker compose -f compose.dev.yml up -d` runs both locally (see [Setup](docs/SETUP.md#memory-and-documents)).
 
-Do not run `copilotkit onboard` in this folder. OpenDots already contains its CopilotKit integration, and onboarding adds a second, generic one.
+Do not run `copilotkit onboard` in this folder. Pods already contains its CopilotKit integration, and onboarding adds a second, generic one.
 
 See [Setup](docs/SETUP.md) for configuration, calls, the browser service, and Docker.
 
@@ -178,23 +178,23 @@ CopilotKit and mem0 telemetry are switched off in code at startup (`src/server/d
 
 | Area                       | Included                                                                                                                |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Spaces and Specialist Dots | Saved names, role instructions, and per-Dot research and memory permissions                                             |
+| Spaces and Specialist Pods | Saved names, role instructions, and per-Pod research and memory permissions                                             |
 | Pages                      | Searchable library, visual editor, slash commands, autosave, and revision checks                                        |
 | Conversations              | React SDK chat, locally stored history with context compaction, page-specific conversations, and source links           |
 | Calls                      | WebRTC speech, delegated compute, bounded sessions, hangup, and timeline receipts                                       |
 | Background work            | Scheduled server-side turns in their original conversation, with pause and retry controls                               |
 | Browser                    | Separate read-only public-page service with page capture and navigation limits                                          |
-| Dot computers              | Per-Dot browser profiles, files, shell, takeover, permissions, and action records through OpenBot                       |
-| Memory                     | Shared About me preferences, plus per-Dot learned memories you can review, edit and delete                              |
-| Documents                  | Library with per-Dot and per-Space access, local conversion, enriched multi-query search, versions and chat attachments |
-| Dot consultations          | Dots ask each other questions in separate, restricted consultation threads                                              |
+| Pod computers              | Per-Pod browser profiles, files, shell, takeover, permissions, and action records through OpenBot                       |
+| Memory                     | Shared About me preferences, plus per-Pod learned memories you can review, edit and delete                              |
+| Documents                  | Library with per-Pod and per-Space access, local conversion, enriched multi-query search, versions and chat attachments |
+| Pod consultations          | Pods ask each other questions in separate, restricted consultation threads                                              |
 | Deployment                 | Local Node setup and separate application, browser, Postgres and docling-serve containers                               |
 
-Scheduled tasks run in their original conversation. If a worker stops or its lease expires during a run, OpenDots marks that run **Interrupted** and waits for an explicit retry. Review its pages and computer actions, then use **Retry after review** when appropriate. Completed effects may already be present even when a run has no final result.
+Scheduled tasks run in their original conversation. If a worker stops or its lease expires during a run, Pods marks that run **Interrupted** and waits for an explicit retry. Review its pages and computer actions, then use **Retry after review** when appropriate. Completed effects may already be present even when a run has no final result.
 
 Local checks cover setup, persistence, permissions, SDK failure handling, and browser isolation. Automated tests use service fixtures, including runs through the real CopilotKit request handler against the local thread runner. The upstream live verification and [recording notes](docs/demos/README.md) predate this fork's switch from CopilotKit Intelligence to local storage; live model verification of the local storage path is still to be repeated.
 
-This is a single-owner starting point. Shared editing, invitations, and interactive page embeds are not included. Schedules are recurring instructions, not a complete goal or event-trigger system. Specialist Dots have separate roles and conversations and can consult each other one level deep; multi-Dot group conversations are further work.
+This is a single-owner starting point. Shared editing, invitations, and interactive page embeds are not included. Schedules are recurring instructions, not a complete goal or event-trigger system. Specialist Pods have separate roles and conversations and can consult each other one level deep; multi-Pod group conversations are further work.
 
 ### Extending the template
 
@@ -222,8 +222,8 @@ See [Contributing](CONTRIBUTING.md) for development guidance and [Security](SECU
 
 ## Public-web research
 
-Parallel is selected by default in live research and Dot conversations. Ask a topic-only question to discover and read up to five sources, or supply URLs to extract them directly. Sources are saved with their links. A browser worker is not required for this research path; computer tools remain available for interactive work.
+Parallel is selected by default in live research and Pod conversations. Ask a topic-only question to discover and read up to five sources, or supply URLs to extract them directly. Sources are saved with their links. A browser worker is not required for this research path; computer tools remain available for interactive work.
 
-`WEB_SEARCH_PROVIDER=browser` preserves the existing URL-only browser reader, and `WEB_SEARCH_PROVIDER=disabled` disables these research tools. Workspace and Dot research permissions, pause and cancellation controls still apply. Sample research remains fictional and does not contact a provider.
+`WEB_SEARCH_PROVIDER=browser` preserves the existing URL-only browser reader, and `WEB_SEARCH_PROVIDER=disabled` disables these research tools. Workspace and Pod research permissions, pause and cancellation controls still apply. Sample research remains fictional and does not contact a provider.
 
 Queries, requested URLs, a stable session identifier and the research objective are sent to `https://search.parallel.ai/mcp`. Memories and complete conversations are not automatically forwarded to Parallel. Model-selected objectives may still contain context from the conversation. The anonymous service is free for light use with provider-managed limits; set `PARALLEL_API_KEY` on the server for production or higher limits. Provider errors and empty results are reported rather than replaced with invented evidence. See [Parallel Search MCP documentation](https://docs.parallel.ai/integrations/mcp/search-mcp).

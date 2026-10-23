@@ -70,7 +70,7 @@ export function SpaceDocuments({
         </span>
       </div>
       <p className="muted">
-        Every Dot working in {space.name} can search these.
+        Every Pod working in {space.name} can search these.
       </p>
       {(error || actionError) && (
         <p className="chat-error" role="alert">

@@ -77,7 +77,7 @@ export function SendToDot({
           setError('');
         }}
       >
-        <Send size={14} /> Send to Dot
+        <Send size={14} /> Send to Pod
       </button>
       {sent && (
         <span className="send-to-dot-sent" role="status">
@@ -87,7 +87,7 @@ export function SendToDot({
       {open && (
         <form
           className="send-to-dot-popover"
-          aria-label="Send to a Dot"
+          aria-label="Send to a Pod"
           onSubmit={(event) => {
             event.preventDefault();
             void submit();
@@ -96,11 +96,11 @@ export function SendToDot({
           {dots.length ? (
             <>
               <p className="muted">
-                The Dot reads it in the background, files action items, and lets
+                The Pod reads it in the background, files action items, and lets
                 you know when it’s done.
               </p>
               <label className="field-label" htmlFor="send-to-dot-dot">
-                Dot
+                Pod
               </label>
               <select
                 id="send-to-dot-dot"
@@ -131,7 +131,7 @@ export function SendToDot({
               )}
               <button className="primary full" disabled={busy || !chosen}>
                 <Send size={14} />
-                {busy ? 'Sending…' : `Send to ${chosen?.name ?? 'Dot'}`}
+                {busy ? 'Sending…' : `Send to ${chosen?.name ?? 'Pod'}`}
               </button>
             </>
           ) : (

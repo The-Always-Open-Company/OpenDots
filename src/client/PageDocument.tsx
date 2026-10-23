@@ -184,7 +184,7 @@ export function PageDocument({
               )}
               target={{ kind: 'page', spaceId: page.spaceId, pageId: page.id }}
               beforeSend={beforeChat}
-              emptyHint="No Dot works in this Space yet. Add one in Settings."
+              emptyHint="No Pod works in this Space yet. Add one in Settings."
             />
           )}
           <DocumentMenu

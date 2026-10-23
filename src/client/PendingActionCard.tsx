@@ -10,7 +10,7 @@ export interface ActionField {
 
 const titles: Record<string, string> = {
   arm_trigger: 'Start a schedule',
-  apply_profile: 'Update this Dot’s profile',
+  apply_profile: 'Update this Pod’s profile',
 };
 
 // Plugin tools nest their inputs by request part; the owner cares about what is inside.

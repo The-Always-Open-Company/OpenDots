@@ -542,7 +542,7 @@ export function Chat({
             }
             title={
               voiceReady
-                ? 'Talk with your Dot'
+                ? 'Talk with your Pod'
                 : 'Voice setup requires VOICE_API_KEY'
             }
             disabled={
@@ -579,7 +579,7 @@ export function Chat({
             <h1>What’s on your mind?</h1>
             <p>{dot.instructions}</p>
             <p className="muted">
-              Your conversation stays with this Dot, across text and calls.
+              Your conversation stays with this Pod, across text and calls.
             </p>
           </div>
         )}
@@ -768,7 +768,7 @@ export function Chat({
                 type="button"
                 className="icon-button"
                 aria-label="Attach files"
-                title="Attach files. They are saved to Documents and shared with this Dot."
+                title="Attach files. They are saved to Documents and shared with this Pod."
                 disabled={paused}
                 onClick={() => fileInput.current?.click()}
               >
@@ -801,7 +801,7 @@ export function Chat({
             />
           )}
           <textarea
-            aria-label="Message your Dot"
+            aria-label="Message your Pod"
             placeholder={`Message ${dot.name}…`}
             rows={1}
             value={draft}

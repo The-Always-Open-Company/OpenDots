@@ -37,7 +37,7 @@ export function useVoice(
         disconnectTimer?: ReturnType<typeof setTimeout>;
         cancelled: boolean;
         provider: 'live' | 'realtime';
-        speaker?: 'You' | 'Dot';
+        speaker?: 'You' | 'Pod';
         speaking: boolean;
         quietTimer?: ReturnType<typeof setTimeout>;
         thinkingSince?: number;
@@ -178,7 +178,7 @@ export function useVoice(
         controlPollFailures: 0,
         disconnectTimer: undefined as ReturnType<typeof setTimeout> | undefined,
         provider: 'realtime' as 'live' | 'realtime',
-        speaker: undefined as 'You' | 'Dot' | undefined,
+        speaker: undefined as 'You' | 'Pod' | undefined,
         speaking: false,
         quietTimer: undefined as ReturnType<typeof setTimeout> | undefined,
         thinkingSince: undefined as number | undefined,
@@ -186,12 +186,12 @@ export function useVoice(
       // GPT-Live sends no end-of-response event, so phases follow transcript
       // timing. Speech starting soon after a delegation is usually "let me
       // check"; a later burst is the result, which ends the thinking phase.
-      const speech = (speaker: 'You' | 'Dot', delta: string) => {
+      const speech = (speaker: 'You' | 'Pod', delta: string) => {
         if (current.speaker !== speaker) {
           current.speaker = speaker;
           current.transcript.push(`${speaker}: `);
           (speaker === 'You' ? setUserCaption : setCaption)('');
-        } else if (speaker === 'Dot' && !current.speaking) setCaption('');
+        } else if (speaker === 'Pod' && !current.speaking) setCaption('');
         current.transcript[current.transcript.length - 1] += delta;
         (speaker === 'You' ? setUserCaption : setCaption)(
           (text) => text + delta,
@@ -226,7 +226,7 @@ export function useVoice(
           data.type === 'session.output_transcript.delta' &&
           typeof data.delta === 'string'
         )
-          speech('Dot', data.delta);
+          speech('Pod', data.delta);
         if (data.type === 'session.delegation.created') {
           current.thinkingSince = Date.now();
           if (!current.speaking) setPhase('thinking');
@@ -312,7 +312,7 @@ export function useVoice(
             setUserCaption(data.transcript);
           }
           if (data.type === 'response.output_audio_transcript.done')
-            current.transcript.push(`Dot: ${data.transcript}`);
+            current.transcript.push(`Pod: ${data.transcript}`);
         }
         if (data.type === 'error')
           setError(

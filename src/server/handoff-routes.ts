@@ -22,7 +22,7 @@ export function handoffRoutes(app: Hono, handoffs: HandoffService) {
     const parsed = handoffInput.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success)
       return c.json(
-        { error: 'Choose a Dot and a document or page to send.' },
+        { error: 'Choose a Pod and a document or page to send.' },
         400,
       );
     try {

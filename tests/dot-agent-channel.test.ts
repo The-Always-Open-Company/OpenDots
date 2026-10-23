@@ -136,7 +136,7 @@ it('replaces channel RUN_ERROR payload entirely before the SDK renderer sees it'
     {
       type: EventType.RUN_ERROR,
       message:
-        'OpenDots could not complete this request. Please check the app and try again.',
+        'Pods could not complete this request. Please check the app and try again.',
     },
   ]);
 });
