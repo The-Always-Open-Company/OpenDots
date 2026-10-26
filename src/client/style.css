@@ -1041,6 +1041,59 @@ h3 {
 .plugin-card h2 svg {
   vertical-align: -2px;
 }
+.plugin-heading {
+  flex: 1;
+  min-width: 0;
+}
+.plugin-disclosure {
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 6px;
+  text-align: left;
+  color: inherit;
+}
+.plugin-disclosure:hover:not(:disabled),
+.plugin-disclosure:active:not(:disabled) {
+  background: none;
+  transform: none;
+}
+.plugin-disclosure .chevron {
+  margin-top: 3px;
+  flex-shrink: 0;
+  color: #888;
+  transition: transform 0.15s ease;
+}
+.plugin-disclosure[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+.plugin-disclosure-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.plugin-title-line {
+  display: block;
+  line-height: 1.4;
+}
+.plugin-subtitle {
+  font-size: 12px;
+  font-weight: 400;
+  color: #666;
+  line-height: 1.6;
+}
+.plugin-fold {
+  margin-top: 4px;
+}
+.plugin-fold[hidden] {
+  display: none;
+}
 .plugin-problem {
   display: flex;
   align-items: center;
@@ -2995,6 +3048,48 @@ h3 {
 }
 .tool-activity.error {
   color: #ab9189;
+}
+.agent-trace {
+  align-self: flex-start;
+  max-width: 100%;
+}
+.agent-trace > summary {
+  list-style: none;
+  cursor: pointer;
+  color: #7c8577;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+}
+.agent-trace > summary::-webkit-details-marker {
+  display: none;
+}
+.agent-trace > summary .chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.agent-trace[open] > summary .chevron {
+  transform: rotate(90deg);
+}
+.agent-trace-body {
+  margin: 6px 0 0 18px;
+  max-height: 280px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.agent-thought {
+  margin: 0;
+  padding-left: 8px;
+  border-left: 2px solid #e3e6df;
+  color: #7c8577;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 .chat-composer {
   border-top: 1px solid #ebece9;

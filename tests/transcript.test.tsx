@@ -206,3 +206,73 @@ it('shows a schedule or wake as a marker and keeps the reply', () => {
   expect(html).not.toContain('Check the notes');
   expect(html).not.toContain('Older run without a kind');
 });
+
+it('folds thoughts and several tool steps into one collapsed row ahead of the reply', () => {
+  const call = (id: string, name: string) => ({
+    id,
+    type: 'function' as const,
+    function: { name, arguments: '{}' },
+  });
+  const html = renderToStaticMarkup(
+    <ChatTranscript
+      messages={[
+        { id: 'ask', role: 'user', content: 'What is on today?' },
+        {
+          id: 'thought',
+          role: 'reasoning',
+          content: 'I should check the calendar and the weather.',
+        },
+        {
+          id: 'work',
+          role: 'assistant',
+          toolCalls: [
+            call('calendar', 'list_events'),
+            call('web', 'search_web'),
+          ],
+        },
+        { id: 'answer', role: 'assistant', content: 'Two meetings, and rain.' },
+      ]}
+      calls={[]}
+      renderTools={(message) => (
+        <ul>
+          {message.toolCalls?.map((tool) => (
+            <li key={tool.id}>{tool.function.name}</li>
+          ))}
+        </ul>
+      )}
+    />,
+  );
+  const summary = html.indexOf('Thought');
+  const answer = html.indexOf('Two meetings, and rain.');
+  expect(summary).toBeGreaterThan(html.indexOf('What is on today?'));
+  expect(summary).toBeLessThan(answer);
+  expect(html).toContain('list_events');
+  expect(html).toContain('search_web');
+  expect(html).toContain('I should check the calendar and the weather.');
+  expect(html).not.toMatch(/<details class="agent-trace"[^>]*open/);
+  expect(html.match(/<details class="agent-trace"/g)).toHaveLength(1);
+});
+
+it('leaves a single tool step as its own line', () => {
+  const html = renderToStaticMarkup(
+    <ChatTranscript
+      messages={[
+        {
+          id: 'work',
+          role: 'assistant',
+          toolCalls: [
+            {
+              id: 'search',
+              type: 'function',
+              function: { name: 'search_web', arguments: '{}' },
+            },
+          ],
+        },
+      ]}
+      calls={[]}
+      renderTools={() => <section>Searched once</section>}
+    />,
+  );
+  expect(html).toContain('Searched once');
+  expect(html).not.toContain('agent-trace');
+});

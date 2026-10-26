@@ -471,13 +471,16 @@ export function Chat({
     },
     [dot.id, dot.name, running, latestBrowserCall?.id, onComputer],
   );
-  const visible = agent.messages.filter(
-    (message) =>
-      !isInternalVoiceReceipt(message) &&
-      ['user', 'assistant'].includes(message.role) &&
-      ((typeof message.content === 'string' && message.content.trim()) ||
-        (message.role === 'assistant' && !!message.toolCalls?.length)),
-  );
+  const visible = agent.messages.filter((message) => {
+    if (isInternalVoiceReceipt(message)) return false;
+    if (message.role === 'reasoning')
+      return typeof message.content === 'string' && !!message.content.trim();
+    return (
+      (message.role === 'user' || message.role === 'assistant') &&
+      ((typeof message.content === 'string' && !!message.content.trim()) ||
+        (message.role === 'assistant' && !!message.toolCalls?.length))
+    );
+  });
   const unanswered =
     !running && !following && endedWithoutAnswer(agent.messages);
   return (
@@ -586,6 +589,7 @@ export function Chat({
         <ChatTranscript
           messages={visible}
           calls={calls}
+          working={running || following}
           renderTools={(message) => (
             <CopilotChatToolCallsView
               message={message}

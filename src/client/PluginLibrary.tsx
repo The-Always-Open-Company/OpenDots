@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   CalendarDays,
+  ChevronRight,
   ExternalLink,
   Pencil,
   Plug,
@@ -334,9 +335,7 @@ export function PresetPicker({
   return (
     <section className="skill-editor" aria-label="Choose a plugin">
       <h2>Native integrations</h2>
-      <p className="muted">
-        Built into Pods, with limits it enforces itself.
-      </p>
+      <p className="muted">Built into Pods, with limits it enforces itself.</p>
       <div className="plugin-presets">{native.map(option)}</div>
       <h2>MCP servers</h2>
       <p className="muted">
@@ -613,6 +612,7 @@ export function PluginCard({
   run: Run;
   onEdit: () => void;
 }) {
+  const [open, setOpen] = useState(false);
   const [limits, setLimits] = useState<{ dotId: string; tool: string }>();
   const native = plugin.kind !== 'mcp';
   const connected = plugin.authMode !== 'oauth' || plugin.secretConfigured;
@@ -653,27 +653,55 @@ export function PluginCard({
     }))
     .filter((group) => group.tools.length);
   const dotName = (id: string) => dots.find((dot) => dot.id === id)?.name ?? id;
+  const foldable =
+    plugin.skipped.length > 0 ||
+    plugin.tools.length > 0 ||
+    plugin.activity.length > 0;
+  const regionId = `plugin-${plugin.id}-details`;
+  const subtitle = `${plugin.accountLabel ? `${plugin.accountLabel} · ` : ''}${plugin.url}${
+    plugin.checkedAt
+      ? ` · checked ${new Date(plugin.checkedAt).toLocaleString()}`
+      : ''
+  }${
+    plugin.tools.length
+      ? ` · ${plugin.tools.length} ${plugin.tools.length === 1 ? 'tool' : 'tools'}`
+      : ''
+  }`;
+  const title = (
+    <>
+      {native ? <CalendarDays size={14} /> : <Plug size={14} />} {plugin.name}{' '}
+      <span className="plugin-badge">{native ? 'Native' : 'MCP'}</span>{' '}
+      <span className={`plugin-status ${plugin.status}`}>
+        {plugin.authMode === 'oauth' && !plugin.secretConfigured
+          ? 'Not connected'
+          : STATUS_LABEL[plugin.status]}
+      </span>
+    </>
+  );
   return (
     <article className="skill-card plugin-card">
       <div className="skill-card-heading">
-        <div>
+        <div className="plugin-heading">
           <h2>
-            {native ? <CalendarDays size={14} /> : <Plug size={14} />}{' '}
-            {plugin.name}{' '}
-            <span className="plugin-badge">{native ? 'Native' : 'MCP'}</span>{' '}
-            <span className={`plugin-status ${plugin.status}`}>
-              {plugin.authMode === 'oauth' && !plugin.secretConfigured
-                ? 'Not connected'
-                : STATUS_LABEL[plugin.status]}
-            </span>
+            {foldable ? (
+              <button
+                type="button"
+                className="plugin-disclosure"
+                aria-expanded={open}
+                aria-controls={regionId}
+                onClick={() => setOpen((value) => !value)}
+              >
+                <ChevronRight size={14} className="chevron" aria-hidden />
+                <span className="plugin-disclosure-copy">
+                  <span className="plugin-title-line">{title}</span>
+                  <span className="plugin-subtitle">{subtitle}</span>
+                </span>
+              </button>
+            ) : (
+              title
+            )}
           </h2>
-          <p>
-            {plugin.accountLabel ? `${plugin.accountLabel} · ` : ''}
-            {plugin.url}
-            {plugin.checkedAt
-              ? ` · checked ${new Date(plugin.checkedAt).toLocaleString()}`
-              : ''}
-          </p>
+          {!foldable && <p>{subtitle}</p>}
           {plugin.authMode === 'env' && !plugin.secretConfigured && (
             <p className="chat-error">
               {plugin.tokenEnv} is not set on the server.
@@ -760,180 +788,184 @@ export function PluginCard({
           )}
         </div>
       )}
-      {plugin.skipped.length > 0 && (
-        <p className="muted plugin-hint">
-          Skipped {plugin.skipped.map((tool) => tool.name).join(', ')}:{' '}
-          {plugin.skipped[0].reason}
-        </p>
-      )}
-      {plugin.tools.length > 0 && dots.length > 0 && (
-        <div className="plugin-bulk">
-          {dots.map((dot) => (
-            <span key={dot.id} className="plugin-bulk-dot">
-              <Mascot
-                identity={dot.id}
-                character={dot.mascot}
-                name={dot.name}
-                small
-                decorative
-              />
-              {dot.name}:
-              <button
-                onClick={() =>
-                  bulk(
-                    dot,
-                    plugin.tools.filter((tool) => tool.access === 'read'),
-                    'allow',
-                  )
-                }
-              >
-                Allow read tools
-              </button>
-              <button onClick={() => bulk(dot, plugin.tools)}>
-                All tools, ask before writes
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      {groups.map((group) => (
-        <section key={group.access} className="plugin-tool-group">
-          <h3>{ACCESS_LABEL[group.access]}</h3>
-          {group.tools.map((tool) => (
-            <div key={tool.name} className="plugin-tool">
-              <div className="plugin-tool-heading">
-                <div>
-                  <code>{tool.name}</code>
-                  <p>{tool.description.slice(0, 240)}</p>
-                </div>
-                <select
-                  aria-label={`Class of ${tool.name}`}
-                  value={tool.accessOverridden ? tool.access : ''}
-                  onChange={(event) =>
-                    void run(
-                      () =>
-                        api(
-                          `/plugins/${plugin.id}/tools/${encodeURIComponent(tool.name)}/access`,
-                          'PUT',
-                          { access: event.target.value || null },
-                        ),
-                      'Could not change the class.',
-                    )
-                  }
-                >
-                  <option value="">
-                    From server ({ACCESS_LABEL[tool.access]})
-                  </option>
-                  <option value="read">Read</option>
-                  <option value="write">Write</option>
-                  <option value="destructive">Destructive</option>
-                </select>
-              </div>
-              <div className="plugin-tool-dots">
-                {dots.map((dot) => {
-                  const grant = grantOf(dot.id, tool.name);
-                  const mode =
-                    !grant || grant.mode === 'deny' ? 'off' : grant.mode;
-                  const limited =
-                    grant && Object.keys(grant.constraints).length;
-                  return (
-                    <span
-                      key={dot.id}
-                      className={`skill-dot ${mode !== 'off' ? 'on' : ''}`}
-                    >
-                      <Mascot
-                        identity={dot.id}
-                        character={dot.mascot}
-                        name={dot.name}
-                        small
-                        decorative
-                      />
-                      <span>{dot.name}</span>
-                      <select
-                        aria-label={`${dot.name} access to ${tool.name}`}
-                        value={mode}
-                        onChange={(event) =>
-                          setMode(
-                            dot,
-                            tool,
-                            event.target.value as PluginGrantMode | 'off',
-                          )
-                        }
-                      >
-                        {(['off', 'ask', 'allow'] as const).map((value) => (
-                          <option key={value} value={value}>
-                            {MODE_LABEL[value]}
-                          </option>
-                        ))}
-                      </select>
-                      {mode !== 'off' && tool.parameters.length > 0 && (
-                        <button
-                          className="icon-button"
-                          aria-label={`Limits for ${dot.name} on ${tool.name}`}
-                          title={limited ? 'Limits set' : 'Set limits'}
-                          onClick={() =>
-                            setLimits(
-                              limits?.dotId === dot.id &&
-                                limits.tool === tool.name
-                                ? undefined
-                                : { dotId: dot.id, tool: tool.name },
-                            )
-                          }
-                        >
-                          <SlidersHorizontal size={13} />
-                          {limited ? <small>{limited}</small> : null}
-                        </button>
-                      )}
-                    </span>
-                  );
-                })}
-              </div>
-              {limits?.tool === tool.name &&
-                grantOf(limits.dotId, tool.name) && (
-                  <ConstraintEditor
-                    tool={tool}
-                    grant={grantOf(limits.dotId, tool.name)!}
-                    dotName={dotName(limits.dotId)}
-                    onCancel={() => setLimits(undefined)}
-                    onSave={(constraints) =>
-                      void run(
-                        () =>
-                          api(`/plugins/${plugin.id}/grants`, 'POST', {
-                            dotId: limits.dotId,
-                            toolName: tool.name,
-                            mode: grantOf(limits.dotId, tool.name)!.mode,
-                            constraints,
-                          }),
-                        'Could not save the limits.',
-                      ).then((ok) => ok && setLimits(undefined))
-                    }
+      {foldable && (
+        <div id={regionId} className="plugin-fold" hidden={!open}>
+          {plugin.skipped.length > 0 && (
+            <p className="muted plugin-hint">
+              Skipped {plugin.skipped.map((tool) => tool.name).join(', ')}:{' '}
+              {plugin.skipped[0].reason}
+            </p>
+          )}
+          {plugin.tools.length > 0 && dots.length > 0 && (
+            <div className="plugin-bulk">
+              {dots.map((dot) => (
+                <span key={dot.id} className="plugin-bulk-dot">
+                  <Mascot
+                    identity={dot.id}
+                    character={dot.mascot}
+                    name={dot.name}
+                    small
+                    decorative
                   />
-                )}
-            </div>
-          ))}
-        </section>
-      ))}
-      {plugin.activity.length > 0 && (
-        <details className="plugin-activity">
-          <summary>Recent activity</summary>
-          <ul>
-            {plugin.activity.map((entry) => (
-              <li key={`${entry.source}-${entry.id}`}>
-                <time>{new Date(entry.at).toLocaleString()}</time>
-                <span>{dotName(entry.dotId)}</span>
-                <code>{entry.toolName}</code>
-                <span className="muted">
-                  {entry.source === 'approval'
-                    ? `approval ${entry.status}`
-                    : entry.status}
+                  {dot.name}:
+                  <button
+                    onClick={() =>
+                      bulk(
+                        dot,
+                        plugin.tools.filter((tool) => tool.access === 'read'),
+                        'allow',
+                      )
+                    }
+                  >
+                    Allow read tools
+                  </button>
+                  <button onClick={() => bulk(dot, plugin.tools)}>
+                    All tools, ask before writes
+                  </button>
                 </span>
-                <code className="plugin-args">
-                  {JSON.stringify(entry.arguments).slice(0, 200)}
-                </code>
-              </li>
-            ))}
-          </ul>
-        </details>
+              ))}
+            </div>
+          )}
+          {groups.map((group) => (
+            <section key={group.access} className="plugin-tool-group">
+              <h3>{ACCESS_LABEL[group.access]}</h3>
+              {group.tools.map((tool) => (
+                <div key={tool.name} className="plugin-tool">
+                  <div className="plugin-tool-heading">
+                    <div>
+                      <code>{tool.name}</code>
+                      <p>{tool.description.slice(0, 240)}</p>
+                    </div>
+                    <select
+                      aria-label={`Class of ${tool.name}`}
+                      value={tool.accessOverridden ? tool.access : ''}
+                      onChange={(event) =>
+                        void run(
+                          () =>
+                            api(
+                              `/plugins/${plugin.id}/tools/${encodeURIComponent(tool.name)}/access`,
+                              'PUT',
+                              { access: event.target.value || null },
+                            ),
+                          'Could not change the class.',
+                        )
+                      }
+                    >
+                      <option value="">
+                        From server ({ACCESS_LABEL[tool.access]})
+                      </option>
+                      <option value="read">Read</option>
+                      <option value="write">Write</option>
+                      <option value="destructive">Destructive</option>
+                    </select>
+                  </div>
+                  <div className="plugin-tool-dots">
+                    {dots.map((dot) => {
+                      const grant = grantOf(dot.id, tool.name);
+                      const mode =
+                        !grant || grant.mode === 'deny' ? 'off' : grant.mode;
+                      const limited =
+                        grant && Object.keys(grant.constraints).length;
+                      return (
+                        <span
+                          key={dot.id}
+                          className={`skill-dot ${mode !== 'off' ? 'on' : ''}`}
+                        >
+                          <Mascot
+                            identity={dot.id}
+                            character={dot.mascot}
+                            name={dot.name}
+                            small
+                            decorative
+                          />
+                          <span>{dot.name}</span>
+                          <select
+                            aria-label={`${dot.name} access to ${tool.name}`}
+                            value={mode}
+                            onChange={(event) =>
+                              setMode(
+                                dot,
+                                tool,
+                                event.target.value as PluginGrantMode | 'off',
+                              )
+                            }
+                          >
+                            {(['off', 'ask', 'allow'] as const).map((value) => (
+                              <option key={value} value={value}>
+                                {MODE_LABEL[value]}
+                              </option>
+                            ))}
+                          </select>
+                          {mode !== 'off' && tool.parameters.length > 0 && (
+                            <button
+                              className="icon-button"
+                              aria-label={`Limits for ${dot.name} on ${tool.name}`}
+                              title={limited ? 'Limits set' : 'Set limits'}
+                              onClick={() =>
+                                setLimits(
+                                  limits?.dotId === dot.id &&
+                                    limits.tool === tool.name
+                                    ? undefined
+                                    : { dotId: dot.id, tool: tool.name },
+                                )
+                              }
+                            >
+                              <SlidersHorizontal size={13} />
+                              {limited ? <small>{limited}</small> : null}
+                            </button>
+                          )}
+                        </span>
+                      );
+                    })}
+                  </div>
+                  {limits?.tool === tool.name &&
+                    grantOf(limits.dotId, tool.name) && (
+                      <ConstraintEditor
+                        tool={tool}
+                        grant={grantOf(limits.dotId, tool.name)!}
+                        dotName={dotName(limits.dotId)}
+                        onCancel={() => setLimits(undefined)}
+                        onSave={(constraints) =>
+                          void run(
+                            () =>
+                              api(`/plugins/${plugin.id}/grants`, 'POST', {
+                                dotId: limits.dotId,
+                                toolName: tool.name,
+                                mode: grantOf(limits.dotId, tool.name)!.mode,
+                                constraints,
+                              }),
+                            'Could not save the limits.',
+                          ).then((ok) => ok && setLimits(undefined))
+                        }
+                      />
+                    )}
+                </div>
+              ))}
+            </section>
+          ))}
+          {plugin.activity.length > 0 && (
+            <details className="plugin-activity">
+              <summary>Recent activity</summary>
+              <ul>
+                {plugin.activity.map((entry) => (
+                  <li key={`${entry.source}-${entry.id}`}>
+                    <time>{new Date(entry.at).toLocaleString()}</time>
+                    <span>{dotName(entry.dotId)}</span>
+                    <code>{entry.toolName}</code>
+                    <span className="muted">
+                      {entry.source === 'approval'
+                        ? `approval ${entry.status}`
+                        : entry.status}
+                    </span>
+                    <code className="plugin-args">
+                      {JSON.stringify(entry.arguments).slice(0, 200)}
+                    </code>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
       )}
     </article>
   );

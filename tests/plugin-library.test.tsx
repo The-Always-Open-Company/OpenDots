@@ -95,6 +95,11 @@ describe('PluginLibrary', () => {
     expect(html).not.toContain('aria-label="Limits for Ada on list_issues"');
     expect(html).toContain('Allow read tools');
     expect(html).not.toContain('>Connect</button>');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('2 tools');
+    expect(html).toMatch(
+      /class="plugin-fold"[^>]*hidden|hidden=""[^>]*class="plugin-fold"/,
+    );
   });
 
   it('offers Connect for an unconnected OAuth plugin and review for a changed schema', () => {
