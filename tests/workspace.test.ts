@@ -120,7 +120,7 @@ it('detaches a schedule from a deleted chat without cancelling it', () => {
     store.deleteConversation('chat');
     expect(engine.workItem(String(item.id))?.workThreadId).toBeNull();
     expect(engine.workItem(String(item.id))?.status).toBe('open');
-    expect(engine.workItem(String(item.id))?.originThreadId).toBe('chat');
+    expect(engine.workItem(String(item.id))?.originThreadId).toBeNull();
   } finally {
     sqlite.close();
     store.close();

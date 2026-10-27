@@ -237,8 +237,13 @@ export interface WorkView {
     status: string;
     source: string;
     updatedAt: number;
+    /** The chat the work came from; results and approvals appear there. */
+    originThreadId: string | null;
+    /** A hidden thread the work runs in. */
     workThreadId: string | null;
   };
+  /** Open, but its last attempt did not finish and nothing will run it again. */
+  stalled?: boolean;
   executions: {
     id: string;
     status: string;

@@ -19,6 +19,7 @@ function view(
       status: 'open',
       source,
       updatedAt: 1,
+      originThreadId: 'chat',
       workThreadId: 'thread',
     },
     executions: [{ ...execution, attempt: 1, error: null }],
@@ -41,6 +42,7 @@ it('notices a new finished attempt once and skips runs still in progress', () =>
     view({ id: 'cancelled', status: 'cancelled' }),
   ]);
   expect(next.fresh.map((item) => item.id)).toEqual(['done']);
+  expect(next.fresh[0].threadId).toBe('chat');
   expect(
     takeNewFinishes(next.seen, [view({ id: 'done', status: 'failed' })]).fresh,
   ).toEqual([]);

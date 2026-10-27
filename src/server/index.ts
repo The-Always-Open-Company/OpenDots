@@ -43,13 +43,14 @@ import { DocumentRetriever } from './document-retrieval.js';
 import { modelJson } from './model-json.js';
 import { ExecutionEngine } from './execution-engine.js';
 import { PluginService } from './plugins.js';
-import { WorkRunner } from './work-runner.js';
+import { ensureWorkThread, WorkRunner } from './work-runner.js';
 import { applyApprovedAction, reportApproval } from './approved-actions.js';
 import { deliverInternal } from './watches.js';
 import { ActionItemStore } from './action-item-store.js';
 import { PgActionItemIndex } from './action-item-index.js';
 import { ActionItemService } from './action-items.js';
 import { NotificationService, notifyWork } from './notifications.js';
+import { reportWork } from './work-reports.js';
 import { HandoffService } from './handoffs.js';
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 4310);
@@ -190,6 +191,8 @@ const engine = new ExecutionEngine(store.database);
 engine.backfillTerminal(store.tasks(), (task) =>
   workspace.legacyTaskOwner(task.id),
 );
+engine.labelConversationLedgers();
+engine.detachChatWork();
 const plugins = new PluginService(store.database);
 const skillsDir = process.env.SKILLS_DIR ?? join(dirname(database), 'skills');
 const actionItems =
@@ -215,6 +218,7 @@ const platform = new Platform(store, workspace, config, {
   actionItems,
   notifications,
 });
+reportWork(engine, workspace, platform.runner);
 workspace.pages.onUpdated = (page) =>
   deliverInternal(engine, workspace, 'page.updated', {
     id: page.id,
@@ -278,17 +282,12 @@ const work = new WorkRunner(
     const trigger = execution?.triggerId
       ? engine.trigger(String(execution.triggerId))
       : undefined;
-    let threadId = item.workThreadId ? String(item.workThreadId) : '';
-    if (!threadId && trigger?.legacyTaskId)
-      threadId = workspace.taskThread(String(trigger.legacyTaskId)) ?? '';
-    if (!threadId) {
-      const created = await platform.createConversation(
-        String(item.actorId),
-        String(item.title).slice(0, 120),
-      );
-      threadId = created.id;
-      engine.setWorkThread(String(item.id), threadId);
-    }
+    const threadId = ensureWorkThread(
+      workspace,
+      engine,
+      item,
+      trigger?.legacyTaskId,
+    );
     const triggerKind = trigger
       ? String(trigger.kind)
       : String(item.source) === 'schedule'

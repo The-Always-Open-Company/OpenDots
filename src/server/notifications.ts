@@ -115,7 +115,10 @@ export class NotificationService {
   }
 }
 
-function lastAssistantText(workspace: WorkspaceStore, threadId: string) {
+export function lastAssistantText(
+  workspace: Pick<WorkspaceStore, 'threads'>,
+  threadId: string,
+) {
   const messages = workspace.threads.messages(threadId);
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index] as { role: string; content?: unknown };
@@ -125,7 +128,8 @@ function lastAssistantText(workspace: WorkspaceStore, threadId: string) {
   return '';
 }
 
-const OWNER_STOPS = /^(Run stopped|Server stopped)/;
+/** Stops the owner asked for; they need no report. Server stops are retried instead. */
+export const OWNER_STOPS = /^Run stopped/;
 
 /** Notifies the owner when background work finishes, fails, or needs approval. */
 export function notifyWork(
@@ -147,7 +151,9 @@ export function notifyWork(
     const item = fields.workItemId ? engine.workItem(fields.workItemId) : null;
     if (!item) return;
     const title = String(item.title);
-    const threadId = item.workThreadId ? String(item.workThreadId) : null;
+    // Work runs in a hidden thread; the owner opens the chat it came from.
+    const threadId = item.originThreadId ? String(item.originThreadId) : null;
+    const workThread = item.workThreadId ? String(item.workThreadId) : null;
     const name = dotName(fields.actorId ?? String(item.actorId));
     if (type === 'action_proposed') {
       const action = engine.action(String(payload.actionId));
@@ -195,12 +201,12 @@ export function notifyWork(
           : status === 'failed'
             ? `${name} could not finish "${title}"`
             : `${name} has an update on "${title}"`,
-      body: threadId ? lastAssistantText(workspace, threadId) : '',
+      body: workThread ? lastAssistantText(workspace, workThread) : '',
       threadId,
       workItemId: String(item.id),
     });
   };
-  engine.onEvent = (type, fields) => {
+  engine.listen((type, fields) => {
     if (type !== 'finished' && type !== 'action_proposed') return;
     // Events fire inside the engine's transaction; read the settled state after it.
     queueMicrotask(() => {
@@ -210,5 +216,5 @@ export function notifyWork(
         console.error('Could not record a notification.');
       }
     });
-  };
+  });
 }

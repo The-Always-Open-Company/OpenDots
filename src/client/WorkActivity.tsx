@@ -19,7 +19,10 @@ export function WorkActivity({
   plugins?: PluginName[];
   busy: boolean;
   onOpen: (id: string) => void;
-  onAction: (id: string, action: 'pause' | 'resume' | 'cancel') => void;
+  onAction: (
+    id: string,
+    action: 'pause' | 'resume' | 'cancel' | 'retry',
+  ) => void;
   onApprove: (id: string) => void;
   onDecline: (id: string) => void;
   onDisableTrigger: (id: string) => void;
@@ -83,9 +86,18 @@ export function WorkActivity({
               <strong>{String(item.workItem.title)}</strong>
             </button>
             <p className="muted">
-              {String(item.workItem.status)} · {String(item.workItem.source)}
+              {item.stalled ? 'stalled' : String(item.workItem.status)} ·{' '}
+              {String(item.workItem.source)}
             </p>
             <div className="task-controls">
+              {(item.stalled || item.workItem.status === 'failed') && (
+                <button
+                  disabled={busy}
+                  onClick={() => onAction(String(item.workItem.id), 'retry')}
+                >
+                  Retry objective
+                </button>
+              )}
               {item.workItem.status === 'open' ? (
                 <button
                   disabled={busy}

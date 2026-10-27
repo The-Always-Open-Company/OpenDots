@@ -6,7 +6,10 @@ import {
   type AuthSnapshot,
   type ExecutionContext,
 } from './authorize.js';
-import type { ExecutionEngine } from './execution-engine.js';
+import {
+  CONVERSATION_LEDGER,
+  type ExecutionEngine,
+} from './execution-engine.js';
 import { ACTION_ITEM_PROMPT } from './action-item-tools.js';
 import { runWithOperation } from './effect-context.js';
 import type { MemoryProvider } from './memory.js';
@@ -173,6 +176,11 @@ export function guardTools(
   }) as ToolDefinition[];
 }
 
+/** The chat the owner sees for this turn; approvals and results land there. */
+export function ownerChat(deps: Pick<WorkDeps, 'workspace' | 'threadId'>) {
+  return deps.workspace.chatThread(deps.threadId) ?? deps.threadId;
+}
+
 function parentWork(deps: WorkDeps) {
   const current = deps.context().workItemId;
   if (current) return current;
@@ -180,9 +188,7 @@ function parentWork(deps: WorkDeps) {
   if (existing) return String(existing.id);
   const item = deps.engine.createWorkItem({
     actorId: deps.dot.id,
-    title: 'Conversation',
-    objective: 'Work started from the conversation.',
-    source: 'owner',
+    ...CONVERSATION_LEDGER,
     originThreadId: deps.threadId,
     workThreadId: deps.threadId,
     autoResume: false,
@@ -217,14 +223,13 @@ export async function proposeSchedule(
     source: 'schedule',
     recurring: true,
     autoResume: false,
-    originThreadId: deps.threadId,
-    workThreadId: deps.threadId,
+    originThreadId: ownerChat(deps),
   });
   const pending = deps.engine.proposeAction({
     executionId: deps.context().executionId || null,
     workItemId: String(item.id),
     actorId: deps.dot.id,
-    threadId: deps.threadId,
+    threadId: ownerChat(deps),
     toolName: 'arm_trigger',
     arguments: {
       workItemId: String(item.id),
@@ -246,6 +251,12 @@ type CapabilityInput = {
   inWork?: boolean;
   actionItems?: boolean;
 };
+
+function duration(ms: number) {
+  return ms >= 120_000
+    ? `${Math.round(ms / 60_000)} minutes`
+    : `${Math.round(ms / 1000)} seconds`;
+}
 
 export function capabilityPrompt(input: CapabilityInput) {
   const { stable, turn } = capabilityContext(input);
@@ -310,7 +321,7 @@ export function capabilityContext(input: CapabilityInput) {
       ? `Skills you can load with load_skill:\n${skillCatalog(skills)}`
       : '',
     input.inWork
-      ? 'This run has about 90 seconds. End it with a written summary of what you found, and call complete_work or fail_work when the objective is settled.'
+      ? `This run has about ${duration(policy.maxExecutionMs)}. End it with a written summary of what you found, and call complete_work or fail_work when the objective is settled. If it needs more time, end with what is done and what remains; the next attempt continues in this thread.`
       : 'A chat reply has about 90 seconds. When a request needs broad research, many pages, or several checks, tell the owner the plan in a sentence and call start_objective instead of doing it all in this reply. Always end a reply with an answer, even a partial one.',
     input.actionItems ? ACTION_ITEM_PROMPT : '',
     `Wake window: at least ${Math.round(policy.minWakeIntervalMs / 60_000)} minutes and at most ${Math.round(policy.maxWakeHorizonMs / 86_400_000)} days. An earlier wake is rejected.`,
@@ -389,7 +400,7 @@ export function workTools(deps: WorkDeps): ToolDefinition[] {
     defineTool({
       name: 'start_objective',
       description:
-        'Start an objective the owner asked for. It runs on its own work thread, can take several attempts, and reports back when done. Use it for research or tasks that need many steps.',
+        'Start an objective the owner asked for. It runs in the background, can take several attempts, and posts its result into this chat when done. Use it for research or tasks that need many steps.',
       parameters: z.object({
         title: z.string().trim().min(1).max(160),
         objective: z.string().trim().min(1).max(4000),
@@ -401,8 +412,8 @@ export function workTools(deps: WorkDeps): ToolDefinition[] {
           title,
           objective,
           source: 'owner',
-          originThreadId: deps.threadId,
-          autoResume: false,
+          originThreadId: ownerChat(deps),
+          autoResume: true,
         });
         const executionId = deps.engine.enqueueExecution(String(item.id));
         return { workItemId: item.id, executionId, status: 'open' };
@@ -431,7 +442,7 @@ export function workTools(deps: WorkDeps): ToolDefinition[] {
           title,
           objective,
           blocking: blocking ?? false,
-          originThreadId: deps.threadId,
+          originThreadId: ownerChat(deps),
         });
       },
     }),
@@ -558,7 +569,7 @@ export function workTools(deps: WorkDeps): ToolDefinition[] {
           executionId: deps.context().executionId || null,
           workItemId: String(trigger.workItemId),
           actorId: deps.dot.id,
-          threadId: deps.threadId,
+          threadId: ownerChat(deps),
           toolName: 'update_schedule',
           arguments: { triggerId, spec: parsed, nextRunAt },
         });
@@ -583,7 +594,7 @@ export function workTools(deps: WorkDeps): ToolDefinition[] {
           executionId: deps.context().executionId || null,
           workItemId: String(trigger.workItemId),
           actorId: deps.dot.id,
-          threadId: deps.threadId,
+          threadId: ownerChat(deps),
           toolName: 'cancel_schedule',
           arguments: { triggerId },
         });
@@ -605,7 +616,7 @@ export function workTools(deps: WorkDeps): ToolDefinition[] {
           executionId: deps.context().executionId || null,
           workItemId,
           actorId: deps.dot.id,
-          threadId: deps.threadId,
+          threadId: ownerChat(deps),
           toolName: 'apply_profile',
           arguments: {
             name,
@@ -667,7 +678,7 @@ export function workTools(deps: WorkDeps): ToolDefinition[] {
               source: 'responsibility',
               recurring: true,
               autoResume: false,
-              originThreadId: deps.threadId,
+              originThreadId: ownerChat(deps),
             });
         if (!item || String(item.actorId) !== deps.dot.id)
           throw new Error('Responsibility not found.');

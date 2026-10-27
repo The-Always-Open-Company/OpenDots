@@ -61,7 +61,7 @@ export function capabilityRoutes(
       title: parsed.data.title,
       objective: parsed.data.objective,
       source: 'owner',
-      autoResume: false,
+      autoResume: true,
     });
     const executionId = engine.enqueueExecution(String(item.id));
     return c.json({ ...item, executionId }, 201);
@@ -74,12 +74,16 @@ export function capabilityRoutes(
   });
   app.post('/api/work/:id/actions', async (c) => {
     const parsed = z
-      .object({ action: z.enum(['pause', 'resume', 'cancel']) })
+      .object({ action: z.enum(['pause', 'resume', 'cancel', 'retry']) })
       .strict()
       .safeParse(await c.req.json().catch(() => null));
     if (!parsed.success)
       return c.json({ error: 'Unknown objective action.' }, 400);
     const id = c.req.param('id');
+    if (parsed.data.action === 'retry')
+      return engine.retryWork(id)
+        ? c.json(engine.workItem(id))
+        : c.json({ error: 'This objective cannot be retried now.' }, 409);
     const ok =
       parsed.data.action === 'pause'
         ? engine.pauseWork(id)

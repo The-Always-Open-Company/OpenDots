@@ -7,7 +7,11 @@ import { AgentTrace, buildTranscriptItems } from './agent-trace';
 import type { CallReceipt } from '../shared/types';
 import { voiceReceiptMessagePrefix } from '../shared/voice-receipt';
 import { isVoiceNote, voiceNoteReplyIds } from '../shared/voice-note';
-import { workPromptKind, workPromptLabel } from '../shared/work-marker';
+import {
+  workPromptKind,
+  workPromptLabel,
+  workResultLabel,
+} from '../shared/work-marker';
 import {
   callTaskMessagePrefix,
   chatTaskMessagePrefix,
@@ -58,12 +62,13 @@ function Receipt({ call }: { call: CallReceipt }) {
 }
 function messageBody(message: Message) {
   const marker = workPromptKind(message);
+  const result = workResultLabel(message);
   const task = taskMarker(message);
-  if (marker)
+  if (marker || result)
     return (
       <div className="work-marker">
         <Clock3 size={13} />
-        <span>{workPromptLabel(marker)}</span>
+        <span>{result ?? workPromptLabel(marker!)}</span>
       </div>
     );
   if (task)

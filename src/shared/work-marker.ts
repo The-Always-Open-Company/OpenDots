@@ -1,4 +1,18 @@
 export const workPromptPrefix = 'opendots-work:';
+/** A background run's result, posted into the chat the work came from. */
+export const workResultPrefix = 'opendots-work-result:';
+
+/** The marker line of a posted background result; null for any other message. */
+export function workResultLabel(message: {
+  id: string;
+  role: string;
+  content?: unknown;
+}): string | null {
+  if (message.role !== 'user' || !message.id.startsWith(workResultPrefix))
+    return null;
+  const content = typeof message.content === 'string' ? message.content : '';
+  return content.split('\n')[0] || 'Background work';
+}
 
 export type WorkPromptKind =
   'schedule' | 'wake' | 'watch' | 'approval' | 'work';

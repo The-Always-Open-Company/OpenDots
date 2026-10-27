@@ -31,7 +31,7 @@ export const POLICY_DEFAULTS: DotPolicy = {
   maxConcurrent: 2,
   minWakeIntervalMs: 15 * 60_000,
   maxWakeHorizonMs: 7 * 24 * 60 * 60_000,
-  maxExecutionMs: 90_000,
+  maxExecutionMs: 5 * 60_000,
   maxExecutionsPerWorkItem: 20,
   defaultWakeIntervalMs: 24 * 60 * 60_000,
   timezone: 'UTC',
@@ -42,7 +42,7 @@ const CEILINGS = {
   maxConcurrent: 3,
   minWakeIntervalMs: 60_000,
   maxWakeHorizonMs: 30 * 24 * 60 * 60_000,
-  maxExecutionMs: 90_000,
+  maxExecutionMs: 5 * 60_000,
   maxExecutionsPerWorkItem: 20,
 };
 
@@ -58,6 +58,24 @@ function continuationCue(kind: string) {
   return 'This run is a continuation the owner already allowed. Carry out the objective. A tool result from an earlier turn that says status pending is not still waiting.';
 }
 const LEASE_MS = 180_000;
+
+/** Waits before the first, second, and later retries of an attempt that did not finish. */
+export const RETRY_DELAYS_MS = [30_000, 2 * 60_000, 10 * 60_000];
+
+/** Errors that retrying cannot fix, such as a rejected API key or missing setup. */
+const PERMANENT_FAILURE =
+  /\b(401|403)\b|incorrect api key|invalid api key|unauthori[sz]ed|forbidden|setup required/i;
+
+export function permanentFailure(error: string | null | undefined) {
+  return !!error && PERMANENT_FAILURE.test(error);
+}
+
+/** A chat's effect ledger: the item a chat's effects are recorded against. It never runs. */
+export const CONVERSATION_LEDGER = {
+  title: 'Conversation',
+  objective: 'Work started from the conversation.',
+  source: 'conversation',
+} as const;
 
 export interface WorkItemInput {
   actorId: string;
@@ -81,17 +99,18 @@ export type LegacyOwner = (task: Task) => {
 };
 const legacyFallback: LegacyOwner = () => ({ actorId: 'legacy' });
 
+export type EngineListener = (
+  type: string,
+  fields: {
+    executionId?: string | null;
+    workItemId?: string | null;
+    actorId?: string | null;
+    payload?: unknown;
+  },
+) => void;
+
 export class ExecutionEngine {
-  /** Called after each event is recorded, possibly inside a transaction. */
-  onEvent?: (
-    type: string,
-    fields: {
-      executionId?: string | null;
-      workItemId?: string | null;
-      actorId?: string | null;
-      payload?: unknown;
-    },
-  ) => void;
+  private listeners: EngineListener[] = [];
   constructor(
     private db: DatabaseSync,
     private now: () => number = Date.now,
@@ -161,6 +180,7 @@ export class ExecutionEngine {
         this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     };
     add('inbound_events', 'nextAttemptAt', 'INTEGER');
+    add('executions', 'notBefore', 'INTEGER');
     add('inbound_events', 'executionId', 'TEXT');
     add('work_items', 'closeRequested', 'INTEGER NOT NULL DEFAULT 0');
     add('plugins', 'kind', "TEXT NOT NULL DEFAULT 'mcp'");
@@ -231,7 +251,7 @@ export class ExecutionEngine {
     if (next.maxWakeHorizonMs > CEILINGS.maxWakeHorizonMs)
       throw new Error('Wake horizon exceeds the ceiling.');
     if (next.maxExecutionMs > CEILINGS.maxExecutionMs)
-      throw new Error('Execution duration exceeds the 90 second ceiling.');
+      throw new Error('Execution duration exceeds the 5 minute ceiling.');
     if (next.maxExecutionsPerWorkItem > CEILINGS.maxExecutionsPerWorkItem)
       throw new Error('Attempts per objective exceed the ceiling.');
     if (next.defaultWakeIntervalMs < next.minWakeIntervalMs)
@@ -268,7 +288,11 @@ export class ExecutionEngine {
         JSON.stringify(fields.payload ?? {}),
         this.now(),
       );
-    this.onEvent?.(type, fields);
+    for (const listener of this.listeners) listener(type, fields);
+  }
+  /** Called after each event is recorded, possibly inside a transaction. */
+  listen(listener: EngineListener) {
+    this.listeners.push(listener);
   }
   workItem(id: string) {
     return this.db.prepare('SELECT * FROM work_items WHERE id=?').get(id) as
@@ -319,6 +343,19 @@ export class ExecutionEngine {
       )
       .get(workItemId) as { id: string } | undefined;
   }
+  /** True while another attempt is queued or running, such as a retry. */
+  hasActiveExecution(workItemId: string) {
+    return !!this.activeExecution(workItemId);
+  }
+  /** True when a parent objective (not a chat's ledger) waits on this child's result. */
+  reportsToParent(workItemId: string) {
+    return !!this.db
+      .prepare(
+        `SELECT 1 FROM work_dependencies d JOIN work_items p ON p.id=d.parentWorkItemId
+         WHERE d.childWorkItemId=? AND d.blocking=1 AND p.source!=?`,
+      )
+      .get(workItemId, CONVERSATION_LEDGER.source);
+  }
   enqueueExecution(
     workItemId: string,
     options: { triggerId?: string | null; resumeOf?: string | null } = {},
@@ -327,7 +364,12 @@ export class ExecutionEngine {
   }
   private enqueueLocked(
     workItemId: string,
-    options: { triggerId?: string | null; resumeOf?: string | null },
+    options: {
+      triggerId?: string | null;
+      resumeOf?: string | null;
+      /** The attempt is not claimed before this time. */
+      notBefore?: number | null;
+    },
   ) {
     const item = this.workItem(workItemId);
     if (!item) throw new Error('Work item not found.');
@@ -358,7 +400,7 @@ export class ExecutionEngine {
     try {
       this.db
         .prepare(
-          'INSERT INTO executions (id, workItemId, triggerId, attempt, status, resumeOf, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          'INSERT INTO executions (id, workItemId, triggerId, attempt, status, resumeOf, notBefore, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         )
         .run(
           id,
@@ -367,6 +409,7 @@ export class ExecutionEngine {
           attempt,
           'queued',
           options.resumeOf ?? null,
+          options.notBefore ?? null,
           now,
         );
     } catch (error) {
@@ -403,9 +446,9 @@ export class ExecutionEngine {
       if (running.length >= PROCESS_CONCURRENCY) return null;
       const rows = this.db
         .prepare(
-          "SELECT e.*, w.actorId AS actorId FROM executions e JOIN work_items w ON w.id=e.workItemId WHERE e.status='queued' AND e.lease IS NULL ORDER BY e.createdAt LIMIT 20",
+          "SELECT e.*, w.actorId AS actorId FROM executions e JOIN work_items w ON w.id=e.workItemId WHERE e.status='queued' AND e.lease IS NULL AND (e.notBefore IS NULL OR e.notBefore<=?) ORDER BY e.createdAt LIMIT 20",
         )
-        .all() as Row[];
+        .all(now) as Row[];
       for (const row of rows) {
         const actor = String(row.actorId);
         const policy = this.policy(actor);
@@ -486,8 +529,55 @@ export class ExecutionEngine {
       actorId: String(item.actorId),
       payload: { outcome: 'interrupted', error },
     });
-    if (item.autoResume)
-      this.enqueueLocked(String(item.id), { resumeOf: executionId });
+    this.retryLocked(item, execution, error, true);
+  }
+  /**
+   * Queues another attempt after one that did not finish, with backoff.
+   * Interruptions the harness caused retry whatever autoResume says; a
+   * scheduled run retries once, since the next run is its natural retry; an
+   * error that retrying cannot fix is not retried.
+   */
+  private retryLocked(
+    item: Row,
+    execution: Row,
+    error: string | undefined,
+    harness: boolean,
+  ) {
+    const id = String(item.id);
+    const recurring = Number(item.recurring) === 1;
+    // The owner stopped this run, or settings changed. Leave it for them to retry.
+    if (error && /^Run stopped/.test(error)) return null;
+    if (permanentFailure(error)) {
+      if (
+        !recurring &&
+        this.db
+          .prepare(
+            "UPDATE work_items SET status='failed', updatedAt=? WHERE id=? AND status='open'",
+          )
+          .run(this.now(), id).changes
+      ) {
+        this.disableTriggers(id);
+        this.maybeContinueParent(id);
+      }
+      return null;
+    }
+    if (!harness && !Number(item.autoResume)) return null;
+    if (recurring && execution.resumeOf) return null;
+    const recent = this.db
+      .prepare(
+        'SELECT status FROM executions WHERE workItemId=? ORDER BY createdAt DESC LIMIT ?',
+      )
+      .all(id, RETRY_DELAYS_MS.length) as { status: string }[];
+    const index = recent.findIndex((row) => row.status === 'completed');
+    const failures = index === -1 ? recent.length : index;
+    const delay =
+      RETRY_DELAYS_MS[
+        Math.min(Math.max(failures, 1), RETRY_DELAYS_MS.length) - 1
+      ];
+    return this.enqueueLocked(id, {
+      resumeOf: String(execution.id),
+      notBefore: this.now() + delay,
+    });
   }
   setFinishIntent(
     executionId: string,
@@ -506,10 +596,12 @@ export class ExecutionEngine {
       .prepare('UPDATE work_items SET progress=?, updatedAt=? WHERE id=?')
       .run(progress.slice(0, 4000), this.now(), workItemId);
   }
+  /** `retry` marks a stop the harness caused, such as a restart or time limit, rather than the owner. */
   finishExecution(
     executionId: string,
     outcome: 'completed' | 'failed' | 'interrupted' | 'cancelled',
     error?: string,
+    options: { retry?: boolean } = {},
   ) {
     return this.transaction(() => {
       const execution = this.execution(executionId);
@@ -553,8 +645,7 @@ export class ExecutionEngine {
         return true;
       }
       if (outcome !== 'completed') {
-        if (item.autoResume)
-          this.enqueueLocked(String(item.id), { resumeOf: executionId });
+        this.retryLocked(item, execution, error, !!options.retry);
         return true;
       }
       const intent = execution.finishIntent
@@ -632,6 +723,8 @@ export class ExecutionEngine {
     for (const parent of parents) this.continueIfReady(parent.parentWorkItemId);
   }
   private continueIfReady(parentId: string) {
+    // A ledger never runs; its children report to the chat instead.
+    if (this.workItem(parentId)?.source === CONVERSATION_LEDGER.source) return;
     const children = this.db
       .prepare(
         `SELECT w.id, w.status FROM work_dependencies d JOIN work_items w ON w.id=d.childWorkItemId
@@ -799,7 +892,7 @@ export class ExecutionEngine {
     }
     const spec = JSON.parse(String(current.specJson)) as ScheduleSpec;
     const anchor = String(current.anchor) as 'clock' | 'after_success';
-    const following =
+    let following =
       spec.kind === 'calendar'
         ? nextCalendarRun(spec, now)
         : nextRunAt(
@@ -807,6 +900,13 @@ export class ExecutionEngine {
             anchor === 'after_success' ? now : Number(current.nextRunAt),
             anchor,
           );
+    // After downtime a clock interval runs once, not once per missed slot.
+    let skipped = 0;
+    if (spec.kind === 'interval' && following != null && following <= now) {
+      const step = spec.seconds * 1000;
+      skipped = Math.floor((now - following) / step) + 1;
+      following += skipped * step;
+    }
     if (item.status === 'paused') {
       this.db
         .prepare(
@@ -831,7 +931,12 @@ export class ExecutionEngine {
       });
       return null;
     }
-    const executionId = this.activeExecution(String(item.id))
+    const busy = !!this.activeExecution(String(item.id));
+    if (!busy && Number(item.recurring))
+      this.db
+        .prepare('UPDATE work_items SET attemptCount=0 WHERE id=?')
+        .run(item.id);
+    const executionId = busy
       ? null
       : this.enqueueLocked(String(item.id), { triggerId: String(current.id) });
     this.db
@@ -842,7 +947,10 @@ export class ExecutionEngine {
       triggerId: String(current.id),
       workItemId: String(item.id),
       actorId: String(item.actorId),
-      payload: { reason: executionId ? 'fired' : 'already running' },
+      payload: {
+        reason: executionId ? 'fired' : 'already running',
+        ...(skipped ? { skipped } : {}),
+      },
     });
     return executionId;
   }
@@ -1190,6 +1298,53 @@ export class ExecutionEngine {
       return true;
     });
   }
+  /**
+   * Open work that will not run again by itself: its last attempt did not
+   * finish and nothing is queued, scheduled, or being waited on.
+   */
+  stalled(id: string) {
+    const item = this.workItem(id);
+    if (
+      !item ||
+      item.status !== 'open' ||
+      item.source === CONVERSATION_LEDGER.source ||
+      this.activeExecution(id)
+    )
+      return false;
+    const last = this.db
+      .prepare(
+        'SELECT status FROM executions WHERE workItemId=? ORDER BY createdAt DESC LIMIT 1',
+      )
+      .get(id) as { status: string } | undefined;
+    if (!last || !['interrupted', 'failed'].includes(last.status)) return false;
+    const waiting = this.db
+      .prepare(
+        `SELECT 1 FROM triggers WHERE workItemId=? AND enabled=1
+         UNION ALL SELECT 1 FROM work_dependencies d JOIN work_items c ON c.id=d.childWorkItemId
+           WHERE d.parentWorkItemId=? AND d.blocking=1
+             AND c.status NOT IN ('completed','failed','cancelled')`,
+      )
+      .get(id, id);
+    return !waiting;
+  }
+  /** Runs stalled or failed work again with a fresh attempt budget. */
+  retryWork(id: string) {
+    return this.transaction(() => {
+      const item = this.workItem(id);
+      if (!item || (item.status !== 'failed' && !this.stalled(id))) return null;
+      const last = this.db
+        .prepare(
+          'SELECT id FROM executions WHERE workItemId=? ORDER BY createdAt DESC LIMIT 1',
+        )
+        .get(id) as { id: string } | undefined;
+      this.db
+        .prepare(
+          "UPDATE work_items SET status='open', attemptCount=0, updatedAt=? WHERE id=?",
+        )
+        .run(this.now(), id);
+      return this.enqueueLocked(id, { resumeOf: last?.id ?? null });
+    });
+  }
   delegate(input: {
     parentWorkItemId: string | null;
     actorId: string;
@@ -1432,17 +1587,21 @@ export class ExecutionEngine {
     );
     return copy;
   }
+  /** Objectives, without the conversation ledgers that only record a chat's effects. */
   listWork(actorId?: string) {
+    const ledger = CONVERSATION_LEDGER.source;
     const rows = (
       actorId
         ? this.db
             .prepare(
-              'SELECT * FROM work_items WHERE actorId=? OR parentWorkItemId IN (SELECT id FROM work_items WHERE actorId=?) ORDER BY updatedAt DESC',
+              'SELECT * FROM work_items WHERE source!=? AND (actorId=? OR parentWorkItemId IN (SELECT id FROM work_items WHERE actorId=?)) ORDER BY updatedAt DESC',
             )
-            .all(actorId, actorId)
+            .all(ledger, actorId, actorId)
         : this.db
-            .prepare('SELECT * FROM work_items ORDER BY updatedAt DESC')
-            .all()
+            .prepare(
+              'SELECT * FROM work_items WHERE source!=? ORDER BY updatedAt DESC',
+            )
+            .all(ledger)
     ) as Row[];
     return rows.map((item) => this.detail(String(item.id)));
   }
@@ -1451,6 +1610,7 @@ export class ExecutionEngine {
     if (!item) return null;
     return {
       workItem: item,
+      stalled: this.stalled(id),
       executions: this.db
         .prepare(
           'SELECT * FROM executions WHERE workItemId=? ORDER BY createdAt',
@@ -1752,17 +1912,49 @@ export class ExecutionEngine {
       )
       .run(title.slice(0, 160), objective.slice(0, 4000), this.now(), id);
   }
+  /** Relabels the effect ledgers chats used to create as owner objectives. Safe to repeat. */
+  labelConversationLedgers() {
+    return Number(
+      this.db
+        .prepare(
+          "UPDATE work_items SET source='conversation' WHERE source='owner' AND title=? AND objective=?",
+        )
+        .run(CONVERSATION_LEDGER.title, CONVERSATION_LEDGER.objective).changes,
+    );
+  }
+  /**
+   * Moves unfinished work that ran inside a chat onto its own thread; the chat
+   * stays its origin, so results still post there. Safe to run on every start.
+   */
+  detachChatWork() {
+    const threads = this.db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='thread_bindings'",
+      )
+      .get();
+    if (!threads) return 0;
+    return Number(
+      this.db
+        .prepare(
+          `UPDATE work_items SET originThreadId=COALESCE(originThreadId, workThreadId), workThreadId=NULL, updatedAt=?
+           WHERE source!='conversation' AND status NOT IN ('completed','failed','cancelled')
+           AND workThreadId IN (SELECT id FROM thread_bindings WHERE kind='chat')`,
+        )
+        .run(this.now()).changes,
+    );
+  }
   setWorkThread(id: string, threadId: string) {
     this.db
       .prepare('UPDATE work_items SET workThreadId=?, updatedAt=? WHERE id=?')
       .run(threadId, this.now(), id);
   }
+  /** The conversation ledger a chat's effects are recorded against. */
   workForThread(threadId: string) {
     return this.db
       .prepare(
-        "SELECT * FROM work_items WHERE workThreadId=? AND status='open' ORDER BY createdAt DESC LIMIT 1",
+        "SELECT * FROM work_items WHERE workThreadId=? AND source=? AND status='open' ORDER BY createdAt DESC LIMIT 1",
       )
-      .get(threadId) as Row | undefined;
+      .get(threadId, CONVERSATION_LEDGER.source) as Row | undefined;
   }
   hasManageableSchedule(actorId: string) {
     return !!this.db
@@ -1781,6 +1973,16 @@ export class ExecutionEngine {
   ownsExecution(id: string, lease: string) {
     const row = this.execution(id);
     return !!row && row.status === 'running' && row.lease === lease;
+  }
+  /** Extends a live run's lease; false when the run is no longer this holder's. */
+  renewExecution(id: string, lease: string) {
+    return (
+      this.db
+        .prepare(
+          "UPDATE executions SET leaseUntil=? WHERE id=? AND lease=? AND status='running'",
+        )
+        .run(this.now() + LEASE_MS, id, lease).changes === 1
+    );
   }
   pendingActions() {
     return this.db

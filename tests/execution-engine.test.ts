@@ -3,7 +3,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { ExecutionEngine } from '../src/server/execution-engine.js';
+import {
+  CONVERSATION_LEDGER,
+  ExecutionEngine,
+} from '../src/server/execution-engine.js';
 import { Store } from '../src/server/store.js';
 import { decide, type ExecutionContext } from '../src/server/authorize.js';
 import { guardTools } from '../src/server/work-tools.js';
@@ -744,6 +747,26 @@ describe('execution engine', () => {
     engine.resumeWork(String(item.id));
     expect(engine.claimApprovedAction()?.id).toBe(action.pendingActionId);
   });
+
+  it('calls unfinished work with nothing left to run stalled, and retry starts it again', () => {
+    const { engine } = open();
+    const id = String(
+      engine.createWorkItem({
+        actorId: 'dot',
+        title: 'Stuck',
+        objective: 'Finish the check',
+        source: 'owner',
+        autoResume: false,
+      }).id,
+    );
+    const execution = engine.enqueueExecution(id)!;
+    engine.claimExecution();
+    engine.finishExecution(execution, 'failed', 'The model is unavailable.');
+    expect(engine.detail(id)?.stalled).toBe(true);
+    expect(engine.retryWork(id)).toBeTruthy();
+    expect(engine.detail(id)?.stalled).toBe(false);
+    expect(engine.claimExecution()?.resumeOf).toBe(execution);
+  });
 });
 
 describe('authorize', () => {
@@ -790,6 +813,127 @@ describe('authorize', () => {
     expect(
       decide(ctx('approved_action'), 'edit_space_page', {}, askOnly).effect,
     ).toBe('allow');
+  });
+
+  it('fires a clock interval once after downtime and records the skipped slots', () => {
+    const { engine, setTime } = open();
+    const item = engine.createWorkItem({
+      actorId: 'dot',
+      title: 'Digest',
+      objective: 'Check the inbox',
+      source: 'schedule',
+      recurring: true,
+    });
+    const started = 1_000_000;
+    const step = 60_000;
+    engine.addTrigger({
+      workItemId: String(item.id),
+      actorId: 'dot',
+      kind: 'schedule',
+      spec: { kind: 'interval', seconds: 60 },
+      anchor: 'clock',
+      nextRunAt: started,
+    });
+    const now = started + step * 8 + 1_000;
+    setTime(now);
+    expect(engine.fireDueTriggers()).toHaveLength(1);
+    expect(engine.fireDueTriggers()).toHaveLength(0);
+    const trigger = engine.detail(String(item.id))?.triggers[0] as {
+      nextRunAt: number;
+    };
+    expect(trigger.nextRunAt).toBeGreaterThan(now);
+    expect(trigger.nextRunAt - now).toBeLessThanOrEqual(step);
+    const fired = (
+      engine.detail(String(item.id))?.events as {
+        type: string;
+        payloadJson: string;
+      }[]
+    ).find((event) => event.type === 'trigger_fired');
+    expect(JSON.parse(fired?.payloadJson ?? '{}').skipped).toBeGreaterThan(0);
+    expect(
+      engine
+        .detail(String(item.id))
+        ?.executions.filter((row) =>
+          ['queued', 'running'].includes(
+            String((row as { status: string }).status),
+          ),
+        ),
+    ).toHaveLength(1);
+  });
+
+  it('never continues a conversation ledger, and hides it from objective lists', () => {
+    const { engine } = open();
+    const parent = engine.createWorkItem({
+      actorId: 'dot-a',
+      ...CONVERSATION_LEDGER,
+      workThreadId: 'chat',
+    });
+    engine.createWorkItem({
+      actorId: 'dot-a',
+      title: 'Real',
+      objective: 'Do the work',
+      source: 'owner',
+      workThreadId: 'chat',
+    });
+    expect(engine.workForThread('chat')?.id).toBe(parent.id);
+    const child = engine.delegate({
+      parentWorkItemId: String(parent.id),
+      actorId: 'dot-b',
+      title: 'Research',
+      objective: 'Look it up',
+      blocking: true,
+      originThreadId: 'chat',
+    });
+    const claim = engine.claimExecution()!;
+    expect(claim.workItemId).toBe(child.workItemId);
+    engine.setFinishIntent(String(claim.id), 'complete');
+    engine.finishExecution(String(claim.id), 'completed');
+    expect(engine.detail(String(parent.id))?.executions).toHaveLength(0);
+    expect(engine.workItem(String(parent.id))?.status).toBe(
+      'waiting_for_dependency',
+    );
+    expect(
+      engine
+        .listWork('dot-a')
+        .some((detail) => detail?.workItem.source === 'conversation'),
+    ).toBe(false);
+    expect(
+      engine.listWork().some((detail) => detail?.workItem.id === parent.id),
+    ).toBe(false);
+  });
+
+  it('relabels conversation ledgers and detaches chat-bound work, both safely repeated', () => {
+    const { engine, db } = open();
+    db.exec(
+      'CREATE TABLE thread_bindings (id TEXT PRIMARY KEY, kind TEXT NOT NULL)',
+    );
+    db.prepare(
+      "INSERT INTO thread_bindings (id, kind) VALUES ('chat', 'chat')",
+    ).run();
+    const ledger = engine.createWorkItem({
+      actorId: 'dot',
+      title: 'Conversation',
+      objective: 'Work started from the conversation.',
+      source: 'owner',
+      workThreadId: 'chat',
+    });
+    const objective = engine.createWorkItem({
+      actorId: 'dot',
+      title: 'Research',
+      objective: 'Compare options',
+      source: 'owner',
+      workThreadId: 'chat',
+    });
+    expect(engine.labelConversationLedgers()).toBe(1);
+    expect(engine.labelConversationLedgers()).toBe(0);
+    expect(engine.workItem(String(ledger.id))?.source).toBe('conversation');
+    expect(engine.detachChatWork()).toBe(1);
+    expect(engine.detachChatWork()).toBe(0);
+    expect(engine.workItem(String(ledger.id))?.workThreadId).toBe('chat');
+    expect(engine.workItem(String(objective.id))).toMatchObject({
+      workThreadId: null,
+      originThreadId: 'chat',
+    });
   });
 
   it('does not inherit another Dot grant', () => {

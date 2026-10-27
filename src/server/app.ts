@@ -272,9 +272,8 @@ export function createApp({
         objective: parsed.data.prompt,
         source: recurring ? 'schedule' : 'owner',
         recurring,
-        autoResume: false,
+        autoResume: !recurring,
         originThreadId: parsed.data.threadId,
-        workThreadId: parsed.data.threadId,
       });
       if (!recurring || !spec || nextRunAt == null) {
         engine.enqueueExecution(String(item.id));

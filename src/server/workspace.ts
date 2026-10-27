@@ -14,8 +14,11 @@ import type {
   Space,
 } from '../shared/types.js';
 import type { CallReport } from './task-brief.js';
-/** `call_task` threads are hidden children of a chat, one per task a call delegates. */
-export type ThreadKind = 'chat' | 'consultation' | 'call_task';
+/**
+ * `call_task` threads are hidden children of a chat, one per task a call delegates.
+ * `work` threads are hidden too: each objective or schedule runs in its own.
+ */
+export type ThreadKind = 'chat' | 'consultation' | 'call_task' | 'work';
 export type CallTaskStatus =
   | 'planning'
   | 'waiting'
@@ -332,9 +335,39 @@ export class WorkspaceStore {
       .prepare('SELECT kind FROM thread_bindings WHERE id=? AND ownerId=?')
       .get(id, this.ownerId);
     if (!row) throw new Error('Conversation does not belong to this owner.');
-    return row.kind === 'consultation' || row.kind === 'call_task'
+    return row.kind === 'consultation' ||
+      row.kind === 'call_task' ||
+      row.kind === 'work'
       ? row.kind
       : 'chat';
+  }
+  /**
+   * The chat the owner sees for a thread: itself, a hidden task thread's
+   * parent, or the chat a work thread's objective came from.
+   */
+  chatThread(id: string): string | undefined {
+    let kind: ThreadKind;
+    try {
+      kind = this.threadKind(id);
+    } catch {
+      return undefined;
+    }
+    if (kind === 'chat') return id;
+    const row =
+      kind === 'call_task'
+        ? this.db
+            .prepare(
+              'SELECT parentThreadId AS chat FROM call_tasks WHERE childThreadId=?',
+            )
+            .get(id)
+        : kind === 'work' && this.hasTable('work_items')
+          ? this.db
+              .prepare(
+                'SELECT originThreadId AS chat FROM work_items WHERE workThreadId=? AND originThreadId IS NOT NULL LIMIT 1',
+              )
+              .get(id)
+          : undefined;
+    return typeof row?.chat === 'string' ? row.chat : undefined;
   }
   /** Starts a call or chat task record with its own hidden child thread. */
   createCallTask(input: {
@@ -602,7 +635,7 @@ export class WorkspaceStore {
   }
   /**
    * Removes one chat and its transcript. Saved pages, documents, memories,
-   * and schedules stay. A schedule that used this chat opens a new one next time.
+   * and schedules stay; work that came from this chat stops reporting into it.
    */
   deleteConversation(id: string) {
     const kind = this.db
@@ -638,11 +671,12 @@ export class WorkspaceStore {
       ])
         this.db.prepare(statement).run(id);
       if (this.hasTable('work_items'))
-        this.db
-          .prepare(
-            'UPDATE work_items SET workThreadId=NULL WHERE workThreadId=?',
-          )
-          .run(id);
+        for (const column of ['workThreadId', 'originThreadId'])
+          this.db
+            .prepare(
+              `UPDATE work_items SET ${column}=NULL WHERE ${column}=?`,
+            )
+            .run(id);
       this.db
         .prepare('DELETE FROM thread_bindings WHERE id=? AND ownerId=?')
         .run(id, this.ownerId);

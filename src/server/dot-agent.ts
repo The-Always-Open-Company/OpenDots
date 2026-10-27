@@ -45,7 +45,10 @@ import { actionItemTools } from './action-item-tools.js';
 import { withTimeout } from './model-json.js';
 import type { Message } from '@ag-ui/core';
 import { consultationBlocked, type ExecutionContext } from './authorize.js';
-import type { ExecutionEngine } from './execution-engine.js';
+import {
+  CONVERSATION_LEDGER,
+  type ExecutionEngine,
+} from './execution-engine.js';
 import type { PluginService } from './plugins.js';
 import {
   capabilityContext,
@@ -253,13 +256,17 @@ export class DotAgent extends AbstractAgent {
       let timedOut = false;
       let finished = false;
       let closed = false;
+      const limitMs =
+        this.workContext && this.services.engine
+          ? this.services.engine.policy(this.dotId).maxExecutionMs
+          : TURN_TIME_LIMIT_MS;
       const timeout = setTimeout(() => {
         timedOut = true;
         this.abortRun();
-      }, TURN_TIME_LIMIT_MS);
+      }, limitMs);
       const timeLimitError = () => ({
         type: EventType.RUN_ERROR,
-        message: `This turn reached the ${TURN_TIME_LIMIT_MS / 1000} second time limit and was stopped. Try a smaller request.`,
+        message: `This turn reached the ${limitMs / 1000} second time limit and was stopped. Try a smaller request.`,
       });
       const start = async () => {
         try {
@@ -744,12 +751,16 @@ export class DotAgent extends AbstractAgent {
           const engine = this.services.engine;
           const plugins = this.services.plugins;
           const work = this.workContext;
+          // Background work runs in a hidden thread; its approvals and links belong in the owner's chat.
+          const ownerThread = work
+            ? (this.workspace.chatThread(input.threadId) ?? input.threadId)
+            : input.threadId;
           const actionItems = this.services.actionItems;
           if (actionItems)
             serverTools.push(
               ...actionItemTools(actionItems, {
                 dotId: dot.id,
-                threadId: input.threadId,
+                threadId: ownerThread,
                 timeZone: engine?.policy(dot.id).timezone ?? 'UTC',
                 inWork: !!work,
                 check,
@@ -761,7 +772,7 @@ export class DotAgent extends AbstractAgent {
             ownerId: this.workspace.ownerId,
             workItemId: work?.workItemId,
             executionId: work?.executionId ?? '',
-            threadId: input.threadId,
+            threadId: ownerThread,
             mode: work ? 'background' : 'interactive',
             cause: work ? 'continuation' : 'model',
           });
@@ -808,9 +819,7 @@ export class DotAgent extends AbstractAgent {
                       if (existing) return String(existing.id);
                       const item = engine.createWorkItem({
                         actorId: dot.id,
-                        title: 'Conversation',
-                        objective: 'Work started from the conversation.',
-                        source: 'owner',
+                        ...CONVERSATION_LEDGER,
                         originThreadId: input.threadId,
                         workThreadId: input.threadId,
                         autoResume: false,

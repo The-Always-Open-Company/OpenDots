@@ -20,7 +20,7 @@ export function finishedAttempts(work: WorkView[]): FinishedAttempt[] {
         id: execution.id,
         status: execution.status,
         title: String(item.workItem.title),
-        threadId: item.workItem.workThreadId ?? null,
+        threadId: item.workItem.originThreadId ?? null,
         source: String(item.workItem.source),
         kinds: item.triggers.map((trigger) => trigger.kind),
       })),

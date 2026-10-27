@@ -253,6 +253,30 @@ it('folds thoughts and several tool steps into one collapsed row ahead of the re
   expect(html.match(/<details class="agent-trace"/g)).toHaveLength(1);
 });
 
+it('renders a posted background result as a work marker', () => {
+  const html = renderToStaticMarkup(
+    <ChatTranscript
+      messages={[
+        { id: 'ask', role: 'user', content: 'Look this up' },
+        {
+          id: 'opendots-work-result:1',
+          role: 'user',
+          content:
+            'Objective finished: Research\n\nPosted by the app from background work, not written by the owner.',
+        },
+        { id: 'answer', role: 'assistant', content: 'Here is the comparison' },
+      ]}
+      calls={[]}
+    />,
+  );
+  expect(html).toContain('Objective finished: Research');
+  expect(html).toContain('work-marker');
+  expect(html).not.toContain('Posted by the app');
+  expect(html.indexOf('Look this up')).toBeLessThan(
+    html.indexOf('Objective finished: Research'),
+  );
+});
+
 it('leaves a single tool step as its own line', () => {
   const html = renderToStaticMarkup(
     <ChatTranscript

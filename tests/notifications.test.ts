@@ -64,7 +64,8 @@ it('stores, lists, marks read, and delivers to channels', async () => {
 
 it('notifies when background work finishes, with the Dot’s last reply', async () => {
   const { engine, workspace, notifications, dot } = fixture();
-  workspace.bindThread('work-thread', dot.id, 'Read notes');
+  workspace.bindThread('chat', dot.id, 'Notes');
+  workspace.bindThread('work-thread', dot.id, 'Read notes', 'work');
   workspace.threads.appendRun(
     {
       runId: 'run',
@@ -85,6 +86,7 @@ it('notifies when background work finishes, with the Dot’s last reply', async 
     title: 'Read notes',
     objective: 'Read them.',
     source: 'owner',
+    originThreadId: 'chat',
     workThreadId: 'work-thread',
   });
   engine.enqueueExecution(String(item.id));
@@ -98,7 +100,7 @@ it('notifies when background work finishes, with the Dot’s last reply', async 
       dotId: dot.id,
       title: `${dot.name} finished "Read notes"`,
       body: 'Filed 3 action items.',
-      threadId: 'work-thread',
+      threadId: 'chat',
       workItemId: String(item.id),
     }),
   ]);
@@ -171,6 +173,7 @@ it('reports a failed run that will not retry, but not one the owner stopped', as
     engine.finishExecution(String(claim.id), 'failed', error);
   };
   run('Stopped', 'Run stopped.');
+  run('Restarted', 'Server stopped during this run.');
   run('Broken', 'The model is unavailable.');
   await settled();
   expect(notifications.list({ unread: true })).toEqual([
@@ -178,6 +181,11 @@ it('reports a failed run that will not retry, but not one the owner stopped', as
       kind: 'work_failed',
       title: `${dot.name} could not finish "Broken"`,
       body: 'The model is unavailable.',
+    }),
+    expect.objectContaining({
+      kind: 'work_failed',
+      title: `${dot.name} could not finish "Restarted"`,
+      body: 'Server stopped during this run.',
     }),
   ]);
 });

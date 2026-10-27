@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { workPromptKind } from '../shared/work-marker.js';
+import { workPromptKind, workResultLabel } from '../shared/work-marker.js';
 import type { MemoryTurn } from './memory.js';
 
 export const PREFERENCE_MEMORY_INSTRUCTIONS = `Extract durable preferences about the person, not a record of the conversation.
@@ -49,7 +49,7 @@ export function shouldLearnFromMessage(message: {
   metadata?: unknown;
 }) {
   if (message.role !== 'user') return false;
-  if (workPromptKind(message)) return false;
+  if (workPromptKind(message) || workResultLabel(message)) return false;
   const metadata = message.metadata;
   const source =
     metadata && typeof metadata === 'object' && 'opendotsSource' in metadata

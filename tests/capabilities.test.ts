@@ -33,7 +33,7 @@ import {
   skillInstructions,
   loadSkills,
 } from '../src/server/skills.js';
-import { WorkRunner } from '../src/server/work-runner.js';
+import { ensureWorkThread, WorkRunner } from '../src/server/work-runner.js';
 
 const cleanup: { close: () => void; dir?: string }[] = [];
 afterEach(() => {
@@ -457,6 +457,99 @@ describe('delegation and consultation', () => {
         objective: 'This should fail',
       }),
     ).rejects.toThrow(/not available/);
+  });
+});
+
+describe('objectives', () => {
+  it('records the origin chat and runs in a hidden work thread', async () => {
+    const { workspace, engine, dot, deps } = world();
+    const other = workspace.createDot(
+      dot.spaceId,
+      'Expert',
+      'Helps.',
+      true,
+      true,
+      [dot.spaceId],
+      true,
+    );
+    const chat = workspace.bindThread('chat-1', dot.id, 'Plans');
+    const task = workspace.createCallTask({
+      source: 'chat',
+      callId: 'run',
+      delegationId: 'run',
+      parentThreadId: chat.id,
+      label: 'Research',
+    });
+    const start = async (threadId: string) => {
+      const { workItemId } = (await call(
+        workTools({ ...deps(), threadId }),
+        'start_objective',
+        { title: 'Research', objective: 'Compare the options' },
+      )) as { workItemId: string };
+      return engine.workItem(String(workItemId))!;
+    };
+    const fromChat = await start(chat.id);
+    expect(fromChat.originThreadId).toBe(chat.id);
+    expect(fromChat.workThreadId).toBeNull();
+    expect(fromChat.autoResume).toBe(1);
+    const fromTask = await start(task.childThreadId);
+    expect(fromTask.originThreadId).toBe(chat.id);
+    expect(fromTask.workThreadId).toBeNull();
+
+    const hidden = ensureWorkThread(workspace, engine, fromChat);
+    expect(workspace.threadKind(hidden)).toBe('work');
+    expect(engine.workItem(String(fromChat.id))?.workThreadId).toBe(hidden);
+    expect(
+      ensureWorkThread(
+        workspace,
+        engine,
+        engine.workItem(String(fromChat.id))!,
+      ),
+    ).toBe(hidden);
+    expect(workspace.conversations().map((item) => item.id)).not.toContain(
+      hidden,
+    );
+
+    const scheduled = (await call(
+      workTools({ ...deps(), threadId: task.childThreadId }),
+      'propose_schedule',
+      {
+        title: 'Morning',
+        objective: 'Check the news',
+        spec: { kind: 'interval', seconds: 86_400 },
+      },
+    )) as { actionId: string; workItemId: string };
+    expect(engine.workItem(scheduled.workItemId)).toMatchObject({
+      originThreadId: chat.id,
+      workThreadId: null,
+    });
+    expect(engine.action(scheduled.actionId)?.threadId).toBe(chat.id);
+
+    const duringWork = workTools({
+      ...deps(),
+      threadId: hidden,
+      context: () => ({
+        ...deps().context(),
+        threadId: hidden,
+        workItemId: String(fromChat.id),
+        mode: 'background',
+      }),
+    });
+    const proposal = (await call(duringWork, 'propose_schedule', {
+      title: 'Evening',
+      objective: 'Check again',
+      spec: { kind: 'interval', seconds: 86_400 },
+    })) as { actionId: string };
+    expect(engine.action(proposal.actionId)?.threadId).toBe(chat.id);
+    const delegation = (await call(duringWork, 'start_delegation', {
+      dotId: other.id,
+      title: 'Look up',
+      objective: 'Find the source',
+    })) as { workItemId: string };
+    expect(engine.workItem(delegation.workItemId)).toMatchObject({
+      originThreadId: chat.id,
+      workThreadId: null,
+    });
   });
 });
 
