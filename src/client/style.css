@@ -131,22 +131,10 @@ h3 {
   color: #a1addc;
   margin-left: -6px;
 }
-.dotted-logo {
-  display: grid;
-  grid-template-columns: repeat(2, 5px);
-  gap: 3px;
-  width: 13px;
-  transform: rotate(-10deg);
+.wordmark .brand-mark {
+  height: 18px;
+  width: auto;
   flex-shrink: 0;
-}
-.dotted-logo i {
-  height: 5px;
-  width: 5px;
-  background: #8492c6;
-  border-radius: 50%;
-}
-.dotted-logo i:first-child {
-  background: #42485d;
 }
 .profile {
   display: flex;
@@ -634,10 +622,6 @@ h3 {
   color: #b4b3ba;
   font-size: 8px;
   margin-top: 45px;
-}
-.dotted-logo.tiny {
-  transform: scale(0.7);
-  opacity: 0.55;
 }
 .text-button {
   border: 0;
@@ -4066,15 +4050,12 @@ h3 {
   border-radius: 8px;
 }
 .icon-rail .rail-brand {
-  color: #222;
-  font-size: 29px;
-  font-weight: 650;
-  letter-spacing: -7px;
-  padding-right: 6px;
   margin-bottom: 12px;
 }
-.rail-brand span {
-  color: #438c81;
+.icon-rail .rail-brand .brand-mark {
+  width: 34px;
+  height: auto;
+  display: block;
 }
 .icon-rail .rail-settings {
   margin-top: auto;
@@ -4129,6 +4110,9 @@ h3 {
   letter-spacing: -0.5px;
   padding: 0 10px;
   margin-bottom: 23px;
+}
+.template-app .wordmark .brand-mark {
+  height: 14px;
 }
 .template-app .wordmark-dot {
   display: none;

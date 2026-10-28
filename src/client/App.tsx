@@ -464,7 +464,13 @@ export function App() {
             setSelectedThread(undefined);
           }}
         >
-          o<span>·</span>
+          <img
+            className="brand-mark"
+            src="/logo.png"
+            alt=""
+            width={640}
+            height={383}
+          />
         </button>
         <button
           aria-label={navCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -616,12 +622,13 @@ export function App() {
             setSelectedThread(undefined);
           }}
         >
-          <span className="dotted-logo">
-            <i />
-            <i />
-            <i />
-            <i />
-          </span>
+          <img
+            className="brand-mark"
+            src="/logo.png"
+            alt=""
+            width={640}
+            height={383}
+          />
           Pods<span className="wordmark-dot">•</span>
         </button>
         <button
