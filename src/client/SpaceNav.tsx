@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChevronRight, FileText, Folder } from 'lucide-react';
+import { ChevronRight, FileText, Folder, MoreHorizontal } from 'lucide-react';
 import type { Space } from '../shared/types';
 import type { Page } from '../server/pages';
 import { api } from './api';
@@ -9,11 +9,13 @@ export function SpaceNav({
   active,
   pageId,
   onOpen,
+  onEdit,
 }: {
   space: Space;
   active: boolean;
   pageId?: string;
   onOpen: (pageId?: string) => void;
+  onEdit: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [pages, setPages] = useState<Page[]>([]);
@@ -78,6 +80,13 @@ export function SpaceNav({
         >
           <Folder size={16} />
           <span>{space.name}</span>
+        </button>
+        <button
+          className="icon-button space-settings"
+          aria-label={`Edit ${space.name}`}
+          onClick={onEdit}
+        >
+          <MoreHorizontal size={15} />
         </button>
       </div>
       {expanded && (

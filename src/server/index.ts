@@ -109,7 +109,7 @@ const config: PlatformConfig = {
   voiceModel:
     process.env.VOICE_MODEL ||
     (voiceProvider === 'live' ? DEFAULT_LIVE_VOICE_MODEL : undefined),
-  voiceName: process.env.VOICE_NAME || 'marin',
+  voiceName: process.env.VOICE_NAME || 'willow',
   voiceTaskModel: process.env.VOICE_TASK_MODEL || undefined,
   voiceTaskLimit: voiceTaskLimitFromEnv(process.env.VOICE_TASK_LIMIT),
   voiceTaskConcurrency: voiceTaskConcurrencyFromEnv(

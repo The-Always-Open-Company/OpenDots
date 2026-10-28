@@ -85,6 +85,16 @@
   margin: 0;
   max-width: 560px;
 }
+.library-edit {
+  border: 0;
+  background: none;
+  padding: 0;
+  margin-top: 10px;
+  color: #626963;
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .document-primary {
   background: #2f3c34;
   color: #fff;

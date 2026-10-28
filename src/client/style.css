@@ -131,11 +131,6 @@ h3 {
   color: #a1addc;
   margin-left: -6px;
 }
-.wordmark .brand-mark {
-  height: 18px;
-  width: auto;
-  flex-shrink: 0;
-}
 .profile {
   display: flex;
   align-items: center;
@@ -4111,9 +4106,6 @@ h3 {
   padding: 0 10px;
   margin-bottom: 23px;
 }
-.template-app .wordmark .brand-mark {
-  height: 14px;
-}
 .template-app .wordmark-dot {
   display: none;
 }
@@ -4563,6 +4555,9 @@ h3 {
   flex: 1;
   min-width: 0;
   padding-left: 4px;
+}
+.space-nav-row > .space-settings {
+  flex-shrink: 0;
 }
 .space-page-link {
   font-size: 12px;

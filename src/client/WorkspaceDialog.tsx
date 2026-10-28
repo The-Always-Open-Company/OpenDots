@@ -4,11 +4,12 @@ import type {
   Dot,
   Memory,
   ReplyMode,
+  Space,
   State,
   WorkspaceState,
 } from '../shared/types';
 export type Dialog =
-  | { type: 'space' }
+  | { type: 'space'; space?: Space }
   | { type: 'dot'; dot?: Dot; spaceId: string }
   | { type: 'settings' }
   | { type: 'memory'; memory?: Memory }
@@ -27,14 +28,20 @@ export function WorkspaceDialog({
   mutate: (path: string, method: string, body?: unknown) => Promise<boolean>;
 }) {
   const [name, setName] = useState(
-    dialog.type === 'dot' ? (dialog.dot?.name ?? '') : '',
+    dialog.type === 'dot'
+      ? (dialog.dot?.name ?? '')
+      : dialog.type === 'space'
+        ? (dialog.space?.name ?? '')
+        : '',
   );
   const [text, setText] = useState(
     dialog.type === 'dot'
       ? (dialog.dot?.instructions ?? '')
-      : dialog.type === 'memory'
-        ? (dialog.memory?.text ?? '')
-        : '',
+      : dialog.type === 'space'
+        ? (dialog.space?.description ?? '')
+        : dialog.type === 'memory'
+          ? (dialog.memory?.text ?? '')
+          : '',
   );
   const [research, setResearch] = useState(
     dialog.type === 'dot'
@@ -119,7 +126,9 @@ export function WorkspaceDialog({
   }, []);
   const title =
     dialog.type === 'space'
-      ? 'A space for something.'
+      ? dialog.space
+        ? 'Make this space yours.'
+        : 'A space for something.'
       : dialog.type === 'dot'
         ? dialog.dot
           ? 'Make this Pod yours.'
@@ -157,7 +166,8 @@ export function WorkspaceDialog({
               method = 'POST',
               body: unknown;
             if (dialog.type === 'space') {
-              path = '/spaces';
+              path = dialog.space ? `/spaces/${dialog.space.id}` : '/spaces';
+              method = dialog.space ? 'PUT' : 'POST';
               body = { name, description: text };
             }
             if (dialog.type === 'dot') {
@@ -232,7 +242,7 @@ export function WorkspaceDialog({
               <input
                 id="entity-name"
                 value={name}
-                maxLength={40}
+                maxLength={dialog.type === 'space' ? 60 : 40}
                 onChange={(e) => setName(e.target.value)}
                 required
               />
@@ -283,7 +293,13 @@ export function WorkspaceDialog({
               <textarea
                 id="entity-text"
                 rows={4}
-                maxLength={dialog.type === 'schedule' ? 4000 : 2000}
+                maxLength={
+                  dialog.type === 'schedule'
+                    ? 4000
+                    : dialog.type === 'space'
+                      ? 500
+                      : 2000
+                }
                 required={dialog.type !== 'space'}
                 value={text}
                 onChange={(e) => setText(e.target.value)}

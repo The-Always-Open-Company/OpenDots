@@ -39,14 +39,14 @@ export function workspaceRoutes(platform: Platform, voice: VoiceService) {
       calls: platform.workspace.calls(),
     }),
   );
+  const spaceSchema = z
+    .object({
+      name: z.string().trim().min(1).max(60),
+      description: z.string().max(500).default(''),
+    })
+    .strict();
   app.post('/spaces', async (c) => {
-    const data = z
-      .object({
-        name: z.string().trim().min(1).max(60),
-        description: z.string().max(500).default(''),
-      })
-      .strict()
-      .safeParse(await c.req.json());
+    const data = spaceSchema.safeParse(await c.req.json());
     if (!data.success)
       return c.json(
         { error: 'Enter a Space name (up to 60 characters).' },
@@ -55,6 +55,27 @@ export function workspaceRoutes(platform: Platform, voice: VoiceService) {
     return c.json(
       platform.workspace.createSpace(data.data.name, data.data.description),
       201,
+    );
+  });
+  app.put('/spaces/:id', async (c) => {
+    const data = spaceSchema.safeParse(await c.req.json());
+    if (!data.success)
+      return c.json(
+        { error: 'Enter a Space name (up to 60 characters).' },
+        400,
+      );
+    if (
+      !platform.workspace
+        .spaces()
+        .some((space) => space.id === c.req.param('id'))
+    )
+      return c.json({ error: 'Space not found.' }, 404);
+    return c.json(
+      platform.workspace.updateSpace(
+        c.req.param('id'),
+        data.data.name,
+        data.data.description,
+      ),
     );
   });
   app.post('/dots', async (c) => {

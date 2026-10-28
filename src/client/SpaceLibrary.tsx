@@ -27,12 +27,14 @@ export function SpaceLibrary({
   pages,
   onPage,
   onNew,
+  onEdit,
   documents,
 }: {
   space: Space;
   pages: Page[];
   onPage: (id: string) => void;
   onNew: () => void;
+  onEdit: () => void;
   documents?: ReactNode;
 }) {
   const [query, setQuery] = useState('');
@@ -63,6 +65,9 @@ export function SpaceLibrary({
           <span className="library-eyebrow">SPACE</span>
           <h1>{space.name}</h1>
           {space.description && <p>{space.description}</p>}
+          <button className="library-edit" onClick={onEdit}>
+            Edit name and description
+          </button>
         </div>
         <button className="document-primary" onClick={onNew}>
           <Plus size={17} /> New page

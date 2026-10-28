@@ -23,6 +23,7 @@ export function SpaceWorkspace({
   onThread,
   onSettings,
   onCreateDot,
+  onEditSpace,
 }: {
   space: Space;
   pageId?: string;
@@ -37,6 +38,7 @@ export function SpaceWorkspace({
   onThread: (threadId: string) => void;
   onSettings: () => void;
   onCreateDot: () => void;
+  onEditSpace: () => void;
 }) {
   const [pages, setPages] = useState<Page[]>([]);
   const [error, setError] = useState('');
@@ -103,6 +105,7 @@ export function SpaceWorkspace({
           pages={pages}
           onPage={onPage}
           onNew={() => void create(null)}
+          onEdit={onEditSpace}
           documents={
             <SpaceDocuments
               space={space}

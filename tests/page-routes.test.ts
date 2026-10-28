@@ -79,6 +79,42 @@ it('saves Dot settings through the owner API and rejects removed Learning fields
     ).status,
   ).toBe(401);
 });
+it('renames a space and replaces its description', async () => {
+  const { ws, app } = fixture();
+  const space = ws.spaces()[0];
+  const updated = await app.request(
+    `/api/spaces/${space.id}`,
+    request({ name: '  Studio  ', description: 'Work in progress' }, 'PUT'),
+  );
+  expect(updated.status).toBe(200);
+  expect(await updated.json()).toMatchObject({
+    id: space.id,
+    name: 'Studio',
+    description: 'Work in progress',
+    createdAt: space.createdAt,
+  });
+  expect(ws.spaces().find((item) => item.id === space.id)).toMatchObject({
+    name: 'Studio',
+    description: 'Work in progress',
+  });
+  expect(
+    (
+      await app.request(
+        `/api/spaces/${space.id}`,
+        request({ name: ' ', description: '' }, 'PUT'),
+      )
+    ).status,
+  ).toBe(400);
+  expect(
+    (
+      await app.request(
+        '/api/spaces/missing',
+        request({ name: 'Nope', description: '' }, 'PUT'),
+      )
+    ).status,
+  ).toBe(404);
+  expect(ws.spaces().find((item) => item.id === space.id)?.name).toBe('Studio');
+});
 it('supports manual pages without credentials and returns validation, scope and conflict statuses', async () => {
   const { ws, app } = fixture();
   const space = ws.spaces()[0].id;

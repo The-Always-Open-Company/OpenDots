@@ -622,13 +622,6 @@ export function App() {
             setSelectedThread(undefined);
           }}
         >
-          <img
-            className="brand-mark"
-            src="/logo.png"
-            alt=""
-            width={640}
-            height={383}
-          />
           Pods<span className="wordmark-dot">•</span>
         </button>
         <button
@@ -700,6 +693,7 @@ export function App() {
               active={view === 'space' && spaceId === space.id}
               pageId={pageId}
               onOpen={(id) => openPage(space.id, id)}
+              onEdit={() => setDialog({ type: 'space', space })}
             />
           ))}
         </nav>
@@ -823,6 +817,12 @@ export function App() {
             onPage={(id) => openPage(spaceId, id)}
             onSettings={() => setDialog({ type: 'settings' })}
             onCreateDot={() => setDialog({ type: 'dot', spaceId })}
+            onEditSpace={() => {
+              const space = workspace.spaces.find(
+                (item) => item.id === spaceId,
+              );
+              if (space) setDialog({ type: 'space', space });
+            }}
             onDirty={setDirtyPage}
             onRefresh={refresh}
             onSchedule={(threadId) => setDialog({ type: 'schedule', threadId })}

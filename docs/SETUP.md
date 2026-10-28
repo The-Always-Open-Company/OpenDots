@@ -290,7 +290,7 @@ Slack is not available in this fork yet. Upstream Pods delivered Slack messages 
 
 ## Calls
 
-Calls use [GPT-Live](https://developers.openai.com/api/docs/models/gpt-live-1) at `api.openai.com` by default. Set `VOICE_API_KEY` to a key with GPT-Live access; `VOICE_MODEL` defaults to `gpt-live-1` and `VOICE_NAME` selects the voice. Calls use browser microphone access and WebRTC. Hosted deployments need HTTPS.
+Calls use [GPT-Live](https://developers.openai.com/api/docs/models/gpt-live-1) at `api.openai.com` by default. Set `VOICE_API_KEY` to a key with GPT-Live access; `VOICE_MODEL` defaults to `gpt-live-1` and `VOICE_NAME` selects the voice (default `willow`). Calls use browser microphone access and WebRTC. Hosted deployments need HTTPS.
 
 A call uses two models. The voice model listens, speaks and decides when it needs help. When it does, it delegates to the server, which turns the owner's words into a short task brief and runs it as a call task: a turn of the selected Pod with the same tools and permissions, in a hidden thread of its own. Each finished task adds a compact exchange (the task, then the full answer) to the conversation, and a call receipt is added when the call ends. Each call allows 20 delegated turns (`VOICE_TASK_LIMIT`, 1 to 100, or `off`) and lasts at most 15 minutes.
 

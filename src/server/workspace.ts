@@ -144,6 +144,14 @@ export class WorkspaceStore {
       .run(space.id, name, description, space.createdAt);
     return space;
   }
+  updateSpace(id: string, name: string, description: string): Space {
+    const current = this.spaces().find((space) => space.id === id);
+    if (!current) throw new Error('Space not found.');
+    this.db
+      .prepare('UPDATE spaces SET name=?, description=? WHERE id=?')
+      .run(name, description, id);
+    return { ...current, name, description };
+  }
   dots(): Dot[] {
     return this.db
       .prepare(
@@ -673,9 +681,7 @@ export class WorkspaceStore {
       if (this.hasTable('work_items'))
         for (const column of ['workThreadId', 'originThreadId'])
           this.db
-            .prepare(
-              `UPDATE work_items SET ${column}=NULL WHERE ${column}=?`,
-            )
+            .prepare(`UPDATE work_items SET ${column}=NULL WHERE ${column}=?`)
             .run(id);
       this.db
         .prepare('DELETE FROM thread_bindings WHERE id=? AND ownerId=?')
