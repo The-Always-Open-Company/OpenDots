@@ -19,7 +19,10 @@ import {
   type Actor,
   type SourceInput,
 } from '../src/server/action-items.js';
-import { actionItemTools } from '../src/server/action-item-tools.js';
+import {
+  actionItemTools,
+  shareLimits,
+} from '../src/server/action-item-tools.js';
 import { consultationBlocked } from '../src/server/authorize.js';
 import type { CompleteJson } from '../src/server/model-json.js';
 import { fixture, indexed } from './fixtures/document-library.js';
@@ -613,8 +616,86 @@ describe('action item tools', () => {
     expect(found.items[0]).toMatchObject({ assignee: 'you', due: null });
     const parameters = (search as unknown as { parameters: z.ZodType })
       .parameters;
-    expect(parameters.safeParse({ limit: 20 }).success).toBe(true);
-    expect(parameters.safeParse({ limit: 21 }).success).toBe(false);
+    expect(parameters.safeParse({ limit: 50 }).success).toBe(true);
+    expect(parameters.safeParse({ limit: 51 }).success).toBe(false);
+  });
+
+  it('runs several searches in one call within a shared budget', async () => {
+    const { service, first, owner } = setup();
+    await service.create(
+      [companyAPricing, companyASecurity, owedByPersonJ],
+      owner,
+    );
+    const search = actionItemTools(service, {
+      dotId: first.id,
+      threadId: 'thread-1',
+      timeZone: 'UTC',
+      inWork: false,
+      check: () => undefined,
+      signal: new AbortController().signal,
+    }).find((tool) => tool.name === 'search_action_items')!;
+    type Result = {
+      requested: number;
+      returned: number;
+      cut: boolean;
+      nextOffset: number | null;
+      items: Record<string, unknown>[];
+    };
+    const batch = (await search.execute!({
+      searches: Array.from({ length: 5 }, () => ({ limit: 50 })),
+    } as never)) as { results: Result[] };
+    expect(batch.results).toHaveLength(5);
+    for (const result of batch.results)
+      expect(result).toMatchObject({ requested: 50, returned: 3, cut: true });
+    await expect(
+      search.execute!({ limit: 2, searches: [{}] } as never),
+    ).rejects.toThrow(/either one search/);
+    const parameters = (search as unknown as { parameters: z.ZodType })
+      .parameters;
+    expect(
+      parameters.safeParse({ searches: Array.from({ length: 6 }, () => ({})) })
+        .success,
+    ).toBe(false);
+  });
+
+  it('splits the result budget in proportion with a slot for each search', () => {
+    expect(shareLimits([10, 20], 100)).toEqual([10, 20]);
+    const shared = shareLimits([50, 50, 50, 50, 50], 100);
+    expect(shared).toEqual([20, 20, 20, 20, 20]);
+    const uneven = shareLimits([50, 50, 50, 1, 1], 100);
+    expect(uneven.reduce((sum, value) => sum + value, 0)).toBeLessThanOrEqual(
+      100,
+    );
+    expect(Math.min(...uneven)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('filters by when items were filed and finished', async () => {
+    const { service, first, owner } = setup();
+    const created = await service.create([companyAPricing], owner);
+    await service.create([companyASecurity], owner);
+    const id = (created.results[0] as { item: { id: string } }).item.id;
+    await service.update(id, { status: 'done' }, owner);
+    const search = actionItemTools(service, {
+      dotId: first.id,
+      threadId: 'thread-1',
+      timeZone: 'UTC',
+      inWork: false,
+      check: () => undefined,
+      signal: new AbortController().signal,
+    }).find((tool) => tool.name === 'search_action_items')!;
+    const today = new Date().toISOString().slice(0, 10);
+    const run = (input: object) =>
+      search.execute!(input as never) as Promise<{
+        total: number;
+        items: { id: string }[];
+      }>;
+    // A period filter without statuses includes finished items.
+    expect(
+      (await run({ createdAfter: today, createdBefore: today })).total,
+    ).toBe(2);
+    const done = await run({ completedAfter: today, completedBefore: today });
+    expect(done.items.map((item) => item.id)).toEqual([id]);
+    expect((await run({ createdBefore: '2000-01-01' })).total).toBe(0);
   });
 
   it('lists summaries a page at a time', async () => {

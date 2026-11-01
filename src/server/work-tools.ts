@@ -10,7 +10,10 @@ import {
   CONVERSATION_LEDGER,
   type ExecutionEngine,
 } from './execution-engine.js';
-import { ACTION_ITEM_PROMPT } from './action-item-tools.js';
+import {
+  ACTION_ITEM_SKILL,
+  ACTION_ITEM_SKILL_NAME,
+} from './action-item-skill.js';
 import { runWithOperation } from './effect-context.js';
 import type { MemoryProvider } from './memory.js';
 import type { PluginService } from './plugins.js';
@@ -57,6 +60,8 @@ export interface WorkDeps {
   threadId: string;
   check: () => void;
   context: () => ExecutionContext;
+  /** Action items are configured, so the built-in skill can be loaded. */
+  actionItems?: boolean;
 }
 
 export function snapshotFor(
@@ -81,7 +86,9 @@ export function snapshotFor(
       deps.plugins.allowed(actor.id, pluginId, toolName),
     pluginPolicy: (pluginId, toolName, args) =>
       deps.plugins.policy(actor.id, pluginId, toolName, args),
-    skillAllowed: (name) => deps.engine.skillGranted(actor.id, name),
+    skillAllowed: (name) =>
+      name === ACTION_ITEM_SKILL_NAME ||
+      deps.engine.skillGranted(actor.id, name),
     blockedOnConsultation: CONSULTATION_BLOCKED_TOOLS,
   };
 }
@@ -269,16 +276,22 @@ export function capabilityPrompt(input: CapabilityInput) {
  */
 export function capabilityContext(input: CapabilityInput) {
   const policy = input.engine.policy(input.dot.id);
-  const skills = loadSkills(input.skillsDir).filter((skill) =>
-    input.engine.skillGranted(input.dot.id, skill.name),
+  const installed = loadSkills(input.skillsDir).filter(
+    (skill) => skill.name !== ACTION_ITEM_SKILL_NAME,
   );
+  const skills = [
+    ...(input.actionItems ? [ACTION_ITEM_SKILL] : []),
+    ...installed.filter((skill) =>
+      input.engine.skillGranted(input.dot.id, skill.name),
+    ),
+  ];
   const mentions = mentionedSkills(
     input.latestUser,
     skills.map((skill) => skill.name),
   );
   const denied = mentionedSkills(
     input.latestUser,
-    loadSkills(input.skillsDir)
+    installed
       .map((skill) => skill.name)
       .filter((name) => !skills.some((skill) => skill.name === name)),
   );
@@ -323,7 +336,6 @@ export function capabilityContext(input: CapabilityInput) {
     input.inWork
       ? `This run has about ${duration(policy.maxExecutionMs)}. End it with a written summary of what you found, and call complete_work or fail_work when the objective is settled. If it needs more time, end with what is done and what remains; the next attempt continues in this thread.`
       : 'A chat reply has about 90 seconds. When a request needs broad research, many pages, or several checks, tell the owner the plan in a sentence and call start_objective instead of doing it all in this reply. Always end a reply with an answer, even a partial one.',
-    input.actionItems ? ACTION_ITEM_PROMPT : '',
     `Wake window: at least ${Math.round(policy.minWakeIntervalMs / 60_000)} minutes and at most ${Math.round(policy.maxWakeHorizonMs / 86_400_000)} days. An earlier wake is rejected.`,
     'If a tool returns status pending, that action is stored for the owner. Do not call it again. A pending result from an earlier turn is not still waiting when a later message says the owner already approved it.',
     'To retry an effect that already started, pass its operationId. A new call without that id is a new operation.',
@@ -354,6 +366,10 @@ export function workTools(deps: WorkDeps): ToolDefinition[] {
       parameters: z.object({ name: z.string().trim().min(1).max(64) }),
       execute: async ({ name }) => {
         deps.check();
+        if (name === ACTION_ITEM_SKILL_NAME) {
+          if (!deps.actionItems) throw new Error('Skill not found.');
+          return skillInstructions(ACTION_ITEM_SKILL);
+        }
         const skill = loadSkills(deps.skillsDir).find(
           (item) => item.name === name,
         );

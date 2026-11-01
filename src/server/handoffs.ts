@@ -22,7 +22,7 @@ export class HandoffError extends Error {
 
 const STEPS = (source: string) =>
   [
-    `2. File action items with create_action_items for everything the owner has to do or is owed, with ${source} as the source. Update existing items instead when it shows something changed or was done.`,
+    `2. Load the action-items skill with load_skill, then file action items with create_action_items for everything the owner has to do or is owed, with ${source} as the source. Update existing items instead when it shows something changed or was done.`,
     '3. Finish with a short reply for the owner: what it is, the key decisions, open questions, and what you filed. Then call complete_work.',
   ].join('\n');
 

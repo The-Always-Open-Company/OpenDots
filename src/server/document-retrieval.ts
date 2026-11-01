@@ -535,6 +535,14 @@ export function describePassages(passages: RetrievedPassage[]): string {
     : '';
 }
 
+/**
+ * The standing note for a Pod with a document library. The list itself stays
+ * out of the prompt; list_documents returns it when the model needs it.
+ */
+export function describeLibrary(): string {
+  return ' A shared document library is available: use list_documents to see what is shared with you and search_documents to find passages. Attached documents are listed in messages with their IDs. Do not claim a document exists unless a tool or message showed it.';
+}
+
 /** The shared-document list and how to use it; changes only when documents do. */
 export function describeCatalog(catalog: CatalogEntry[]): string {
   if (!catalog.length) return ' No documents are shared with you.';

@@ -184,6 +184,33 @@ describe('skills', () => {
     ).rejects.toThrow(/not enabled/);
   });
 
+  it('lists the built-in action-items skill instead of standing rules', async () => {
+    const { dir, engine, dot, deps } = world();
+    const base = {
+      engine,
+      dot,
+      latestUser: 'Summarize my day.',
+      skillsDir: join(dir, 'skills'),
+    };
+    const withItems = capabilityPrompt({ ...base, actionItems: true });
+    expect(withItems).toMatch(/action-items: How to file/);
+    expect(withItems).not.toMatch(/without being asked/);
+    expect(withItems).not.toMatch(/create_action_items/);
+    expect(capabilityPrompt(base)).not.toMatch(/action-items/);
+    // No per-Pod grant is needed, but action items must be configured.
+    await expect(
+      call(workTools({ ...deps(), actionItems: true }), 'load_skill', {
+        name: 'action-items',
+      }),
+    ).resolves.toMatchObject({
+      name: 'action-items',
+      instructions: expect.stringMatching(/merge_entities/),
+    });
+    await expect(
+      call(workTools(deps()), 'load_skill', { name: 'action-items' }),
+    ).rejects.toThrow(/not found/);
+  });
+
   it('creates, edits, grants, and deletes skills through the API', async () => {
     const { dir, store, engine, plugins, dot } = world();
     const skillsDir = join(dir, 'skills');

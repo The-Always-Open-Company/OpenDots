@@ -17,6 +17,7 @@ export const EAGER_TOOLS: ReadonlySet<string> = new Set([
   'read_space_page',
   'create_space_page',
   'edit_space_page',
+  'list_documents',
   'search_documents',
   'read_passage',
   'load_skill',

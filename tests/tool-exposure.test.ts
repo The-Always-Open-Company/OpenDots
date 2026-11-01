@@ -19,7 +19,7 @@ it('sends tools the prompts rely on eagerly and defers the rest', () => {
     'start_objective',
     'complete_work',
     'fail_work',
-    // Action item prompt: filed and updated without being asked
+    // Action item tools the skill and handoffs rely on
     'create_action_items',
     'search_action_items',
     'update_action_item',

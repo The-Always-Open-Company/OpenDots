@@ -154,6 +154,26 @@ export const actionItemPatch = z.object({
 });
 export type ActionItemPatchInput = z.input<typeof actionItemPatch>;
 
+function period(label: string) {
+  return z
+    .union([z.string().trim().max(40), z.number().int()])
+    .optional()
+    .describe(
+      `${label} this ISO date or date-time, in the owner's time zone. A date alone covers the whole day. Without statuses, a period filter searches every status.`,
+    );
+}
+
+/** Epoch ms for the end of a period: a date alone means the whole day. */
+function periodEnd(
+  value: string | number | undefined,
+  timeZone: string,
+): number | undefined {
+  if (value === undefined || value === '') return undefined;
+  const at = parseWhen(value, timeZone, END_OF_DAY);
+  if (at == null) return undefined;
+  return typeof value === 'string' && DATE_ONLY.test(value) ? at + 59_999 : at;
+}
+
 export const searchInput = z.object({
   query: z
     .string()
@@ -181,6 +201,12 @@ export const searchInput = z.object({
   labels: z.array(z.string().trim().min(1).max(40)).max(5).optional(),
   dueBefore: when.optional(),
   dueAfter: when.optional(),
+  createdAfter: period('Filed on or after'),
+  createdBefore: period('Filed on or before'),
+  updatedAfter: period('Changed on or after'),
+  updatedBefore: period('Changed on or before'),
+  completedAfter: period('Finished on or after'),
+  completedBefore: period('Finished on or before'),
   limit: z.number().int().min(1).max(200).optional(),
   offset: z
     .number()
@@ -779,10 +805,28 @@ export class ActionItemService {
     const missingPerson =
       (params.assignee && !ownership && !assigneeIds?.length) ||
       (params.requester && !requesterIds?.length);
+    const start = (value: string | number | undefined) =>
+      value === undefined || value === ''
+        ? undefined
+        : (parseWhen(value, timeZone, 0) ?? undefined);
+    const periods = {
+      createdAfter: start(params.createdAfter),
+      createdBefore: periodEnd(params.createdBefore, timeZone),
+      updatedAfter: start(params.updatedAfter),
+      updatedBefore: periodEnd(params.updatedBefore, timeZone),
+      completedAfter: start(params.completedAfter),
+      completedBefore: periodEnd(params.completedBefore, timeZone),
+    };
+    const byPeriod = Object.values(periods).some((value) => value != null);
     const candidates = missingPerson
       ? []
       : this.store.filter({
-          statuses: params.statuses?.length ? params.statuses : OPEN,
+          ...periods,
+          statuses: params.statuses?.length
+            ? params.statuses
+            : byPeriod
+              ? [...ACTION_ITEM_STATUSES]
+              : OPEN,
           ownership,
           assigneeIds,
           requesterIds,

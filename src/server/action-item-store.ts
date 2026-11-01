@@ -130,6 +130,13 @@ export interface ActionItemFilter {
   labels?: string[];
   dueBefore?: number;
   dueAfter?: number;
+  /** Inclusive epoch-millisecond ranges on when items were filed, changed or finished. */
+  createdAfter?: number;
+  createdBefore?: number;
+  updatedAfter?: number;
+  updatedBefore?: number;
+  completedAfter?: number;
+  completedBefore?: number;
   ids?: string[];
   limit?: number;
 }
@@ -422,6 +429,20 @@ export class ActionItemStore {
     if (filter.dueAfter != null) {
       where.push('a.dueAt IS NOT NULL AND a.dueAt >= ?');
       params.push(filter.dueAfter);
+    }
+    for (const [column, after, before] of [
+      ['createdAt', filter.createdAfter, filter.createdBefore],
+      ['updatedAt', filter.updatedAfter, filter.updatedBefore],
+      ['completedAt', filter.completedAfter, filter.completedBefore],
+    ] as const) {
+      if (after != null) {
+        where.push(`a.${column} IS NOT NULL AND a.${column} >= ?`);
+        params.push(after);
+      }
+      if (before != null) {
+        where.push(`a.${column} IS NOT NULL AND a.${column} <= ?`);
+        params.push(before);
+      }
     }
     if (filter.ids) {
       if (!filter.ids.length) return [];

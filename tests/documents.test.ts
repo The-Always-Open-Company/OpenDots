@@ -525,7 +525,9 @@ it('describes shared documents and retrieved passages for the prompt', () => {
   expect(note).toContain('"pages":"2"');
   expect(note).toContain('"summary":"How refunds work."');
   // Re-indexing documents stay searchable; never-indexed ones say so.
-  expect(note).toContain('"id":"doc-1","title":"Refund policy","status":"ready"');
+  expect(note).toContain(
+    '"id":"doc-1","title":"Refund policy","status":"ready"',
+  );
   expect(note).toContain('"status":"queued"');
   expect(note).toContain('read_passage');
   expect(describeDocuments([], [])).toContain('No documents are shared');
@@ -577,7 +579,9 @@ it('retrieves a shared document for the Dot before answering', async () => {
   const system = request.messages.find(
     (message) => message.role === 'system',
   )!.content;
-  expect(system).toContain('policy');
+  // The library is named in the standing prompt; its list is not pasted in.
+  expect(system).toContain('list_documents');
+  expect(system).not.toContain('Documents shared with you');
   const note = request.messages.find((message) =>
     message.content.startsWith(TURN_CONTEXT_LABEL),
   )!.content;

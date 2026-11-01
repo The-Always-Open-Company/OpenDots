@@ -82,6 +82,39 @@ export function summaryView(
   };
 }
 
+const MAX_SEARCHES = 5;
+const MAX_SEARCH_RESULTS = 50;
+const MAX_CALL_RESULTS = 100;
+
+const searchLimit = z
+  .number()
+  .int()
+  .min(1)
+  .max(MAX_SEARCH_RESULTS)
+  .optional()
+  .describe('Items to return for this search (default 10, at most 50).');
+
+/**
+ * Splits a call's result budget across its searches. Each keeps what it asked
+ * for while the total fits; past that, limits shrink in proportion, each
+ * keeping at least one slot.
+ */
+export function shareLimits(requested: number[], budget: number): number[] {
+  const total = requested.reduce((sum, value) => sum + value, 0);
+  if (total <= budget) return [...requested];
+  const shares = requested.map((value) =>
+    Math.max(1, Math.floor((value * budget) / total)),
+  );
+  let over = shares.reduce((sum, value) => sum + value, 0) - budget;
+  while (over > 0) {
+    const largest = shares.indexOf(Math.max(...shares));
+    if (shares[largest]! <= 1) break;
+    shares[largest]! -= 1;
+    over -= 1;
+  }
+  return shares;
+}
+
 const detail = z
   .enum(['summary', 'full'])
   .optional()
@@ -179,26 +212,46 @@ export function actionItemTools(
     defineTool({
       name: 'search_action_items',
       description:
-        "Find the owner's action items by meaning and keywords within filters: entities they concern, who must do them, who asked, status, labels and due dates. Open and waiting items are searched unless statuses are given. Returns a page of summaries with the total; pass nextOffset as offset for the next page.",
+        "Find the owner's action items by meaning and keywords within filters: entities they concern, who must do them, who asked, status, labels, due dates, and when they were filed, changed or finished. Open and waiting items are searched unless statuses or a period filter are given. Pass one search directly, or up to five independent searches in `searches` to run them in one call. Each search returns at most 50 items and one call at most 100; each result says how many were requested and returned and gives nextOffset for its next page.",
       parameters: searchInput.extend({
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(20)
-          .optional()
-          .describe('Items per page (default 10).'),
+        limit: searchLimit,
         detail,
+        searches: z
+          .array(searchInput.extend({ limit: searchLimit }))
+          .min(1)
+          .max(MAX_SEARCHES)
+          .optional()
+          .describe(
+            'Up to five independent searches to run together. Leave the other search fields empty when you use this.',
+          ),
       }),
-      execute: async ({ detail: level, ...input }) => {
+      execute: async ({ detail: level, searches, ...single }) => {
         deps.check();
-        const found = await service.search(input, actor, deps.signal);
+        if (searches && Object.values(single).some((value) => value != null))
+          throw new Error(
+            'Pass either one search or a searches list, not both.',
+          );
+        const list = searches ?? [single];
+        const requested = list.map((search) => search.limit ?? 10);
+        const allotted = shareLimits(requested, MAX_CALL_RESULTS);
+        const results = await Promise.all(
+          list.map(async (search, index) => {
+            const found = await service.search(
+              { ...search, limit: allotted[index] },
+              actor,
+              deps.signal,
+            );
+            return {
+              ...found,
+              requested: requested[index]!,
+              returned: found.items.length,
+              cut: allotted[index]! < requested[index]!,
+              items: found.items.map(listView(level)),
+            };
+          }),
+        );
         deps.check();
-        return {
-          ...found,
-          returned: found.items.length,
-          items: found.items.map(listView(level)),
-        };
+        return searches ? { results } : results[0]!;
       },
     }),
     defineTool({
@@ -335,13 +388,6 @@ export function actionItemTools(
   ];
 }
 
-export const ACTION_ITEM_PROMPT = [
-  "Action items: you keep the owner's to-do list. Whenever content the owner shares or discusses (documents, notes, emails, pages, chats) contains something the owner has to do, or something someone owes the owner, file it with create_action_items without being asked, one batch per source.",
-  'For each item: write the statement so it makes sense on its own months later; put the situation in context (which company, topic, meeting or document, and why it matters); tag organizations, people, projects and topics with a role (assignee is someone else who must do it; requester is who asked, when it was not the owner; about is everything else). Never tag the owner as an entity under any of their names: leave out the assignee when the owner must do it, and leave out the requester when the owner asked. Quote the source line; set a due date only when one is stated or clearly implied.',
-  'Then tell the owner briefly what you filed, what matched existing items, and what you were unsure about.',
-  'When a result is possible_duplicate, add what is new to the existing item with add_action_item_note; refile with force only if it is really a different item.',
-  'When a result lists possibleEntityMatches, merge them with merge_entities when they are clearly the same, and ask the owner only when you are unsure.',
-  'Use search_action_items before answering what the owner has to do or is owed, and update_action_item without asking whenever the owner or new content shows something is done, dropped, waiting or changed.',
-  'search_action_items and review_action_items return short summaries: call read_action_item for an item you need the context, details or source of, and pass nextOffset as offset only when you need more than the page shown.',
-  'If the owner wants reminders or follow-ups, propose a schedule whose objective is to call review_action_items and report what is overdue, due soon, due for a reminder, or owed to the owner.',
-].join(' ');
+/** Standing rule: when a Pod may touch action items at all. The how lives in the skill. */
+export const ACTION_ITEM_BOUNDARY =
+  'Use action items when the owner asks for task tracking or an established workflow requires it. Load the action-items skill with load_skill before creating or changing action items. Do not create action items merely because a conversation or document mentions work.';
