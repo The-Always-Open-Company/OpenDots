@@ -399,6 +399,194 @@ describe('execution engine', () => {
     expect(runs).toBe(2);
   });
 
+  describe('reads and writes', () => {
+    const read = { access: 'read', source: 'name' } as const;
+    const write = { access: 'write', source: 'default' } as const;
+    const job = (engine: ExecutionEngine, recurring = false) =>
+      String(
+        engine.createWorkItem({
+          actorId: 'dot',
+          title: 'Summary',
+          objective: 'Summarize today',
+          source: 'owner',
+          autoResume: true,
+          recurring,
+        }).id,
+      );
+    const status = (db: DatabaseSync, toolName: string) =>
+      db
+        .prepare(
+          'SELECT status, access, accessSource FROM tool_invocations WHERE toolName=?',
+        )
+        .get(toolName) as Record<string, unknown>;
+
+    it('fails a read that is cut off and lets the job finish', () => {
+      const { engine, db, setTime } = open();
+      const id = job(engine);
+      const first = engine.enqueueExecution(id)!;
+      engine.claimExecution();
+      engine.beginEffect(
+        id,
+        first,
+        'plugin_cliq_get_messages',
+        {},
+        false,
+        false,
+        read,
+      );
+      engine.finishExecution(first, 'interrupted', 'time limit', {
+        retry: true,
+      });
+      expect(status(db, 'plugin_cliq_get_messages')).toEqual({
+        status: 'failed',
+        access: 'read',
+        accessSource: 'name',
+      });
+      setTime(10_000_000);
+      const second = engine.claimExecution()!;
+      engine.setFinishIntent(String(second.id), 'complete');
+      engine.finishExecution(String(second.id), 'completed');
+      expect(engine.workItem(id)?.status).toBe('completed');
+    });
+
+    it('does not let a failed read in this attempt hold the job open', async () => {
+      const { engine, db } = open();
+      const id = job(engine);
+      const first = engine.enqueueExecution(id)!;
+      engine.claimExecution();
+      const execute = guardTools(
+        [
+          {
+            name: 'plugin_cliq_get_messages',
+            execute: async () => {
+              throw new Error('socket hang up');
+            },
+          } as unknown as ToolDefinition,
+        ],
+        {
+          engine,
+          context: () => ({
+            ...ctx('model'),
+            workItemId: id,
+            executionId: first,
+          }),
+          snapshot: () => ({
+            paused: false,
+            cancelled: false,
+            consultation: false,
+            researchAllowed: true,
+            memoryAllowed: true,
+            spaceAllowed: () => true,
+            documentAllowed: () => true,
+            pluginAllowed: () => true,
+            skillAllowed: () => true,
+            blockedOnConsultation: new Set<string>(),
+          }),
+          ensureWork: () => id,
+          idempotent: () => false,
+          access: () => read,
+        },
+      )[0].execute!;
+      await expect(execute({} as never)).rejects.toThrow('socket hang up');
+      expect(status(db, 'plugin_cliq_get_messages').status).toBe('failed');
+      engine.setFinishIntent(first, 'complete');
+      engine.finishExecution(first, 'completed');
+      expect(engine.workItem(id)?.status).toBe('completed');
+    });
+
+    it('still holds a job open for a write that may have happened', () => {
+      const { engine, db } = open();
+      const id = job(engine);
+      const first = engine.enqueueExecution(id)!;
+      engine.claimExecution();
+      engine.setFinishIntent(first, 'complete');
+      engine.beginEffect(
+        id,
+        first,
+        'plugin_cliq_send',
+        {},
+        false,
+        false,
+        write,
+      );
+      engine.finishExecution(first, 'interrupted', 'time limit', {
+        retry: true,
+      });
+      expect(status(db, 'plugin_cliq_send').status).toBe('uncertain');
+      expect(engine.workItem(id)?.status).toBe('open');
+    });
+
+    it("counts only the current run's calls for a scheduled job", () => {
+      const { engine, setTime } = open();
+      const id = job(engine, true);
+      const first = engine.enqueueExecution(id)!;
+      engine.claimExecution();
+      engine.beginEffect(
+        id,
+        first,
+        'plugin_cliq_send',
+        {},
+        false,
+        false,
+        write,
+      );
+      engine.finishExecution(first, 'interrupted', 'crashed');
+      // The run retries once; its uncertain write still belongs to it.
+      setTime(10_000_000);
+      const retry = engine.claimExecution()!;
+      expect(retry.resumeOf).toBe(first);
+      engine.finishExecution(String(retry.id), 'completed');
+      expect(Number(engine.workItem(id)?.attemptCount)).toBe(2);
+      // The next scheduled run is not held by the last run's write.
+      const next = engine.enqueueExecution(id)!;
+      engine.claimExecution();
+      engine.setFinishIntent(next, 'complete');
+      engine.finishExecution(next, 'completed');
+      expect(Number(engine.workItem(id)?.attemptCount)).toBe(0);
+    });
+
+    it('settles stuck reads at startup and closes work they held open', () => {
+      const { engine, db } = open();
+      const id = job(engine);
+      const first = engine.enqueueExecution(id)!;
+      engine.claimExecution();
+      // A row written before calls were classified carries no access.
+      engine.beginEffect(id, first, 'plugin_cliq_get_messages', {}, false);
+      engine.completeEffect(
+        id,
+        'plugin_cliq_get_messages',
+        String(
+          (
+            db.prepare('SELECT idempotencyKey FROM tool_invocations').get() as {
+              idempotencyKey: string;
+            }
+          ).idempotencyKey,
+        ),
+        'uncertain',
+        { error: 'timeout' },
+      );
+      engine.setFinishIntent(first, 'complete');
+      engine.finishExecution(first, 'completed');
+      expect(engine.workItem(id)?.status).toBe('open');
+      // As at the attempt cap: nothing more is queued and the job sits open.
+      db.prepare("DELETE FROM executions WHERE status='queued'").run();
+
+      const other = job(engine);
+      const otherRun = engine.enqueueExecution(other)!;
+      engine.claimExecution();
+      engine.beginEffect(other, otherRun, 'plugin_cliq_send', {}, false);
+      engine.finishExecution(otherRun, 'interrupted', 'crashed');
+
+      expect(
+        engine.settleReadInvocations((name) => name.includes('get_')),
+      ).toBe(1);
+      expect(status(db, 'plugin_cliq_get_messages').status).toBe('failed');
+      expect(status(db, 'plugin_cliq_send').status).toBe('uncertain');
+      expect(engine.workItem(id)?.status).toBe('completed');
+      expect(engine.workItem(other)?.status).toBe('open');
+    });
+  });
+
   it('does not replay an uncertain non-idempotent operation', () => {
     const { engine } = open();
     const item = engine.createWorkItem({

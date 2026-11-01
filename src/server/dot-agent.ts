@@ -52,6 +52,7 @@ import {
 import type { PluginService } from './plugins.js';
 import {
   capabilityContext,
+  effectAccess,
   effectIdempotent,
   guardTools,
   snapshotFor,
@@ -829,6 +830,7 @@ export class DotAgent extends AbstractAgent {
                     },
                     idempotent: (name, args) =>
                       effectIdempotent(plugins, name, args),
+                    access: (name) => effectAccess(plugins, name),
                   },
                 )
               : serverTools.filter(

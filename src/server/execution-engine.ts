@@ -109,6 +109,16 @@ export type EngineListener = (
   },
 ) => void;
 
+/** A call still running when its attempt stops: a read failed; a write may have happened. */
+const CUT_OFF_INVOCATIONS =
+  "UPDATE tool_invocations SET status=CASE WHEN access='read' THEN 'failed' ELSE 'uncertain' END, finishedAt=? WHERE executionId=? AND status='started'";
+
+/** How a call was classified; matches `ToolAccess` in plugins.ts. */
+export interface EffectAccess {
+  access: 'read' | 'write' | 'destructive';
+  source: 'override' | 'annotation' | 'name' | 'default' | 'builtin';
+}
+
 export class ExecutionEngine {
   private listeners: EngineListener[] = [];
   constructor(
@@ -196,6 +206,9 @@ export class ExecutionEngine {
     add('plugin_tools', 'annotationsJson', "TEXT NOT NULL DEFAULT '{}'");
     add('plugin_tools', 'access', 'TEXT');
     add('plugin_grants', 'constraintsJson', "TEXT NOT NULL DEFAULT '{}'");
+    // How a tool call was classified, so a failed read never holds work open.
+    add('tool_invocations', 'access', 'TEXT');
+    add('tool_invocations', 'accessSource', 'TEXT');
     this.db.exec(`
       UPDATE triggers SET enabled=0 WHERE enabled=1 AND workItemId IN
         (SELECT id FROM work_items WHERE status IN ('cancelled','completed','failed'));
@@ -428,6 +441,77 @@ export class ExecutionEngine {
     });
     return id;
   }
+  /**
+   * For a scheduled job, the attempts of the current run: this execution and
+   * the retries it resumes. Undefined for one-off work, which counts them all.
+   */
+  private runExecutions(workItemId: string, executionId: string) {
+    const item = this.workItem(workItemId);
+    if (!item || Number(item.recurring) !== 1) return undefined;
+    const ids: string[] = [];
+    let current: string | null = executionId;
+    while (current && !ids.includes(current) && ids.length < 100) {
+      ids.push(current);
+      const row = this.db
+        .prepare('SELECT resumeOf FROM executions WHERE id=?')
+        .get(current) as { resumeOf: string | null } | undefined;
+      current = row?.resumeOf ?? null;
+    }
+    return ids;
+  }
+  /**
+   * Settles calls left uncertain or started by tools now known to be reads.
+   * Writes are left alone. Returns how many rows changed.
+   */
+  settleReadInvocations(isRead: (toolName: string) => boolean) {
+    const rows = this.db
+      .prepare(
+        `SELECT i.id, i.toolName FROM tool_invocations i LEFT JOIN executions e ON e.id=i.executionId
+         WHERE (i.status='uncertain' OR (i.status='started' AND COALESCE(e.status, '')<>'running'))
+           AND COALESCE(i.access, '')<>'write' AND COALESCE(i.access, '')<>'destructive'`,
+      )
+      .all() as { id: string; toolName: string }[];
+    const update = this.db.prepare(
+      "UPDATE tool_invocations SET status='failed', access='read', finishedAt=COALESCE(finishedAt, ?) WHERE id=?",
+    );
+    const touched = new Set<string>();
+    for (const row of rows) {
+      if (!isRead(row.toolName)) continue;
+      if (Number(update.run(this.now(), row.id).changes)) {
+        const owner = this.db
+          .prepare('SELECT workItemId FROM tool_invocations WHERE id=?')
+          .get(row.id) as { workItemId: string };
+        touched.add(owner.workItemId);
+      }
+    }
+    for (const workItemId of touched) this.closeIfSettled(workItemId);
+    return touched.size;
+  }
+  /**
+   * Closes one-off work that already asked to finish and was held open only by
+   * calls that are now settled.
+   */
+  private closeIfSettled(workItemId: string) {
+    this.transaction(() => {
+      const item = this.workItem(workItemId);
+      if (!item || item.status !== 'open' || Number(item.recurring) === 1)
+        return;
+      if (this.activeExecution(workItemId)) return;
+      const last = this.db
+        .prepare(
+          'SELECT * FROM executions WHERE workItemId=? ORDER BY createdAt DESC LIMIT 1',
+        )
+        .get(workItemId) as Row | undefined;
+      if (!last || last.status !== 'completed' || !last.finishIntent) return;
+      if (this.unresolved(workItemId, String(last.id))) return;
+      const status = last.finishIntent === 'complete' ? 'completed' : 'failed';
+      this.db
+        .prepare('UPDATE work_items SET status=?, updatedAt=? WHERE id=?')
+        .run(status, this.now(), workItemId);
+      this.disableTriggers(workItemId);
+      this.maybeContinueParent(workItemId);
+    });
+  }
   private uncertainCount(workItemId: string) {
     const row = this.db
       .prepare(
@@ -516,11 +600,7 @@ export class ExecutionEngine {
         "UPDATE executions SET status='interrupted', finishedAt=?, error=?, lease=NULL WHERE id=? AND status='running'",
       )
       .run(now, error, executionId);
-    this.db
-      .prepare(
-        "UPDATE tool_invocations SET status='uncertain', finishedAt=? WHERE executionId=? AND status='started'",
-      )
-      .run(now, executionId);
+    this.db.prepare(CUT_OFF_INVOCATIONS).run(now, executionId);
     const item = this.workItem(String(execution.workItemId));
     if (!item || item.status === 'cancelled') return;
     this.event('finished', {
@@ -615,11 +695,7 @@ export class ExecutionEngine {
         )
         .run(outcome, now, error ?? null, executionId);
       if (outcome === 'interrupted' || outcome === 'failed')
-        this.db
-          .prepare(
-            "UPDATE tool_invocations SET status='uncertain', finishedAt=? WHERE executionId=? AND status='started'",
-          )
-          .run(now, executionId);
+        this.db.prepare(CUT_OFF_INVOCATIONS).run(now, executionId);
       this.event('finished', {
         executionId,
         workItemId: String(item.id),
@@ -688,14 +764,23 @@ export class ExecutionEngine {
       return true;
     });
   }
-  /** A failed idempotent effect blocks only the attempt it failed in; a later clean attempt may finish. */
+  /**
+   * A failed write blocks only the attempt it failed in; a later clean attempt
+   * may finish. A failed read never blocks. A scheduled job counts only the
+   * current run, so one run's stuck call does not hold the next run open.
+   */
   private unresolved(workItemId: string, executionId: string) {
+    const run = this.runExecutions(workItemId, executionId);
+    const scope = run
+      ? `AND executionId IN (${run.map(() => '?').join(',')})`
+      : '';
     const invocations = this.db
       .prepare(
-        `SELECT COUNT(*) AS n FROM tool_invocations WHERE workItemId=? AND
-         (status IN ('started','uncertain') OR (status='failed' AND executionId=?))`,
+        `SELECT COUNT(*) AS n FROM tool_invocations WHERE workItemId=? ${scope} AND
+         (status IN ('started','uncertain') OR
+          (status='failed' AND executionId=? AND COALESCE(access, '')<>'read'))`,
       )
-      .get(workItemId, executionId) as { n: number };
+      .get(workItemId, ...(run ?? []), executionId) as { n: number };
     const actions = this.db
       .prepare(
         "SELECT COUNT(*) AS n FROM pending_actions WHERE workItemId=? AND status IN ('pending','approved','executing')",
@@ -966,6 +1051,7 @@ export class ExecutionEngine {
     args: Record<string, unknown>,
     idempotent: boolean,
     acceptNewId = false,
+    access?: EffectAccess,
   ):
     | { action: 'run'; operationId: string; arguments: Record<string, unknown> }
     | { action: 'return'; operationId: string; result: unknown } {
@@ -1017,7 +1103,8 @@ export class ExecutionEngine {
     if (!known) {
       this.db
         .prepare(
-          'INSERT INTO tool_invocations VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?)',
+          `INSERT INTO tool_invocations (id, executionId, workItemId, toolName, idempotencyKey, argumentsJson,
+             status, startedAt, idempotent, access, accessSource) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           randomUUID(),
@@ -1029,6 +1116,8 @@ export class ExecutionEngine {
           'started',
           this.now(),
           idempotent ? 1 : 0,
+          access?.access ?? null,
+          access?.source ?? null,
         );
       this.event('tool_called', {
         executionId,

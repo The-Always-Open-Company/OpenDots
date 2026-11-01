@@ -5,7 +5,7 @@ import { PluginToolError } from './plugin-schema.js';
 import { assertWake, parseSchedule } from './schedule-time.js';
 import type { Store } from './store.js';
 import type { WorkspaceStore } from './workspace.js';
-import { snapshotFor } from './work-tools.js';
+import { effectAccess, snapshotFor } from './work-tools.js';
 import { decide, type ExecutionContext } from './authorize.js';
 
 const MASCOTS = ['blue', 'mint', 'orange', 'purple'];
@@ -119,6 +119,7 @@ export async function applyApprovedAction(
     });
     return { status, result };
   };
+  const access = effectAccess(deps.plugins, toolName);
   try {
     const result = await run(
       deps,
@@ -133,7 +134,9 @@ export async function applyApprovedAction(
     return finish('executed', result);
   } catch (error) {
     return finish(
-      idempotent || error instanceof PluginToolError ? 'failed' : 'uncertain',
+      idempotent || error instanceof PluginToolError || access.access === 'read'
+        ? 'failed'
+        : 'uncertain',
       { error: message(error) },
     );
   }
@@ -250,6 +253,7 @@ async function run(
     throw new Error(`No worker is registered for ${toolName}.`);
   };
   if (!workItemId) return perform();
+  const access = effectAccess(deps.plugins, toolName);
   const begun = deps.engine.beginEffect(
     workItemId,
     executionId,
@@ -257,6 +261,7 @@ async function run(
     { ...args, operationId },
     idempotent,
     true,
+    access,
   );
   if (begun.action === 'return') return begun.result;
   try {
@@ -274,7 +279,9 @@ async function run(
       workItemId,
       toolName,
       begun.operationId,
-      idempotent || error instanceof PluginToolError ? 'failed' : 'uncertain',
+      idempotent || error instanceof PluginToolError || access.access === 'read'
+        ? 'failed'
+        : 'uncertain',
       { error: message(error) },
     );
     throw error;

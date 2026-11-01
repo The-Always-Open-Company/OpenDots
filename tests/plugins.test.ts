@@ -21,7 +21,12 @@ import {
   secretStorageAvailable,
 } from '../src/server/plugin-secrets.js';
 import type { PluginParameters } from '../src/server/plugin-schema.js';
-import { PluginService, PluginToolError } from '../src/server/plugins.js';
+import {
+  classifyAccess,
+  nameSuggestsRead,
+  PluginService,
+  PluginToolError,
+} from '../src/server/plugins.js';
 import { Runner } from '../src/server/runner.js';
 import { Store } from '../src/server/store.js';
 import { guardTools, snapshotFor } from '../src/server/work-tools.js';
@@ -827,5 +832,45 @@ describe('plugin OAuth', () => {
       `/oauth/callback?state=${encodeURIComponent(state)}&code=code-1`,
     );
     expect(good.headers.get('location')).toBe('/#/plugins?oauth=gcal');
+  });
+});
+
+describe('read or write classification', () => {
+  const row = (
+    toolName: string,
+    annotations: object = {},
+    access: 'read' | 'write' | 'destructive' | null = null,
+  ) => ({ toolName, access, annotationsJson: JSON.stringify(annotations) });
+
+  it('prefers the override, then hints, then the name', () => {
+    expect(classifyAccess(row('send_message', {}, 'read'))).toEqual({
+      access: 'read',
+      source: 'override',
+    });
+    expect(classifyAccess(row('send_message', { readOnlyHint: true }))).toEqual(
+      { access: 'read', source: 'annotation' },
+    );
+    expect(
+      classifyAccess(row('get_messages', { destructiveHint: false })),
+    ).toEqual({ access: 'write', source: 'annotation' });
+    expect(classifyAccess(row('get_messages'))).toEqual({
+      access: 'read',
+      source: 'name',
+    });
+    expect(classifyAccess(row('ZohoCliq_Search_Channels'))).toEqual({
+      access: 'read',
+      source: 'name',
+    });
+    expect(classifyAccess(row('send_message'))).toEqual({
+      access: 'write',
+      source: 'default',
+    });
+  });
+
+  it('keeps a read-sounding name a write when it also changes something', () => {
+    expect(nameSuggestsRead('get_and_mark_read')).toBe(false);
+    expect(nameSuggestsRead('listMessages')).toBe(true);
+    expect(nameSuggestsRead('archive_list')).toBe(false);
+    expect(nameSuggestsRead('message_status')).toBe(false);
   });
 });

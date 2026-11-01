@@ -114,6 +114,87 @@ export function accessOf(
   return 'write';
 }
 
+/** What decided a tool's access, so a wrong call can be traced. */
+export type AccessSource =
+  'override' | 'annotation' | 'name' | 'default' | 'builtin';
+
+export interface ToolAccess {
+  access: PluginAccess;
+  source: AccessSource;
+}
+
+const READ_VERBS = new Set([
+  'list',
+  'get',
+  'search',
+  'read',
+  'fetch',
+  'find',
+  'query',
+  'lookup',
+]);
+const WRITE_VERBS = new Set([
+  'send',
+  'post',
+  'create',
+  'add',
+  'update',
+  'edit',
+  'set',
+  'delete',
+  'remove',
+  'mark',
+  'move',
+  'archive',
+  'write',
+  'upload',
+  'reply',
+  'react',
+  'invite',
+  'schedule',
+  'cancel',
+  'approve',
+]);
+
+/**
+ * A read guessed from a tool's name: a read verb among its first words and no
+ * write verb anywhere, so `get_and_mark_read` stays a write.
+ */
+export function nameSuggestsRead(toolName: string) {
+  const words = toolName
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  if (words.some((word) => WRITE_VERBS.has(word))) return false;
+  return words.slice(0, 3).some((word) => READ_VERBS.has(word));
+}
+
+/**
+ * Whether a call reads or writes, for deciding what a failed call means.
+ * Order: the owner's override, then the tool's own hints, then its name. This
+ * does not change approval defaults, which still use `accessFor`.
+ */
+export function classifyAccess(row: {
+  toolName: string;
+  access: PluginAccess | null;
+  annotationsJson: string;
+}): ToolAccess {
+  if (row.access) return { access: row.access, source: 'override' };
+  const annotations = parse<ToolAnnotations>(row.annotationsJson, {});
+  if (annotations.readOnlyHint === true)
+    return { access: 'read', source: 'annotation' };
+  if (annotations.destructiveHint === true)
+    return { access: 'destructive', source: 'annotation' };
+  if (
+    annotations.readOnlyHint === false ||
+    annotations.destructiveHint === false
+  )
+    return { access: 'write', source: 'annotation' };
+  if (nameSuggestsRead(row.toolName)) return { access: 'read', source: 'name' };
+  return { access: 'write', source: 'default' };
+}
+
 /** Why a tool cannot be offered to a model, or null when its name works. */
 export function toolNameProblem(pluginId: string, toolName: string) {
   const full = `plugin_${pluginId}_${toolName}`;
@@ -832,6 +913,13 @@ export class PluginService {
         },
       });
     });
+  }
+  /** Read or write for a model-facing plugin tool name; undefined when unknown. */
+  classify(toolName: string): ToolAccess | undefined {
+    const parsed = pluginToolName(toolName);
+    if (!parsed) return undefined;
+    const row = this.tool(parsed.pluginId, parsed.toolName);
+    return row ? classifyAccess(row) : undefined;
   }
   idempotent(toolName: string) {
     const parsed = pluginToolName(toolName);

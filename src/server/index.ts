@@ -194,6 +194,10 @@ engine.backfillTerminal(store.tasks(), (task) =>
 engine.labelConversationLedgers();
 engine.detachChatWork();
 const plugins = new PluginService(store.database);
+// Reads that failed or were cut off used to be left uncertain and held work open.
+engine.settleReadInvocations(
+  (toolName) => plugins.classify(toolName)?.access === 'read',
+);
 const skillsDir = process.env.SKILLS_DIR ?? join(dirname(database), 'skills');
 const actionItems =
   postgres && embed

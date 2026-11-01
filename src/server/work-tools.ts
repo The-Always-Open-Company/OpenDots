@@ -8,6 +8,7 @@ import {
 } from './authorize.js';
 import {
   CONVERSATION_LEDGER,
+  type EffectAccess,
   type ExecutionEngine,
 } from './execution-engine.js';
 import {
@@ -113,6 +114,16 @@ function isEffect(name: string) {
   return EFFECTS.has(name) || name.startsWith('plugin_');
 }
 
+/** Whether an effect reads or writes; built-in effects are always writes. */
+export function effectAccess(
+  plugins: Pick<PluginService, 'classify'>,
+  name: string,
+): EffectAccess {
+  if (!name.startsWith('plugin_'))
+    return { access: 'write', source: 'builtin' };
+  return plugins.classify(name) ?? { access: 'write', source: 'default' };
+}
+
 export function guardTools(
   tools: ToolDefinition[],
   deps: {
@@ -121,6 +132,7 @@ export function guardTools(
     snapshot: () => Omit<AuthSnapshot, 'rules'>;
     ensureWork: () => string;
     idempotent: (name: string, args: Record<string, unknown>) => boolean;
+    access?: (name: string) => EffectAccess;
   },
 ): ToolDefinition[] {
   return tools.map((tool) => {
@@ -136,6 +148,7 @@ export function guardTools(
         const workItemId = ctx.workItemId || deps.ensureWork();
         ctx = { ...ctx, workItemId };
         const idempotent = deps.idempotent(tool.name, args);
+        const access = deps.access?.(tool.name);
         // Models sometimes invent an operationId on a first call; for an
         // idempotent tool that is safe to run under the id they chose.
         const begun = deps.engine.beginEffect(
@@ -145,6 +158,7 @@ export function guardTools(
           args,
           idempotent,
           idempotent,
+          access,
         );
         if (begun.action === 'return') return begun.result;
         try {
@@ -162,7 +176,11 @@ export function guardTools(
         } catch (error) {
           const message =
             error instanceof Error ? error.message : 'Tool failed.';
-          const failed = idempotent || error instanceof PluginToolError;
+          // A read that throws did nothing, so it failed; a write may have happened.
+          const failed =
+            idempotent ||
+            error instanceof PluginToolError ||
+            access?.access === 'read';
           deps.engine.completeEffect(
             workItemId,
             tool.name,
