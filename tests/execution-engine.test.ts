@@ -545,6 +545,70 @@ describe('execution engine', () => {
       expect(Number(engine.workItem(id)?.attemptCount)).toBe(0);
     });
 
+    it('holds an identical write while an earlier one is unconfirmed', () => {
+      const { engine, db, setTime } = open();
+      const id = job(engine);
+      const first = engine.enqueueExecution(id)!;
+      engine.claimExecution();
+      const send = (executionId: string, text: string) =>
+        engine.beginEffect(
+          id,
+          executionId,
+          'plugin_cliq_send',
+          { text },
+          false,
+          false,
+          write,
+        );
+      const original = send(first, 'Hello');
+      expect(original.action).toBe('run');
+      engine.finishExecution(first, 'interrupted', 'time limit', {
+        retry: true,
+      });
+      setTime(10_000_000);
+      const second = String(engine.claimExecution()!.id);
+      // The same write again, with no operation id, is not sent.
+      expect(send(second, 'Hello')).toMatchObject({
+        action: 'return',
+        operationId: original.operationId,
+        result: { status: 'uncertain' },
+      });
+      // A different write is.
+      expect(send(second, 'Other').action).toBe('run');
+      db.prepare(
+        "UPDATE tool_invocations SET status='reconciled' WHERE idempotencyKey=?",
+      ).run(original.operationId);
+      expect(send(second, 'Hello').action).toBe('run');
+    });
+
+    it("does not hold a scheduled job's write on the last run's unconfirmed one", () => {
+      const { engine, setTime } = open();
+      const id = job(engine, true);
+      const first = engine.enqueueExecution(id)!;
+      engine.claimExecution();
+      const send = (executionId: string) =>
+        engine.beginEffect(
+          id,
+          executionId,
+          'plugin_cliq_send',
+          { text: 'Daily' },
+          false,
+          false,
+          write,
+        );
+      send(first);
+      engine.finishExecution(first, 'interrupted', 'crashed');
+      // Within the run, its retry is held.
+      setTime(10_000_000);
+      const retry = String(engine.claimExecution()!.id);
+      expect(send(retry).action).toBe('return');
+      engine.finishExecution(retry, 'completed');
+      // The next run is not.
+      const next = engine.enqueueExecution(id)!;
+      engine.claimExecution();
+      expect(send(next).action).toBe('run');
+    });
+
     it('settles stuck reads at startup and closes work they held open', () => {
       const { engine, db } = open();
       const id = job(engine);

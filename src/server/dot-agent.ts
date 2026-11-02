@@ -76,6 +76,12 @@ const channelError = () => ({
     'Pods could not complete this request. Please check the app and try again.',
 });
 const TURN_TIME_LIMIT_MS = 90_000;
+/** The result given to a tool call that a stopped or cut-off run never finished. */
+export const CUT_OFF_RESULT = JSON.stringify({
+  status: 'cut_off',
+  error:
+    'This call was cut off before it returned, so its outcome is unknown. Check before repeating a write; a read can be tried again.',
+});
 const MEMORY_SEARCH_TIMEOUT_MS = 5_000;
 const DOCUMENT_SEARCH_TIMEOUT_MS = 15_000;
 const LEARNED_MEMORIES_PER_TURN = 8;
@@ -456,6 +462,14 @@ export class DotAgent extends AbstractAgent {
           const kind = this.workspace.threadKind(input.threadId);
           const consultation = kind === 'consultation';
           const callTask = kind === 'call_task';
+          // A stopped or cut-off run can leave a tool call without a result,
+          // which the runtime would otherwise execute again before the model
+          // sees anything. Close it so the model decides what to do next.
+          this.workspace.threads.closeOpenCalls(
+            input.threadId,
+            CUT_OFF_RESULT,
+            (name) => name === pageReviewTool.name,
+          );
           const stored = this.workspace.threads.messages(input.threadId);
           const additions = clientAdditions(stored, input.messages);
           const memoryOn = initialSettings.memoryAllowed && dot.memoryAllowed;

@@ -170,8 +170,8 @@ Results on 1 November 2026, main (`b3bd035`) against this branch:
 | ----------------------------------------------------- | ---------------- | ---------------- | --------------------------------- | ----------------------------- |
 | Outcome                                               | still open       | completed        | still open, failure not mentioned | completed, Cliq gap in report |
 | Attempts                                              | 20 (attempt cap) | 2                | 20 (attempt cap)                  | 2                             |
-| Model rounds                                          | 56               | 6                | 57                                | 7                             |
-| Input tokens, whole job                               | ~1,252,000       | ~61,000          | ~1,296,000                        | ~72,000                       |
+| Model rounds                                          | 56               | 7                | 57                                | 7                             |
+| Input tokens, whole job                               | ~1,252,000       | ~72,000          | ~1,296,000                        | ~72,000                       |
 | Action-item search calls                              | 15               | 1                | 15                                | 1                             |
 | Document retrievals (planner, embedding, rerank each) | 20               | 2                | 20                                | 2                             |
 
@@ -184,4 +184,11 @@ First-round prompt: system prompt 3,834 → 1,053 tokens, tool schemas 4,215 →
 - `declare_requirements`: a new tool of 384 tokens, now eager.
 - `list_documents`: 102 tokens, now eager.
 
-Found while measuring: when an attempt is cut off during a tool call, the agent runtime runs that call again at the start of the next attempt, before the model sees anything. The call is still left without a result in the thread history, so this happens outside the model's control. For a read, this is the retry the job needs. Whether a cut-off write would be sent twice this way has not been tested yet.
+## Cut-off calls are not replayed
+
+Found while measuring. When an attempt was cut off during a tool call, the call was left without a result in the thread history. The agent runtime then ran it again at the start of the next attempt, before the model saw anything. That is harmless for a read, but a write was sent twice. Replaying the job with the hung Cliq call as a write showed two sends, on main and on this branch. Two fixes:
+
+- **Cut-off calls are closed.** Before every turn, `DotAgent` gives each stored tool call that has no result a result saying it was cut off and its outcome is unknown. The result is inserted right after the call (`ThreadHistory.closeOpenCalls`). The runtime has nothing to replay, and the model decides what to do. Calls to the page-review tool are left open, because the browser answers them.
+- **Identical unconfirmed writes are held.** `beginEffect` returns "uncertain, reconcile first" for a write with the same tool and arguments as an earlier write in the job that is still started or uncertain. This is scoped to the current run for scheduled work, and covers a repeat from the model as well as a replay.
+
+The write replay now sends once, and the job closes with the "please check" gap. The cost is one more model round on the read replay (6 → 7), because the model now re-reads instead of the runtime replaying the call.

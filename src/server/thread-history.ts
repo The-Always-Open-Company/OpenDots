@@ -101,6 +101,77 @@ export class ThreadHistory {
     );
   }
 
+  /**
+   * Answers tool calls a stopped run left without a result, right after the
+   * call, so the next run does not execute them again before the model has
+   * seen anything. `keep` names calls that are answered later, such as
+   * tools that run in the browser. Returns how many calls were closed.
+   */
+  closeOpenCalls(
+    threadId: string,
+    content: string,
+    keep: (toolName: string) => boolean = () => false,
+  ) {
+    const rows = this.db
+      .prepare(
+        'SELECT messageId, seq, body FROM runner_messages WHERE threadId=? ORDER BY seq',
+      )
+      .all(threadId)
+      .map((row) => ({
+        seq: Number(row.seq),
+        message: JSON.parse(String(row.body)) as Message,
+      }));
+    const answered = new Set(
+      rows.flatMap(({ message }) =>
+        message.role === 'tool' ? [message.toolCallId] : [],
+      ),
+    );
+    const open: { seq: number; ids: string[] }[] = [];
+    for (const { seq, message } of rows) {
+      if (message.role !== 'assistant') continue;
+      const ids = (message.toolCalls ?? [])
+        .filter((call) => !answered.has(call.id) && !keep(call.function.name))
+        .map((call) => call.id);
+      if (ids.length) open.push({ seq, ids });
+    }
+    if (!open.length) return 0;
+    const now = Date.now();
+    this.db.exec('BEGIN');
+    try {
+      // Latest first, so shifting later messages never moves an earlier gap.
+      for (const { seq, ids } of open.reverse()) {
+        this.db
+          .prepare(
+            'UPDATE runner_messages SET seq=seq+? WHERE threadId=? AND seq>?',
+          )
+          .run(ids.length, threadId, seq);
+        ids.forEach((toolCallId, index) => {
+          const message = {
+            id: `cut-off-${toolCallId}`,
+            role: 'tool',
+            toolCallId,
+            content,
+          } as Message;
+          this.db
+            .prepare('INSERT INTO runner_messages VALUES (?, ?, ?, ?, ?, ?)')
+            .run(
+              threadId,
+              message.id,
+              seq + index + 1,
+              'tool',
+              JSON.stringify(message),
+              now,
+            );
+        });
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    return open.reduce((sum, row) => sum + row.ids.length, 0);
+  }
+
   // Records a finished run. Existing messages keep their position; `replace`
   // lists messages whose stored content this run may update.
   appendRun(run: StoredRun, messages: Message[], replace: Set<string>) {

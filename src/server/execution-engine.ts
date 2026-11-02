@@ -1229,6 +1229,27 @@ export class ExecutionEngine {
     }
     if (typeof supplied === 'string' && supplied && !known && !acceptNewId)
       throw new Error('Unknown operation id.');
+    // The same write repeated while an earlier one is unconfirmed, whether
+    // the model or a replay sent it, is held until that one is reconciled.
+    if (!known && !idempotent && access?.access !== 'read') {
+      const pending = this.unconfirmedWrite(
+        workItemId,
+        executionId,
+        toolName,
+        JSON.stringify(rest),
+      );
+      if (pending)
+        return {
+          action: 'return',
+          operationId: pending,
+          result: {
+            status: 'uncertain',
+            operationId: pending,
+            error:
+              'An identical earlier call is unconfirmed. Reconcile it before calling it again.',
+          },
+        };
+    }
     if (known?.status === 'succeeded' || known?.status === 'reconciled')
       return {
         action: 'return',
@@ -1280,6 +1301,29 @@ export class ExecutionEngine {
       });
     }
     return { action: 'run', operationId, arguments: rest };
+  }
+  /** An unconfirmed earlier write with these arguments, in this run for scheduled work. */
+  private unconfirmedWrite(
+    workItemId: string,
+    executionId: string | null,
+    toolName: string,
+    argumentsJson: string,
+  ) {
+    const run = executionId
+      ? this.runExecutions(workItemId, executionId)
+      : undefined;
+    const scope = run
+      ? `AND executionId IN (${run.map(() => '?').join(',')})`
+      : '';
+    const row = this.db
+      .prepare(
+        `SELECT idempotencyKey FROM tool_invocations WHERE workItemId=? AND toolName=? AND argumentsJson=?
+           AND status IN ('started','uncertain') AND idempotent=0 AND COALESCE(access, '')<>'read' ${scope}
+         ORDER BY startedAt DESC LIMIT 1`,
+      )
+      .get(workItemId, toolName, argumentsJson, ...(run ?? [])) as
+      { idempotencyKey: string } | undefined;
+    return row?.idempotencyKey;
   }
   completeEffect(
     workItemId: string,
