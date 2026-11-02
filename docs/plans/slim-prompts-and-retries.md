@@ -153,4 +153,37 @@ Notes where the implementation differs from or adds to the sections above.
 - **Outcome (3d).** A job that claims completion closes as `completed` with its gaps stored on the work item (`gapsJson`). The report appends them under "What may be missing". A parent's next prompt lists its children's gaps. A write that definitely failed in the claiming attempt still gets another attempt, as before.
 - **Reconciliation (3e).** `record_reconciliation` needs `checkedWith`, naming a read tool with a successful logged call in the same job after the write started.
 - **Retries (5).** A read that times out or loses its connection is retried once after one second. A rate limit is waited out once inside the call only when it asks for 30 seconds or less; a longer one fails the read and becomes a gap, rather than queuing a delayed attempt. A job that stalls is marked `failed` with a gap saying it stopped making progress.
-- **Not yet built.** The before/after measurement fixture, including per-attempt retrieval counts.
+
+## Measurement results
+
+`npm run measure:summary -- [recovers|down] [--json]` runs `scripts/measure-summary-job.ts`. It drives the real agent, engine, plugin service and tools through a job shaped like the summary job. The setup is:
+
+- 40 shared documents and 300 action items, 100 of them from today.
+- A Cliq read that hangs until the first attempt hits its time limit.
+- After that, Cliq either answers (`recovers`) or keeps failing with a 503 (`down`).
+
+The model is scripted. It uses batched searches and declares its sources when the tool schemas allow it, and pages one search at 20 items otherwise. Round counts show what each version lets a model do. Prompt sizes are measured from the real requests and converted to tokens at four characters each. Output tokens are not measured.
+
+Results on 1 November 2026, main (`b3bd035`) against this branch:
+
+|                                                       | main, recovers   | branch, recovers | main, down                        | branch, down                  |
+| ----------------------------------------------------- | ---------------- | ---------------- | --------------------------------- | ----------------------------- |
+| Outcome                                               | still open       | completed        | still open, failure not mentioned | completed, Cliq gap in report |
+| Attempts                                              | 20 (attempt cap) | 2                | 20 (attempt cap)                  | 2                             |
+| Model rounds                                          | 56               | 6                | 57                                | 7                             |
+| Input tokens, whole job                               | ~1,252,000       | ~69,000          | ~1,296,000                        | ~82,000                       |
+| Action-item search calls                              | 15               | 1                | 15                                | 1                             |
+| Document retrievals (planner, embedding, rerank each) | 20               | 2                | 20                                | 2                             |
+
+Retrieval still runs once per attempt. It falls with the number of attempts.
+
+First-round prompt: system prompt 3,834 → 1,053 tokens, tool schemas 4,215 → 6,451 tokens, total 8,243 → 7,698. The tool schemas grew by:
+
+- `search_action_items`: 555 → 2,125 tokens. The single-search fields and the `searches` items each carry the full field list and descriptions.
+- `complete_work`: 110 → 319 tokens, because of inline sources.
+- `declare_requirements`: a new tool of 384 tokens, now eager.
+- `list_documents`: 102 tokens, now eager.
+
+Shrinking the `search_action_items` schema is the next saving on every round.
+
+Found while measuring: when an attempt is cut off during a tool call, the agent runtime runs that call again at the start of the next attempt, before the model sees anything. The call is still left without a result in the thread history, so this happens outside the model's control. For a read, this is the retry the job needs. Whether a cut-off write would be sent twice this way has not been tested yet.
