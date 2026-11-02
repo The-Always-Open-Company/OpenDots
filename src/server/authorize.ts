@@ -76,6 +76,7 @@ export const CONSULTATION_BLOCKED_TOOLS = new Set([
   'start_delegation',
   'start_objective',
   'complete_work',
+  'declare_requirements',
   'fail_work',
   'propose_schedule',
   'update_schedule',

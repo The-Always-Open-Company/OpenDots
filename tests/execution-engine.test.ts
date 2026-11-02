@@ -548,6 +548,8 @@ describe('execution engine', () => {
     it('settles stuck reads at startup and closes work they held open', () => {
       const { engine, db } = open();
       const id = job(engine);
+      // Work created before evidence tracking finishes under the old rules.
+      db.prepare('UPDATE work_items SET evidenceRequired=0').run();
       const first = engine.enqueueExecution(id)!;
       engine.claimExecution();
       // A row written before calls were classified carries no access.

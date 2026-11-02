@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { Message } from '@ag-ui/core';
 import { workResultPrefix } from '../shared/work-marker.js';
-import { CONVERSATION_LEDGER, type ExecutionEngine } from './execution-engine.js';
+import {
+  CONVERSATION_LEDGER,
+  type ExecutionEngine,
+} from './execution-engine.js';
 import { lastAssistantText, OWNER_STOPS } from './notifications.js';
 import type { SqliteThreadRunner } from './thread-runner.js';
 import type { WorkspaceStore } from './workspace.js';
@@ -68,11 +71,13 @@ export function workReport(
             : `${kind} update: ${title}`;
   const answer =
     completed && workThread ? lastAssistantText(workspace, workThread) : '';
-  const text =
+  const gaps = engine.gaps(workItemId);
+  const text = `${
     answer ||
     (completed
       ? 'The run finished without a written result.'
-      : `The run stopped before it finished: ${error || 'no reason was recorded.'}`);
+      : `The run stopped before it finished: ${error || 'no reason was recorded.'}`)
+  }${gaps.length ? `\n\n**What may be missing**\n${gaps.map((gap) => `- ${gap.text}`).join('\n')}` : ''}`;
   return {
     chatId,
     dotId: workspace.requireThread(chatId).dotId,

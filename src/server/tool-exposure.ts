@@ -23,6 +23,7 @@ export const EAGER_TOOLS: ReadonlySet<string> = new Set([
   'load_skill',
   'start_objective',
   'complete_work',
+  'declare_requirements',
   'fail_work',
   'create_action_items',
   'search_action_items',

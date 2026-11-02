@@ -16,6 +16,7 @@ import {
   ACTION_ITEM_SKILL_NAME,
 } from './action-item-skill.js';
 import { runWithOperation } from './effect-context.js';
+import { EvidenceLedger, type SourceInput } from './evidence.js';
 import type { MemoryProvider } from './memory.js';
 import type { PluginService } from './plugins.js';
 import { PluginToolError } from './plugin-schema.js';
@@ -114,6 +115,49 @@ function isEffect(name: string) {
   return EFFECTS.has(name) || name.startsWith('plugin_');
 }
 
+const TRANSIENT =
+  /timed? ?out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|socket hang up|network/i;
+const RATE_LIMITED = /\b429\b|rate.?limit|too many requests/i;
+/** The longest wait a rate limit may ask for inside one call. */
+const MAX_RATE_WAIT_MS = 30_000;
+
+/** Seconds a rate-limit message asks to wait, e.g. "retry after 12s". */
+function retryAfterMs(message: string) {
+  const match =
+    /retry[- ]?after[^0-9]{0,10}(\d+(?:\.\d+)?)\s*(ms|s|sec|seconds)?/i.exec(
+      message,
+    );
+  if (!match) return undefined;
+  const value = Number(match[1]);
+  return match[2] === 'ms' ? value : value * 1000;
+}
+
+/**
+ * A read that hit a timeout, a dropped connection, or a short rate limit is
+ * tried once more. A permanent failure is not retried, and neither is a
+ * second failure; the declared source then becomes a gap.
+ */
+export async function retryRead<T>(
+  call: () => Promise<T>,
+  wait: (ms: number) => Promise<void> = (ms) =>
+    new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (RATE_LIMITED.test(message)) {
+      const delay = retryAfterMs(message);
+      if (delay == null || delay > MAX_RATE_WAIT_MS) throw error;
+      await wait(delay);
+      return call();
+    }
+    if (!TRANSIENT.test(message)) throw error;
+    await wait(1_000);
+    return call();
+  }
+}
+
 /** Whether an effect reads or writes; built-in effects are always writes. */
 export function effectAccess(
   plugins: Pick<PluginService, 'classify'>,
@@ -138,62 +182,99 @@ export function guardTools(
   return tools.map((tool) => {
     const execute = tool.execute;
     if (!execute) return tool;
+    const run = async (args: Record<string, unknown>) => {
+      let ctx = deps.context();
+      if (!isEffect(tool.name)) return execute(args);
+      const workItemId = ctx.workItemId || deps.ensureWork();
+      ctx = { ...ctx, workItemId };
+      const idempotent = deps.idempotent(tool.name, args);
+      const access = deps.access?.(tool.name);
+      // Models sometimes invent an operationId on a first call; for an
+      // idempotent tool that is safe to run under the id they chose.
+      const begun = deps.engine.beginEffect(
+        workItemId,
+        ctx.executionId || null,
+        tool.name,
+        args,
+        idempotent,
+        idempotent,
+        access,
+      );
+      if (begun.action === 'return') return begun.result;
+      try {
+        const once = () =>
+          runWithOperation(begun.operationId, () => execute(begun.arguments));
+        const result =
+          access?.access === 'read' ? await retryRead(once) : await once();
+        deps.engine.completeEffect(
+          workItemId,
+          tool.name,
+          begun.operationId,
+          'succeeded',
+          result,
+        );
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Tool failed.';
+        // A read that throws did nothing, so it failed; a write may have happened.
+        const failed =
+          idempotent ||
+          error instanceof PluginToolError ||
+          access?.access === 'read';
+        deps.engine.completeEffect(
+          workItemId,
+          tool.name,
+          begun.operationId,
+          failed ? 'failed' : 'uncertain',
+          { error: message },
+        );
+        if (!failed)
+          return {
+            status: 'uncertain',
+            operationId: begun.operationId,
+            error: 'Reconcile this operation before calling it again.',
+          };
+        throw error;
+      }
+    };
     return {
       ...tool,
       execute: async (args: Record<string, unknown>) => {
-        let ctx = deps.context();
+        const ctx = deps.context();
         const held = deps.engine.gate(ctx, tool.name, args, deps.snapshot());
         if (held) return held;
-        if (!isEffect(tool.name)) return execute(args);
-        const workItemId = ctx.workItemId || deps.ensureWork();
-        ctx = { ...ctx, workItemId };
-        const idempotent = deps.idempotent(tool.name, args);
-        const access = deps.access?.(tool.name);
-        // Models sometimes invent an operationId on a first call; for an
-        // idempotent tool that is safe to run under the id they chose.
-        const begun = deps.engine.beginEffect(
-          workItemId,
-          ctx.executionId || null,
-          tool.name,
+        // Background runs log every call so declared sources can be checked.
+        if (
+          !ctx.executionId ||
+          !ctx.workItemId ||
+          !EvidenceLedger.isEvidence(tool.name)
+        )
+          return run(args);
+        const item = deps.engine.workItem(ctx.workItemId);
+        const callId = deps.engine.evidence.startCall({
+          workItemId: ctx.workItemId,
+          executionId: ctx.executionId,
+          runId: item ? deps.engine.runIdFor(item, ctx.executionId) : '',
+          toolName: tool.name,
           args,
-          idempotent,
-          idempotent,
-          access,
-        );
-        if (begun.action === 'return') return begun.result;
+        });
         try {
-          const result = await runWithOperation(begun.operationId, () =>
-            execute(begun.arguments),
-          );
-          deps.engine.completeEffect(
-            workItemId,
-            tool.name,
-            begun.operationId,
-            'succeeded',
-            result,
+          const result = await run(args);
+          const status =
+            result && typeof result === 'object'
+              ? (result as { status?: unknown }).status
+              : undefined;
+          deps.engine.evidence.finishCall(
+            callId,
+            status === 'uncertain' || status === 'failed'
+              ? { error: `The call ended ${status}.` }
+              : { result },
           );
           return result;
         } catch (error) {
-          const message =
-            error instanceof Error ? error.message : 'Tool failed.';
-          // A read that throws did nothing, so it failed; a write may have happened.
-          const failed =
-            idempotent ||
-            error instanceof PluginToolError ||
-            access?.access === 'read';
-          deps.engine.completeEffect(
-            workItemId,
-            tool.name,
-            begun.operationId,
-            failed ? 'failed' : 'uncertain',
-            { error: message },
-          );
-          if (!failed)
-            return {
-              status: 'uncertain',
-              operationId: begun.operationId,
-              error: 'Reconcile this operation before calling it again.',
-            };
+          deps.engine.evidence.finishCall(callId, {
+            error: error instanceof Error ? error.message : 'Tool failed.',
+          });
           throw error;
         }
       },
@@ -352,7 +433,7 @@ export function capabilityContext(input: CapabilityInput) {
       ? `Skills you can load with load_skill:\n${skillCatalog(skills)}`
       : '',
     input.inWork
-      ? `This run has about ${duration(policy.maxExecutionMs)}. End it with a written summary of what you found, and call complete_work or fail_work when the objective is settled. If it needs more time, end with what is done and what remains; the next attempt continues in this thread.`
+      ? `This run has about ${duration(policy.maxExecutionMs)}. Early on, call declare_requirements with the sources the objective needs (an empty list when it needs none). End with a written summary of what you found, and call complete_work or fail_work when the objective is settled. If a source could not be read or a write could not be confirmed, say so plainly in the summary. If it needs more time, end with what is done and what remains; the next attempt continues in this thread.`
       : 'A chat reply has about 90 seconds. When a request needs broad research, many pages, or several checks, tell the owner the plan in a sentence and call start_objective instead of doing it all in this reply. Always end a reply with an answer, even a partial one.',
     `Wake window: at least ${Math.round(policy.minWakeIntervalMs / 60_000)} minutes and at most ${Math.round(policy.maxWakeHorizonMs / 86_400_000)} days. An earlier wake is rejected.`,
     'If a tool returns status pending, that action is stored for the owner. Do not call it again. A pending result from an earlier turn is not still waiting when a later message says the owner already approved it.',
@@ -363,6 +444,68 @@ export function capabilityContext(input: CapabilityInput) {
   return {
     stable: stable.filter(Boolean).join('\n'),
     turn: turn.filter(Boolean).join('\n'),
+  };
+}
+
+const MAX_REFUSALS = 3;
+/** Marks a run that tried to finish without ever naming its sources. */
+export const UNDECLARED = '__undeclared__';
+
+const source = z.object({
+  key: z.string().trim().min(1).max(60).describe('A short stable name.'),
+  label: z
+    .string()
+    .trim()
+    .min(1)
+    .max(160)
+    .describe('What it is, for the owner, e.g. "Today\'s #sales messages".'),
+  tool: z.string().trim().min(1).max(120).describe('The tool that reads it.'),
+  match: z
+    .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+    .optional()
+    .describe(
+      'Arguments the call must have, e.g. {"channel": "sales"}. Others are ignored.',
+    ),
+});
+
+const withdrawal = z.object({
+  key: z.string().trim().min(1).max(60),
+  reason: z.string().trim().min(1).max(300),
+  supersededBy: z
+    .string()
+    .trim()
+    .max(60)
+    .optional()
+    .describe('The key of the source that replaces it.'),
+});
+
+const sourceView = (row: {
+  key: string;
+  label: string;
+  toolName: string;
+  status: string;
+  reason: string | null;
+}) => ({
+  key: row.key,
+  label: row.label,
+  tool: row.toolName,
+  status: row.status,
+  ...(row.reason ? { reason: row.reason } : {}),
+});
+
+function currentRun(deps: WorkDeps) {
+  const executionId = deps.context().executionId;
+  const workItemId = deps.context().workItemId;
+  const item = workItemId ? deps.engine.workItem(workItemId) : undefined;
+  if (!executionId || !workItemId || !item)
+    return {
+      error: 'This applies only to a scheduled or delegated attempt.',
+    } as const;
+  return {
+    executionId,
+    workItemId,
+    item,
+    runId: deps.engine.runIdFor(item, executionId),
   };
 }
 
@@ -521,31 +664,99 @@ export function workTools(deps: WorkDeps): ToolDefinition[] {
       },
     }),
     defineTool({
+      name: 'declare_requirements',
+      description:
+        'Say which sources this objective needs before you finish, such as a channel to read or a search to run. Pass an empty sources list when the objective needs no external evidence. Each source names the tool and the arguments that must match; a successful call of that tool with those arguments satisfies it, even when it returns nothing. You may add sources later, or withdraw one with a reason.',
+      parameters: z.object({
+        sources: z.array(source).max(20),
+        withdraw: z.array(withdrawal).max(20).optional(),
+      }),
+      execute: async ({ sources, withdraw }) => {
+        deps.check();
+        const run = currentRun(deps);
+        if ('error' in run) return run;
+        return {
+          sources: deps.engine.evidence
+            .declare(
+              run.workItemId,
+              run.runId,
+              run.executionId,
+              sources as SourceInput[],
+              withdraw,
+            )
+            .map(sourceView),
+        };
+      },
+    }),
+    defineTool({
       name: 'complete_work',
       description:
-        'Request completion of the current attempt. A later attempt must request it again. The harness finalizes only when this attempt ends cleanly.',
+        'Claim that the objective is achieved. Say which sources it needed first with declare_requirements, or pass them here as sources (an empty list when none were needed). The objective closes when this attempt ends; any declared source that was not read is reported to the owner as a gap.',
       parameters: z.object({
         reason: z.string().trim().max(500).optional(),
         progress: z.string().trim().max(4000).optional(),
+        sources: z
+          .array(source)
+          .max(20)
+          .optional()
+          .describe(
+            'The sources this objective needed, if not already declared. An empty list means none.',
+          ),
       }),
-      execute: async ({ reason, progress }) => {
+      execute: async ({ reason, progress, sources }) => {
         deps.check();
-        const executionId = deps.context().executionId;
-        const workItemId = deps.context().workItemId;
-        if (!executionId || !workItemId)
+        const run = currentRun(deps);
+        if ('error' in run)
           return {
             error:
               'complete_work applies to the current scheduled or delegated attempt.',
           };
+        const { workItemId, executionId, runId, item } = run;
+        const ledger = deps.engine.evidence;
+        if (sources)
+          ledger.declare(
+            workItemId,
+            runId,
+            executionId,
+            sources as SourceInput[],
+          );
+        if (
+          Number(item.evidenceRequired) === 1 &&
+          !ledger.declared(workItemId, runId)
+        ) {
+          const refusals = deps.engine.refuseUndeclared(executionId);
+          if (refusals < MAX_REFUSALS)
+            return {
+              finishIntent: null,
+              error:
+                'Say which sources this objective needed first: call declare_requirements, or pass sources here. Pass an empty list if it needed none.',
+            };
+          ledger.declare(workItemId, runId, executionId, [
+            {
+              key: UNDECLARED,
+              label: 'The sources this objective needed were never named',
+              tool: UNDECLARED,
+            },
+          ]);
+        }
         if (progress) deps.engine.saveProgress(workItemId, progress);
         const saved = deps.engine.setFinishIntent(
           executionId,
           'complete',
           reason,
         );
+        const unmet = ledger
+          .requirements(workItemId, runId)
+          .filter((row) => row.status === 'pending')
+          .map(sourceView);
         return {
           finishIntent: saved ? 'complete' : null,
-          note: 'This attempt finishes when it ends. A later attempt must call complete_work again.',
+          ...(unmet.length
+            ? {
+                unmet,
+                note: 'These sources are not satisfied and will be reported as gaps. Read them now, or withdraw one with declare_requirements if it is not needed. Name any gap in your final summary.',
+              }
+            : {}),
         };
       },
     }),
@@ -769,24 +980,31 @@ export function workTools(deps: WorkDeps): ToolDefinition[] {
     defineTool({
       name: 'record_reconciliation',
       description:
-        'After a read-only check, record what an uncertain operation actually did. Do not call the operation again.',
+        'After a read-only check in this attempt, record what an uncertain operation actually did. Name the read tool you checked with; a statement alone does not settle it. Do not call the operation again.',
       parameters: z.object({
         workItemId: z.string(),
         operationId: z.string(),
+        checkedWith: z
+          .string()
+          .trim()
+          .min(1)
+          .max(120)
+          .describe(
+            'The read tool you called to check, e.g. plugin_x_get_message.',
+          ),
         evidence: z.string().trim().min(1).max(500),
       }),
-      execute: async ({ workItemId, operationId, evidence }) => {
+      execute: async ({ workItemId, operationId, checkedWith, evidence }) => {
         deps.check();
         const item = deps.engine.workItem(workItemId);
         if (!item || String(item.actorId) !== deps.dot.id)
           throw new Error('Objective not found.');
-        return {
-          reconciled: deps.engine.recordReconciliation(
-            workItemId,
-            operationId,
-            evidence,
-          ),
-        };
+        return deps.engine.recordReconciliation(
+          workItemId,
+          operationId,
+          evidence,
+          checkedWith,
+        );
       },
     }),
   ];
@@ -845,7 +1063,8 @@ export function workTools(deps: WorkDeps): ToolDefinition[] {
 function unavailableTools(deps: WorkDeps) {
   const unavailable = new Set<string>();
   if (!deps.context().executionId)
-    for (const name of ['complete_work', 'fail_work']) unavailable.add(name);
+    for (const name of ['complete_work', 'fail_work', 'declare_requirements'])
+      unavailable.add(name);
   if (!deps.engine.hasManageableSchedule(deps.dot.id))
     for (const name of ['update_schedule', 'cancel_schedule'])
       unavailable.add(name);

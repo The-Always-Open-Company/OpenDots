@@ -141,3 +141,16 @@ This check is a backstop. Closing a job still depends on 3c and 3d.
 ## Measurement
 
 On a fixture shaped like the summary job, record before and after: model rounds, input and output tokens, document-retrieval calls per attempt (planner, embedding, rerank), and whether the objective completed, completed with gaps, or falsely reported success.
+
+## As built
+
+Notes where the implementation differs from or adds to the sections above.
+
+- **Name fallback (3a).** The name rule splits on underscores, dashes and capitals, accepts `list`, `get`, `search`, `read`, `fetch`, `find`, `query` and `lookup` among the first three words, and treats any write word (`send`, `mark`, `update` and similar) as a write. Classification only decides what a failure means. Approval defaults still come from the access column and annotations, so a name never lets a tool run without asking.
+- **Read log (3b).** `tool_calls` in `evidence.ts` logs every call in a background attempt except the tools that manage the run (`complete_work`, `declare_requirements`, `load_skill` and similar).
+- **Scope matching (3c).** String constraints match after trimming and ignoring case. A source declared after its call already ran is satisfied at once.
+- **Undeclared completion (3c).** The third refusal in one attempt records completion with a gap saying the sources were never named.
+- **Outcome (3d).** A job that claims completion closes as `completed` with its gaps stored on the work item (`gapsJson`). The report appends them under "What may be missing". A parent's next prompt lists its children's gaps. A write that definitely failed in the claiming attempt still gets another attempt, as before.
+- **Reconciliation (3e).** `record_reconciliation` needs `checkedWith`, naming a read tool with a successful logged call in the same job after the write started.
+- **Retries (5).** A read that times out or loses its connection is retried once after one second. A rate limit is waited out once inside the call only when it asks for 30 seconds or less; a longer one fails the read and becomes a gap, rather than queuing a delayed attempt. A job that stalls is marked `failed` with a gap saying it stopped making progress.
+- **Not yet built.** The before/after measurement fixture, including per-attempt retrieval counts.

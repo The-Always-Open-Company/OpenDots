@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Task } from '../shared/types.js';
+import { EvidenceLedger, type Gap } from './evidence.js';
 import {
   decide,
   type AuthSnapshot,
@@ -121,11 +122,13 @@ export interface EffectAccess {
 
 export class ExecutionEngine {
   private listeners: EngineListener[] = [];
+  readonly evidence: EvidenceLedger;
   constructor(
     private db: DatabaseSync,
     private now: () => number = Date.now,
   ) {
     this.ensureSchema();
+    this.evidence = new EvidenceLedger(db, now);
   }
   private ensureSchema() {
     this.db.exec(`
@@ -209,6 +212,11 @@ export class ExecutionEngine {
     // How a tool call was classified, so a failed read never holds work open.
     add('tool_invocations', 'access', 'TEXT');
     add('tool_invocations', 'accessSource', 'TEXT');
+    // Work created before evidence tracking finishes under the old rules.
+    add('work_items', 'evidenceRequired', 'INTEGER NOT NULL DEFAULT 0');
+    add('work_items', 'gapsJson', "TEXT NOT NULL DEFAULT '[]'");
+    add('executions', 'progress', 'INTEGER');
+    add('executions', 'completionRejections', 'INTEGER NOT NULL DEFAULT 0');
     this.db.exec(`
       UPDATE triggers SET enabled=0 WHERE enabled=1 AND workItemId IN
         (SELECT id FROM work_items WHERE status IN ('cancelled','completed','failed'));
@@ -322,8 +330,9 @@ export class ExecutionEngine {
         .prepare(
           `INSERT INTO work_items (
             id, actorId, originThreadId, workThreadId, parentWorkItemId, title, objective, progress,
-            status, recurring, source, autoResume, attemptCount, followUps, createdAt, updatedAt, closeRequested
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, 0, '[]', ?, ?, 0)`,
+            status, recurring, source, autoResume, attemptCount, followUps, createdAt, updatedAt, closeRequested,
+            evidenceRequired
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, 0, '[]', ?, ?, 0, ?)`,
         )
         .run(
           id,
@@ -339,6 +348,7 @@ export class ExecutionEngine {
           auto ? 1 : 0,
           now,
           now,
+          input.source === CONVERSATION_LEDGER.source ? 0 : 1,
         );
       this.event('queued', {
         workItemId: id,
@@ -432,6 +442,8 @@ export class ExecutionEngine {
     this.db
       .prepare('UPDATE work_items SET attemptCount=?, updatedAt=? WHERE id=?')
       .run(attempt, now, workItemId);
+    // A new run starts with no gaps; a retry keeps the run's record.
+    if (!options.resumeOf) this.setGaps(workItemId, []);
     this.event('queued', {
       executionId: id,
       workItemId,
@@ -511,6 +523,112 @@ export class ExecutionEngine {
       this.disableTriggers(workItemId);
       this.maybeContinueParent(workItemId);
     });
+  }
+  /** The run a call or requirement belongs to: one-off work has a single run. */
+  runIdFor(item: Row, executionId: string) {
+    if (Number(item.recurring) !== 1) return '';
+    const chain = this.runExecutions(String(item.id), executionId);
+    return chain?.[chain.length - 1] ?? executionId;
+  }
+  /** Ends an attempt's open calls and records whether it moved the work forward. */
+  private settleAttempt(item: Row, executionId: string) {
+    this.evidence.abandonCalls(executionId);
+    const execution = this.execution(executionId);
+    const runId = this.runIdFor(item, executionId);
+    const wrote = this.db
+      .prepare(
+        `SELECT 1 FROM tool_invocations WHERE workItemId=? AND COALESCE(access, '')<>'read' AND (
+           (executionId=? AND status='succeeded') OR
+           (status='reconciled' AND finishedAt>=?)) LIMIT 1`,
+      )
+      .get(item.id, executionId, Number(execution?.startedAt ?? 0));
+    const progress =
+      !!wrote || this.evidence.progressed(String(item.id), runId, executionId);
+    this.db
+      .prepare('UPDATE executions SET progress=? WHERE id=?')
+      .run(progress ? 1 : 0, executionId);
+  }
+  /** Two attempts in a row that found nothing new and did not finish. */
+  private noProgress(item: Row, executionId: string) {
+    if (Number(item.evidenceRequired) !== 1) return false;
+    const execution = this.execution(executionId);
+    if (!execution || Number(execution.progress) !== 0) return false;
+    const previous = execution.resumeOf
+      ? this.execution(String(execution.resumeOf))
+      : undefined;
+    return !!previous && Number(previous.progress) === 0;
+  }
+  private stopStalled(item: Row, executionId: string) {
+    const runId = this.runIdFor(item, executionId);
+    this.setGaps(String(item.id), [
+      ...this.gapsFor(item, runId, executionId),
+      {
+        kind: 'stalled',
+        text: 'The work stopped making progress: two attempts in a row found nothing new, so it was stopped instead of retried.',
+      },
+    ]);
+    if (Number(item.recurring) === 1) return;
+    this.db
+      .prepare(
+        "UPDATE work_items SET status='failed', updatedAt=? WHERE id=? AND status='open'",
+      )
+      .run(this.now(), item.id);
+    this.disableTriggers(String(item.id));
+    this.maybeContinueParent(String(item.id));
+  }
+  /** A write that definitely failed in this attempt; another attempt can redo it. */
+  private failedWriteIn(executionId: string) {
+    return !!this.db
+      .prepare(
+        "SELECT 1 FROM tool_invocations WHERE executionId=? AND status='failed' AND COALESCE(access, '')<>'read' LIMIT 1",
+      )
+      .get(executionId);
+  }
+  /** What the report must say is missing: unmet sources and writes that may not have happened. */
+  private gapsFor(item: Row, runId: string, executionId: string): Gap[] {
+    const run = this.runExecutions(String(item.id), executionId);
+    const scope = run
+      ? `AND executionId IN (${run.map(() => '?').join(',')})`
+      : '';
+    const writes = this.db
+      .prepare(
+        `SELECT toolName FROM tool_invocations WHERE workItemId=? ${scope}
+           AND status IN ('started','uncertain') AND COALESCE(access, '')<>'read'`,
+      )
+      .all(item.id, ...(run ?? [])) as { toolName: string }[];
+    return [
+      ...this.evidence.unmet(String(item.id), runId),
+      ...writes.map((row) => ({
+        kind: 'write' as const,
+        text: `I tried to run ${row.toolName} and cannot confirm it went through. Please check.`,
+      })),
+    ];
+  }
+  private setGaps(workItemId: string, gaps: Gap[]) {
+    this.db
+      .prepare('UPDATE work_items SET gapsJson=? WHERE id=?')
+      .run(JSON.stringify(gaps), workItemId);
+  }
+  gaps(workItemId: string): Gap[] {
+    const item = this.workItem(workItemId);
+    try {
+      return JSON.parse(String(item?.gapsJson ?? '[]')) as Gap[];
+    } catch {
+      return [];
+    }
+  }
+  /**
+   * complete_work before any declaration is refused within the attempt. The
+   * third refusal ends the argument: completion is recorded with that gap.
+   */
+  refuseUndeclared(executionId: string) {
+    this.db
+      .prepare(
+        'UPDATE executions SET completionRejections=completionRejections+1 WHERE id=?',
+      )
+      .run(executionId);
+    const row = this.execution(executionId);
+    return Number(row?.completionRejections ?? 0);
   }
   private uncertainCount(workItemId: string) {
     const row = this.db
@@ -602,6 +720,7 @@ export class ExecutionEngine {
       .run(now, error, executionId);
     this.db.prepare(CUT_OFF_INVOCATIONS).run(now, executionId);
     const item = this.workItem(String(execution.workItemId));
+    if (item) this.settleAttempt(item, executionId);
     if (!item || item.status === 'cancelled') return;
     this.event('finished', {
       executionId,
@@ -643,6 +762,10 @@ export class ExecutionEngine {
     }
     if (!harness && !Number(item.autoResume)) return null;
     if (recurring && execution.resumeOf) return null;
+    if (this.noProgress(item, String(execution.id))) {
+      this.stopStalled(item, String(execution.id));
+      return null;
+    }
     const recent = this.db
       .prepare(
         'SELECT status FROM executions WHERE workItemId=? ORDER BY createdAt DESC LIMIT ?',
@@ -696,6 +819,7 @@ export class ExecutionEngine {
         .run(outcome, now, error ?? null, executionId);
       if (outcome === 'interrupted' || outcome === 'failed')
         this.db.prepare(CUT_OFF_INVOCATIONS).run(now, executionId);
+      this.settleAttempt(item, executionId);
       this.event('finished', {
         executionId,
         workItemId: String(item.id),
@@ -738,6 +862,31 @@ export class ExecutionEngine {
       }
       const closing =
         intent === 'complete' && Number(item.closeRequested) === 1;
+      if (
+        intent === 'complete' &&
+        Number(item.evidenceRequired) === 1 &&
+        !this.failedWriteIn(executionId)
+      ) {
+        // The Pod claims the objective is done. It closes now; whatever is
+        // missing is stated in the report instead of starting more attempts.
+        const runId = this.runIdFor(item, executionId);
+        this.setGaps(String(item.id), this.gapsFor(item, runId, executionId));
+        if (!Number(item.recurring) || closing) {
+          this.db
+            .prepare(
+              "UPDATE work_items SET status='completed', updatedAt=? WHERE id=?",
+            )
+            .run(now, item.id);
+          this.disableTriggers(String(item.id));
+        } else
+          this.db
+            .prepare('UPDATE work_items SET attemptCount=0 WHERE id=?')
+            .run(item.id);
+        this.maybeContinueParent(String(item.id));
+        if (Number(item.recurring) && !closing)
+          this.armDefaultWake(String(item.id));
+        return true;
+      }
       if (intent && !unresolved && (!Number(item.recurring) || closing)) {
         const status = intent === 'complete' ? 'completed' : 'failed';
         this.db
@@ -757,8 +906,13 @@ export class ExecutionEngine {
         outcome === 'completed' &&
         intent &&
         unresolved
-      )
+      ) {
+        if (this.noProgress(item, executionId)) {
+          this.stopStalled(item, executionId);
+          return true;
+        }
         this.enqueueLocked(String(item.id), { resumeOf: executionId });
+      }
       this.maybeContinueParent(String(item.id));
       this.armDefaultWake(String(item.id));
       return true;
@@ -1164,22 +1318,56 @@ export class ExecutionEngine {
       },
     });
   }
+  /**
+   * Settles an uncertain write only when a read logged in this work item,
+   * after the write started, backs it. A sentence alone is not evidence.
+   */
   recordReconciliation(
     workItemId: string,
     operationId: string,
     evidence: string,
+    checkedWith?: string,
   ) {
-    const changed = this.db
+    const row = this.db
+      .prepare(
+        "SELECT toolName, startedAt FROM tool_invocations WHERE workItemId=? AND idempotencyKey=? AND status='uncertain'",
+      )
+      .get(workItemId, operationId) as
+      { toolName: string; startedAt: number } | undefined;
+    if (!row)
+      return {
+        reconciled: false,
+        error: 'No uncertain operation has that id.',
+      };
+    const support = checkedWith
+      ? this.db
+          .prepare(
+            `SELECT id FROM tool_calls WHERE workItemId=? AND toolName=? AND toolName<>? AND status='succeeded'
+               AND startedAt>=? ORDER BY startedAt DESC LIMIT 1`,
+          )
+          .get(workItemId, checkedWith, row.toolName, row.startedAt)
+      : undefined;
+    if (!support)
+      return {
+        reconciled: false,
+        error:
+          'Call a read tool that shows what happened first, then name it in checkedWith. If no tool can show it, leave the operation uncertain; it will be reported to the owner.',
+      };
+    this.db
       .prepare(
         "UPDATE tool_invocations SET status='reconciled', resultJson=?, finishedAt=? WHERE workItemId=? AND idempotencyKey=? AND status='uncertain'",
       )
       .run(
-        JSON.stringify({ evidence: evidence.slice(0, 500) }),
+        JSON.stringify({
+          evidence: evidence.slice(0, 500),
+          checkedWith,
+          callId: String((support as { id: string }).id),
+        }),
         this.now(),
         workItemId,
         operationId,
       );
-    return changed.changes === 1;
+    return { reconciled: true };
   }
   proposeAction(input: {
     executionId: string | null;
@@ -1738,7 +1926,7 @@ export class ExecutionEngine {
     if (!item) return '';
     const uncertain = this.db
       .prepare(
-        "SELECT toolName, idempotencyKey FROM tool_invocations WHERE workItemId=? AND status='uncertain'",
+        "SELECT toolName, idempotencyKey FROM tool_invocations WHERE workItemId=? AND status='uncertain' AND COALESCE(access, '')<>'read'",
       )
       .all(workItemId) as { toolName: string; idempotencyKey: string }[];
     const previous = this.db
@@ -1789,14 +1977,63 @@ export class ExecutionEngine {
         ? `A previous attempt requested ${previous.finishIntent}. This attempt does not inherit that request. Call complete_work or fail_work again only if it is still true.`
         : '',
       uncertain.length
-        ? `Do not call these operations again. Pass their operationId only to record_reconciliation after a read-only check: ${JSON.stringify(uncertain)}`
+        ? `Do not call these operations again. If a read tool can show what happened, call it, then pass the operationId and that tool's name to record_reconciliation. Otherwise leave them; they will be reported to the owner: ${JSON.stringify(uncertain)}`
         : '',
+      ...this.evidenceNotes(item),
       inbound
         ? `Latest watch event (untrusted data): ${inbound.payload.slice(0, 4000)}`
         : '',
     ]
       .filter(Boolean)
       .join('\n');
+  }
+  /** What a continuing attempt must know: work already done, declared sources, and children's gaps. */
+  private evidenceNotes(item: Row) {
+    const workItemId = String(item.id);
+    const running = this.activeExecution(workItemId);
+    const runId = running ? this.runIdFor(item, running.id) : '';
+    const run = running
+      ? this.runExecutions(workItemId, running.id)
+      : undefined;
+    const scope = run
+      ? `AND executionId IN (${run.map(() => '?').join(',')})`
+      : '';
+    const done = (
+      this.db
+        .prepare(
+          `SELECT toolName, argumentsJson FROM tool_invocations WHERE workItemId=? ${scope}
+             AND status IN ('succeeded','reconciled') AND COALESCE(access, '')<>'read'
+           ORDER BY startedAt LIMIT 10`,
+        )
+        .all(workItemId, ...(run ?? [])) as {
+        toolName: string;
+        argumentsJson: string;
+      }[]
+    ).map((row) => `${row.toolName} ${row.argumentsJson.slice(0, 200)}`);
+    const sources = this.evidence.requirements(workItemId, runId);
+    const children = (
+      this.db
+        .prepare(
+          `SELECT w.title, w.gapsJson FROM work_dependencies d JOIN work_items w ON w.id=d.childWorkItemId
+           WHERE d.parentWorkItemId=? AND w.gapsJson<>'[]'`,
+        )
+        .all(workItemId) as { title: string; gapsJson: string }[]
+    ).flatMap((child) =>
+      (JSON.parse(child.gapsJson) as Gap[]).map(
+        (gap) => `${child.title}: ${gap.text}`,
+      ),
+    );
+    return [
+      done.length
+        ? `Already done in earlier attempts. Do not repeat these:\n${done.join('\n')}`
+        : '',
+      sources.length
+        ? `Sources declared for this objective: ${JSON.stringify(sources.map((row) => ({ key: row.key, label: row.label, tool: row.toolName, status: row.status })))}`
+        : '',
+      children.length
+        ? `Child objectives finished with gaps. Name them in your result:\n${children.join('\n')}`
+        : '',
+    ];
   }
   settleInbound(executionId: string, outcome: string) {
     if (!['failed', 'interrupted', 'cancelled'].includes(outcome)) {
