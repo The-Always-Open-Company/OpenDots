@@ -31,7 +31,7 @@ export const ACTION_ITEM_SKILL: SkillDoc = {
     '',
     '## Finding items',
     '- Use search_action_items before answering what the owner has to do or is owed.',
-    '- Put independent searches in one call with `searches` (up to five) instead of calling the tool several times.',
+    '- search_action_items takes a `searches` list. Put independent searches in one call (up to five) instead of calling the tool several times; a single search is a list of one.',
     "- For a summary of a period, use the period filters instead of paging a broad search: createdAfter/createdBefore for items filed, completedAfter/completedBefore for items finished, updatedAfter/updatedBefore for items changed. Dates are in the owner's time zone; a date alone covers the whole day.",
     '- Results are short summaries. Call read_action_item for an item whose context, details or source you need.',
     '- Pass nextOffset as offset only when you truly need more than the results shown. A summary rarely needs every item; say how many there are instead.',

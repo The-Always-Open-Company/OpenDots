@@ -154,14 +154,14 @@ export const actionItemPatch = z.object({
 });
 export type ActionItemPatchInput = z.input<typeof actionItemPatch>;
 
-function period(label: string) {
-  return z
-    .union([z.string().trim().max(40), z.number().int()])
-    .optional()
-    .describe(
-      `${label} this ISO date or date-time, in the owner's time zone. A date alone covers the whole day. Without statuses, a period filter searches every status.`,
-    );
-}
+/**
+ * A period bound: an ISO date or date-time in the owner's time zone, where a
+ * date alone covers the whole day. Left undescribed so the six bounds do not
+ * repeat one sentence; the search tool states the rule once.
+ */
+const periodBound = z
+  .union([z.string().trim().max(40), z.number().int()])
+  .optional();
 
 /** Epoch ms for the end of a period: a date alone means the whole day. */
 function periodEnd(
@@ -201,12 +201,12 @@ export const searchInput = z.object({
   labels: z.array(z.string().trim().min(1).max(40)).max(5).optional(),
   dueBefore: when.optional(),
   dueAfter: when.optional(),
-  createdAfter: period('Filed on or after'),
-  createdBefore: period('Filed on or before'),
-  updatedAfter: period('Changed on or after'),
-  updatedBefore: period('Changed on or before'),
-  completedAfter: period('Finished on or after'),
-  completedBefore: period('Finished on or before'),
+  createdAfter: periodBound,
+  createdBefore: periodBound,
+  updatedAfter: periodBound,
+  updatedBefore: periodBound,
+  completedAfter: periodBound,
+  completedBefore: periodBound,
   limit: z.number().int().min(1).max(200).optional(),
   offset: z
     .number()
@@ -214,9 +214,7 @@ export const searchInput = z.object({
     .min(0)
     .max(5_000)
     .optional()
-    .describe(
-      'Items to skip, for the next page. Only applies without a query; a query returns its best matches.',
-    ),
+    .describe('Items to skip for the next page; ignored with a query.'),
 });
 export type SearchInput = z.input<typeof searchInput>;
 

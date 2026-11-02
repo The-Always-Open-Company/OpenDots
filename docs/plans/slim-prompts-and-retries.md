@@ -92,7 +92,7 @@ Current. `search_action_items` takes one query, at most 20 items, and tells the 
 
 Change.
 
-- `search_action_items` accepts up to five searches in one call. A single search stays valid.
+- `search_action_items` accepts up to five searches in one call. A single search is a list of one (see Measurement results for why the flat form was dropped).
 - Cap each search at 50 results and the call at 100. When the requested total passes 100, scale each search's limit in proportion, with at least one slot each. Each result reports requested, returned, whether it was cut, and its own `nextOffset`.
 - Results are compact by default (statement, status, dates, people). Full detail stays on `read_action_item`.
 - Add period filters: created in, completed in, updated in, and still outstanding. Periods are read in the owner's time zone. The skill tells the Pod to use them instead of paging a broad search.
@@ -171,19 +171,17 @@ Results on 1 November 2026, main (`b3bd035`) against this branch:
 | Outcome                                               | still open       | completed        | still open, failure not mentioned | completed, Cliq gap in report |
 | Attempts                                              | 20 (attempt cap) | 2                | 20 (attempt cap)                  | 2                             |
 | Model rounds                                          | 56               | 6                | 57                                | 7                             |
-| Input tokens, whole job                               | ~1,252,000       | ~69,000          | ~1,296,000                        | ~82,000                       |
+| Input tokens, whole job                               | ~1,252,000       | ~61,000          | ~1,296,000                        | ~72,000                       |
 | Action-item search calls                              | 15               | 1                | 15                                | 1                             |
 | Document retrievals (planner, embedding, rerank each) | 20               | 2                | 20                                | 2                             |
 
 Retrieval still runs once per attempt. It falls with the number of attempts.
 
-First-round prompt: system prompt 3,834 → 1,053 tokens, tool schemas 4,215 → 6,451 tokens, total 8,243 → 7,698. The tool schemas grew by:
+First-round prompt: system prompt 3,834 → 1,053 tokens, tool schemas 4,215 → 5,063 tokens, total 8,243 → 6,310 (-23%). The tool schemas grew by:
 
-- `search_action_items`: 555 → 2,125 tokens. The single-search fields and the `searches` items each carry the full field list and descriptions.
+- `search_action_items`: 555 → 737 tokens. A first version took a single search's fields directly and again inside `searches`, which came to 2,125 tokens. The tool now takes only `searches`, states the period rule once in its description, and offers the date bounds as ISO strings only.
 - `complete_work`: 110 → 319 tokens, because of inline sources.
 - `declare_requirements`: a new tool of 384 tokens, now eager.
 - `list_documents`: 102 tokens, now eager.
-
-Shrinking the `search_action_items` schema is the next saving on every round.
 
 Found while measuring: when an attempt is cut off during a tool call, the agent runtime runs that call again at the start of the next attempt, before the model sees anything. The call is still left without a result in the thread history, so this happens outside the model's control. For a read, this is the retry the job needs. Whether a cut-off write would be sent twice this way has not been tested yet.

@@ -92,7 +92,23 @@ const searchLimit = z
   .min(1)
   .max(MAX_SEARCH_RESULTS)
   .optional()
-  .describe('Items to return for this search (default 10, at most 50).');
+  .describe('Default 10.');
+
+/** An ISO date or date-time; the service also takes epoch numbers, the model need not. */
+const isoBound = z.string().trim().max(40).optional();
+
+/** One search as the model sees it: date bounds as ISO strings only. */
+const toolSearch = searchInput.extend({
+  limit: searchLimit,
+  dueBefore: isoBound,
+  dueAfter: isoBound,
+  createdAfter: isoBound,
+  createdBefore: isoBound,
+  updatedAfter: isoBound,
+  updatedBefore: isoBound,
+  completedAfter: isoBound,
+  completedBefore: isoBound,
+});
 
 /**
  * Splits a call's result budget across its searches. Each keeps what it asked
@@ -212,30 +228,21 @@ export function actionItemTools(
     defineTool({
       name: 'search_action_items',
       description:
-        "Find the owner's action items by meaning and keywords within filters: entities they concern, who must do them, who asked, status, labels, due dates, and when they were filed, changed or finished. Open and waiting items are searched unless statuses or a period filter are given. Pass one search directly, or up to five independent searches in `searches` to run them in one call. Each search returns at most 50 items and one call at most 100; each result says how many were requested and returned and gives nextOffset for its next page.",
-      parameters: searchInput.extend({
-        limit: searchLimit,
-        detail,
+        "Find the owner's action items. Each entry in `searches` is one independent search by meaning and keywords within filters: entities, who must do them, who asked, status, labels, due dates, and when they were filed (created*), changed (updated*) or finished (completed*). Period bounds are ISO dates or date-times in the owner's time zone; a date alone covers the whole day. Open and waiting items are searched unless statuses or a period bound are given. Up to five searches per call, each returning at most 50 items and the call at most 100; each result says how many were requested and returned and gives nextOffset for its next page.",
+      parameters: z.object({
         searches: z
-          .array(searchInput.extend({ limit: searchLimit }))
+          .array(toolSearch)
           .min(1)
           .max(MAX_SEARCHES)
-          .optional()
-          .describe(
-            'Up to five independent searches to run together. Leave the other search fields empty when you use this.',
-          ),
+          .describe('One entry per search; a single search is a list of one.'),
+        detail,
       }),
-      execute: async ({ detail: level, searches, ...single }) => {
+      execute: async ({ detail: level, searches }) => {
         deps.check();
-        if (searches && Object.values(single).some((value) => value != null))
-          throw new Error(
-            'Pass either one search or a searches list, not both.',
-          );
-        const list = searches ?? [single];
-        const requested = list.map((search) => search.limit ?? 10);
+        const requested = searches.map((search) => search.limit ?? 10);
         const allotted = shareLimits(requested, MAX_CALL_RESULTS);
         const results = await Promise.all(
-          list.map(async (search, index) => {
+          searches.map(async (search, index) => {
             const found = await service.search(
               { ...search, limit: allotted[index] },
               actor,
@@ -251,7 +258,7 @@ export function actionItemTools(
           }),
         );
         deps.check();
-        return searches ? { results } : results[0]!;
+        return { results };
       },
     }),
     defineTool({

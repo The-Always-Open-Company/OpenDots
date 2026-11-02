@@ -609,15 +609,24 @@ describe('action item tools', () => {
       (tool) => tool.name === 'search_action_items',
     )!;
     const found = (await search.execute!({
-      entities: ['Company A'],
+      searches: [{ entities: ['Company A'] }],
     } as never)) as {
-      items: { owner: string; due: string | null }[];
+      results: { items: { owner: string; due: string | null }[] }[];
     };
-    expect(found.items[0]).toMatchObject({ assignee: 'you', due: null });
+    expect(found.results[0]!.items[0]).toMatchObject({
+      assignee: 'you',
+      due: null,
+    });
     const parameters = (search as unknown as { parameters: z.ZodType })
       .parameters;
-    expect(parameters.safeParse({ limit: 50 }).success).toBe(true);
-    expect(parameters.safeParse({ limit: 51 }).success).toBe(false);
+    expect(parameters.safeParse({ searches: [{ limit: 50 }] }).success).toBe(
+      true,
+    );
+    expect(parameters.safeParse({ searches: [{ limit: 51 }] }).success).toBe(
+      false,
+    );
+    // The flat single-search form is gone; a single search is a list of one.
+    expect(parameters.safeParse({ limit: 5 }).success).toBe(false);
   });
 
   it('runs several searches in one call within a shared budget', async () => {
@@ -647,9 +656,6 @@ describe('action item tools', () => {
     expect(batch.results).toHaveLength(5);
     for (const result of batch.results)
       expect(result).toMatchObject({ requested: 50, returned: 3, cut: true });
-    await expect(
-      search.execute!({ limit: 2, searches: [{}] } as never),
-    ).rejects.toThrow(/either one search/);
     const parameters = (search as unknown as { parameters: z.ZodType })
       .parameters;
     expect(
@@ -684,11 +690,12 @@ describe('action item tools', () => {
       signal: new AbortController().signal,
     }).find((tool) => tool.name === 'search_action_items')!;
     const today = new Date().toISOString().slice(0, 10);
-    const run = (input: object) =>
-      search.execute!(input as never) as Promise<{
-        total: number;
-        items: { id: string }[];
-      }>;
+    const run = async (input: object) =>
+      (
+        (await search.execute!({ searches: [input] } as never)) as {
+          results: { total: number; items: { id: string }[] }[];
+        }
+      ).results[0]!;
     // A period filter without statuses includes finished items.
     expect(
       (await run({ createdAfter: today, createdBefore: today })).total,
@@ -718,8 +725,13 @@ describe('action item tools', () => {
       returned: number;
       nextOffset: number | null;
     };
-    const page = (input: object) =>
-      search.execute!(input as never) as Promise<Page>;
+    const page = async ({ detail, ...input }: Record<string, unknown>) =>
+      (
+        (await search.execute!({
+          searches: [input],
+          ...(detail ? { detail } : {}),
+        } as never)) as { results: Page[] }
+      ).results[0]!;
 
     const firstPage = await page({ limit: 2 });
     expect(firstPage).toMatchObject({ total: 3, returned: 2, nextOffset: 2 });
