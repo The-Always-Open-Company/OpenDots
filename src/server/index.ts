@@ -326,6 +326,8 @@ const work = new WorkRunner(
   },
 );
 runner.attachWork(work);
+// Work queued or approved between ticks starts now, not at the next minute.
+engine.onQueued = () => runner.kick();
 if (config.slackChannel)
   console.warn(
     'Slack settings are ignored: Slack ran on CopilotKit Intelligence Channels, which Pods no longer uses.',

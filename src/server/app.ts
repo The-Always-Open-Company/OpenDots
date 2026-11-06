@@ -338,6 +338,7 @@ export function createApp({
     );
     if (platform && parsed.data.threadId)
       platform.workspace.bindTask(task.id, parsed.data.threadId);
+    runner.kick();
     return c.json(task, 201);
   });
   app.get('/api/tasks/:id', (c) => {

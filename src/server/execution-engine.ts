@@ -121,6 +121,15 @@ export interface EffectAccess {
 }
 
 export class ExecutionEngine {
+  /** Called when work becomes ready to run, so the loop can pick it up now. */
+  onQueued?: () => void;
+  private queued() {
+    try {
+      this.onQueued?.();
+    } catch {
+      // Waking the loop early is best effort; the next tick still runs it.
+    }
+  }
   private listeners: EngineListener[] = [];
   readonly evidence: EvidenceLedger;
   constructor(
@@ -216,6 +225,13 @@ export class ExecutionEngine {
     // How a tool call was classified, so a failed read never holds work open.
     add('tool_invocations', 'access', 'TEXT');
     add('tool_invocations', 'accessSource', 'TEXT');
+    // The work loop asks these every tick; keep them off full table scans.
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS triggers_due ON triggers(enabled, nextRunAt);
+      CREATE INDEX IF NOT EXISTS executions_status ON executions(status, notBefore);
+      CREATE INDEX IF NOT EXISTS pending_actions_status ON pending_actions(status, notBefore);
+      CREATE INDEX IF NOT EXISTS inbound_events_status ON inbound_events(status);
+    `);
     // Work created before evidence tracking finishes under the old rules.
     add('work_items', 'evidenceRequired', 'INTEGER NOT NULL DEFAULT 0');
     add('work_items', 'gapsJson', "TEXT NOT NULL DEFAULT '[]'");
@@ -455,6 +471,7 @@ export class ExecutionEngine {
       actorId: String(item.actorId),
       payload: { attempt },
     });
+    if (!options.notBefore) this.queued();
     return id;
   }
   /**
@@ -643,6 +660,17 @@ export class ExecutionEngine {
     return row.n;
   }
   claimExecution(): (Row & { lease: string }) | null {
+    // Read first, so an idle tick takes no write lock.
+    const now = this.now();
+    if (
+      !this.db
+        .prepare(
+          `SELECT 1 FROM executions WHERE (status='queued' AND lease IS NULL AND (notBefore IS NULL OR notBefore<=?))
+             OR (status='running' AND leaseUntil<=?) LIMIT 1`,
+        )
+        .get(now, now)
+    )
+      return null;
     return this.transaction(() => {
       const now = this.now();
       this.recoverExecutionLeases(now);
@@ -1558,6 +1586,7 @@ export class ExecutionEngine {
         actorId: String(action.actorId),
         payload: { actionId: id, status: 'approved' },
       });
+      if (!action.notBefore) this.queued();
       return this.action(id);
     });
   }
@@ -1603,6 +1632,17 @@ export class ExecutionEngine {
     this.enqueueLocked(workItemId, {});
   }
   claimApprovedAction() {
+    // Read first, so an idle tick takes no write lock.
+    const due = this.now();
+    if (
+      !this.db
+        .prepare(
+          `SELECT 1 FROM pending_actions WHERE (status='approved' AND (notBefore IS NULL OR notBefore<=?))
+             OR (status='executing' AND leaseUntil<=?) LIMIT 1`,
+        )
+        .get(due, due)
+    )
+      return null;
     return this.transaction(() => {
       const now = this.now();
       const expired = this.db

@@ -2,8 +2,17 @@ import { Store } from './store.js';
 import type { Result, Memory } from '../shared/types.js';
 import type { Claim } from './store.js';
 import { research, type Config } from './research.js';
+/**
+ * How often the loop checks for due schedules and queued work. Work queued or
+ * approved in between wakes it at once through kick().
+ */
+export const TICK_MS = 60_000;
+
 export class Runner {
   private timer?: ReturnType<typeof setInterval>;
+  private kicked?: ReturnType<typeof setTimeout>;
+  private ticking = false;
+  private again = false;
   private active = new Map<string, AbortController>();
   private attached?: {
     tick: () => Promise<void>;
@@ -23,12 +32,22 @@ export class Runner {
   ) {}
   start() {
     if (!this.timer) {
-      this.timer = setInterval(() => void this.tick(), 1000);
+      this.timer = setInterval(() => void this.tick(), TICK_MS);
       void this.tick();
     }
   }
+  /** Runs a tick soon, for work that was just queued or approved. */
+  kick() {
+    if (!this.timer || this.kicked) return;
+    this.kicked = setTimeout(() => {
+      this.kicked = undefined;
+      void this.tick();
+    }, 0);
+  }
   stop() {
     clearInterval(this.timer);
+    clearTimeout(this.kicked);
+    this.kicked = undefined;
     this.timer = undefined;
     for (const task of this.store.tasks()) {
       if (this.active.has(task.id) && task.lease)
@@ -53,6 +72,22 @@ export class Runner {
       controller.abort(new Error('Run stopped because settings changed.'));
   }
   async tick() {
+    // One tick at a time; a request during a tick runs one more after it.
+    if (this.ticking) {
+      this.again = true;
+      return;
+    }
+    this.ticking = true;
+    try {
+      do {
+        this.again = false;
+        await this.runTickSafely();
+      } while (this.again);
+    } finally {
+      this.ticking = false;
+    }
+  }
+  private async runTickSafely() {
     try {
       await this.runTick();
     } catch {
