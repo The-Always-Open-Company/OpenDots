@@ -358,12 +358,6 @@ type CapabilityInput = {
   actionItems?: boolean;
 };
 
-function duration(ms: number) {
-  return ms >= 120_000
-    ? `${Math.round(ms / 60_000)} minutes`
-    : `${Math.round(ms / 1000)} seconds`;
-}
-
 export function capabilityPrompt(input: CapabilityInput) {
   const { stable, turn } = capabilityContext(input);
   return [turn, stable].filter(Boolean).join('\n');
@@ -433,8 +427,8 @@ export function capabilityContext(input: CapabilityInput) {
       ? `Skills you can load with load_skill:\n${skillCatalog(skills)}`
       : '',
     input.inWork
-      ? `This run has about ${duration(policy.maxExecutionMs)}. Early on, call declare_requirements with the sources the objective needs (an empty list when it needs none). End with a written summary of what you found, and call complete_work or fail_work when the objective is settled. If a source could not be read or a write could not be confirmed, say so plainly in the summary. If it needs more time, end with what is done and what remains; the next attempt continues in this thread.`
-      : 'A chat reply has about 90 seconds. When a request needs broad research, many pages, or several checks, tell the owner the plan in a sentence and call start_objective instead of doing it all in this reply. Always end a reply with an answer, even a partial one.',
+      ? `Early on, call declare_requirements with the sources the objective needs (an empty list when it needs none). End with a written summary of what you found, and call complete_work or fail_work when the objective is settled. If a source could not be read or a write could not be confirmed, say so plainly in the summary. If it cannot all be done in this attempt, end with what is done and what remains; the next attempt continues in this thread.`
+      : 'When a request needs broad research or many pages, tell the owner the plan in a sentence and call start_objective instead of doing it all in this reply. Always end a reply with an answer, even a partial one.',
     `Wake window: at least ${Math.round(policy.minWakeIntervalMs / 60_000)} minutes and at most ${Math.round(policy.maxWakeHorizonMs / 86_400_000)} days. An earlier wake is rejected.`,
     'If a tool returns status pending, that action is stored for the owner. Do not call it again. A pending result from an earlier turn is not still waiting when a later message says the owner already approved it.',
     'To retry an effect that already started, pass its operationId. A new call without that id is a new operation.',

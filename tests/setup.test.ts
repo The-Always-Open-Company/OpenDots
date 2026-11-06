@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import {
   contextMaxTokensFromEnv,
   DEFAULT_CONTEXT_MAX_TOKENS,
+  DEFAULT_MAX_AGENT_TURNS,
   DEFAULT_DECISIONS_MODEL,
   DEFAULT_FAST_MODEL,
   decisionsModelFromEnv,
@@ -83,8 +84,10 @@ it('parses the context budget and rejects unusable values', () => {
   for (const bad of ['abc', '100', '1.5', '-5000'])
     expect(() => contextMaxTokensFromEnv(bad)).toThrow(/CONTEXT_MAX_TOKENS/);
 });
-it('leaves the turn limit off unless a usable limit is set', () => {
-  for (const off of [undefined, '', ' ', 'off', 'OFF', '0'])
+it('uses the default turn limit unless one is set or it is turned off', () => {
+  for (const unset of [undefined, '', ' '])
+    expect(maxAgentTurnsFromEnv(unset)).toBe(DEFAULT_MAX_AGENT_TURNS);
+  for (const off of ['off', 'OFF', '0'])
     expect(maxAgentTurnsFromEnv(off)).toBeUndefined();
   expect(maxAgentTurnsFromEnv('8')).toBe(8);
   for (const bad of ['1', '101', '2.5', 'many', '-3'])

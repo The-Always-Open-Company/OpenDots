@@ -1,7 +1,6 @@
 import { appendPieces, speakable } from './live-call-controller.js';
 import {
   DEFAULT_VOICE_QUIET_MS,
-  DEFAULT_VOICE_TASK_AFTER_CALL_MS,
   DEFAULT_VOICE_TASK_CONCURRENCY,
   type PlatformConfig,
   type VoiceResultDelivery,
@@ -73,16 +72,12 @@ export class CallTaskScheduler {
   private queue: TaskQueue<CallTask>;
   private numbers = 0;
   private detached = false;
-  private afterCall?: ReturnType<typeof setTimeout>;
   constructor(
     private options: {
       planner: TaskPlanner;
       runner: CallTaskRunner;
       delivery: ResultDelivery;
-      config: Pick<
-        PlatformConfig,
-        'fastModel' | 'voiceTaskConcurrency' | 'voiceTaskAfterCallMs'
-      >;
+      config: Pick<PlatformConfig, 'fastModel' | 'voiceTaskConcurrency'>;
       /** Model for tasks that are not routed to `fastModel`. */
       reasoningModel?: string;
       /** The last few main-thread messages, for briefs. */
@@ -164,22 +159,14 @@ export class CallTaskScheduler {
     this.queue.add(task);
     return task;
   }
-  /** The call ended: results go to the chat, and tasks get a time limit. */
+  /**
+   * The call ended: tasks still running carry on, and their results go to
+   * the chat. Pausing the Pod stops them.
+   */
   detach() {
     if (this.detached) return;
     this.detached = true;
     this.options.delivery.detach();
-    if (!this.open().length) return;
-    this.afterCall = setTimeout(
-      () =>
-        this.stopAll(
-          'It was still running when the after-call time limit was reached.',
-        ),
-      this.options.config.voiceTaskAfterCallMs ??
-        DEFAULT_VOICE_TASK_AFTER_CALL_MS,
-    );
-    this.afterCall.unref?.();
-    void this.settled().then(() => clearTimeout(this.afterCall));
   }
   stopAll(reason: string) {
     this.queue.stopAll(reason);

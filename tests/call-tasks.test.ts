@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import {
+  CallTaskScheduler,
   ResultDelivery,
   type CallTask,
   type DeliveryTiming,
@@ -257,4 +258,62 @@ it('counts sends while speech was active, delays and owner requests for results'
     ownerAsked: 1,
     medianDelayMs: 250,
   });
+});
+
+it('lets tasks still running at hangup finish, and posts their results to the chat', async () => {
+  vi.useFakeTimers();
+  try {
+    const notify = vi.fn();
+    const delivery = new ResultDelivery({
+      mode: 'sequential',
+      sink: { append: () => true },
+      notify,
+    });
+    deliveries.push(delivery);
+    let finish: (report: CallReport) => void = () => {};
+    const record = vi.fn();
+    const scheduler = new CallTaskScheduler({
+      planner: { route: async () => null, split: async () => null },
+      delivery,
+      config: {},
+      chat: () => '',
+      runner: {
+        create: (delegationId) => ({
+          id: delegationId,
+          childThreadId: `child-${delegationId}`,
+        }),
+        save: () => {},
+        run: () => new Promise<CallReport>((resolve) => (finish = resolve)),
+        record,
+        notify,
+      },
+    });
+    const task = scheduler.submit('item_1', {
+      words: 'Check the open Zoho tickets',
+      transcript: '',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(task.status).toBe('running');
+
+    scheduler.detach();
+    // Long after the old ten minute limit, the task is still working.
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(task.status).toBe('running');
+    expect(task.controller.signal.aborted).toBe(false);
+
+    finish(report({ facts: 'Three tickets are open.' }));
+    await scheduler.settled();
+    expect(task.status).toBe('done');
+    expect(record).toHaveBeenCalledWith(
+      task,
+      expect.objectContaining({ facts: 'Three tickets are open.' }),
+    );
+    // After hangup the result goes to the chat with a notification.
+    expect(notify).toHaveBeenCalledWith(
+      task,
+      expect.objectContaining({ facts: 'Three tickets are open.' }),
+    );
+  } finally {
+    vi.useRealTimers();
+  }
 });

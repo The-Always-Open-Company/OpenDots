@@ -60,9 +60,6 @@ interface CallJob {
   tasks?: CallTaskScheduler;
 }
 
-/** A child turn longer than this is stopped. */
-const CALL_TASK_TIME_LIMIT_MS = 90_000;
-
 export class VoiceService {
   private jobs = new Map<string, CallJob>();
   private ending = new Map<string, Promise<CallReceipt>>();
@@ -376,10 +373,9 @@ export class VoiceService {
               this.platform.turn(
                 task.childThreadId,
                 prompt,
-                AbortSignal.any([
-                  signal,
-                  AbortSignal.timeout(CALL_TASK_TIME_LIMIT_MS),
-                ]),
+                // No clock: the call carries on while tasks run, and the
+                // turn is bounded by its model-call limit and stall guard.
+                signal,
                 {
                   opendotsSource: 'call_task',
                   callId: call.id,

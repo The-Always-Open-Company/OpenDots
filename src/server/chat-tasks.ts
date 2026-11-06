@@ -21,8 +21,6 @@ import {
 
 /** Chat tasks running at once, across every chat. */
 export const CHAT_TASK_CONCURRENCY = 3;
-/** A chat task's child turn longer than this is stopped. */
-export const CHAT_TASK_TIME_LIMIT_MS = 90_000;
 
 export interface ChatTask extends QueuedTask {
   /** Its place in the message's list of tasks, from 1. */
@@ -82,10 +80,7 @@ export class ChatTaskService implements ChatTaskStarter {
             platform.turn(
               task.childThreadId,
               prompt,
-              AbortSignal.any([
-                signal,
-                AbortSignal.timeout(CHAT_TASK_TIME_LIMIT_MS),
-              ]),
+              signal,
               { opendotsSource: 'chat_task', callTaskId: task.id },
               { model },
             ),

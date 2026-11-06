@@ -15,6 +15,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { Store } from './store.js';
+import { TurnUsageLog } from './turn-usage.js';
 import { Runner } from './runner.js';
 import { configured, type Config } from './research.js';
 import type { Platform } from './platform.js';
@@ -187,6 +188,24 @@ export function createApp({
         : {}),
     }),
   );
+  // What agent turns cost: totals by kind and model, and the turns themselves.
+  app.get('/api/usage', (c) => {
+    const hours = Number(c.req.query('hours') ?? 24);
+    const limit = Number(c.req.query('limit') ?? 100);
+    const since =
+      Date.now() -
+      (Number.isFinite(hours) && hours > 0 ? hours : 24) * 3_600_000;
+    const log = new TurnUsageLog(store.database);
+    return c.json({
+      since,
+      totals: log.totals(since),
+      turns: log.list(
+        since,
+        Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 1000) : 100,
+        c.req.query('threadId') || undefined,
+      ),
+    });
+  });
   if (notifications) notificationRoutes(app, notifications);
   if (handoffs) handoffRoutes(app, handoffs);
   if (engine && plugins)

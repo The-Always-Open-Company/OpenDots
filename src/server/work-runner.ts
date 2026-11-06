@@ -10,7 +10,6 @@ import { snapshotFor } from './work-tools.js';
 
 /** Well inside the engine's 180 second lease, so a live run never looks crashed. */
 const LEASE_RENEW_MS = 30_000;
-const TIME_LIMIT_GRACE_MS = 15_000;
 /** Stops the harness caused, not the owner; the attempt is retried. */
 const HARNESS_STOPS = /^Server stopped|time limit/i;
 
@@ -249,15 +248,6 @@ export class WorkRunner {
       lease: claim.lease,
       workItemId: claim.workItemId,
     });
-    const item = this.engine.workItem(claim.workItemId);
-    const policy = this.engine.policy(
-      String(item?.actorId ?? claim.actorId ?? ''),
-    );
-    // The turn stops itself at the limit; this backstop covers a turn that does not.
-    const timeout = setTimeout(
-      () => controller.abort(new Error('Execution reached its time limit.')),
-      policy.maxExecutionMs + TIME_LIMIT_GRACE_MS,
-    );
     let renewedAt = Date.now();
     const ownership = setInterval(() => {
       const current = this.engine.workItem(claim.workItemId);
@@ -297,7 +287,6 @@ export class WorkRunner {
           : 'Execution failed.';
     } finally {
       clearInterval(ownership);
-      clearTimeout(timeout);
       this.active.delete(claim.id);
       this.engine.finishExecution(claim.id, outcome, error, {
         retry: HARNESS_STOPS.test(error ?? ''),

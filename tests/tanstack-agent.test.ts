@@ -491,31 +491,26 @@ it('calls the Responses API with room for reasoning when configured', async () =
   expect(request.max_completion_tokens).toBeUndefined();
 });
 
-it('reports a turn that hits the time limit as a RUN_ERROR instead of ending silently', async () => {
+it('lets a slow turn finish instead of stopping it on a clock', async () => {
   vi.useFakeTimers();
   try {
     const f = fixture();
+    let answer: (response: Response) => void = () => {};
     vi.spyOn(globalThis, 'fetch').mockImplementation(
-      (_url, init) =>
-        new Promise((_resolve, reject) => {
-          init?.signal?.addEventListener(
-            'abort',
-            () => reject(init.signal?.reason),
-            {
-              once: true,
-            },
-          );
-        }),
+      () => new Promise<Response>((resolve) => (answer = resolve)),
     );
     const finished = lastValueFrom(f.agent.run(f.input).pipe(toArray()));
-    await vi.advanceTimersByTimeAsync(90_001);
+    // Well past the old 90 second limit, the model answers.
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    answer(completion({ role: 'assistant', content: 'Done at last.' }));
+    await vi.advanceTimersByTimeAsync(1_000);
     const events = await finished;
+    expect(events.some((event) => event.type === EventType.RUN_ERROR)).toBe(
+      false,
+    );
     expect(events).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          type: EventType.RUN_ERROR,
-          message: expect.stringMatching(/time limit/i),
-        }),
+        expect.objectContaining({ type: EventType.RUN_FINISHED }),
       ]),
     );
   } finally {

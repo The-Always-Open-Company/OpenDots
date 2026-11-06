@@ -1,7 +1,9 @@
 import type { WebConfig } from './parallel.js';
 import type { SetupStatus } from '../shared/types.js';
 
-export const DEFAULT_CONTEXT_MAX_TOKENS = 100_000;
+export const DEFAULT_CONTEXT_MAX_TOKENS = 40_000;
+/** Model calls a single turn may make; the last one must answer in text. */
+export const DEFAULT_MAX_AGENT_TURNS = 40;
 
 export function contextMaxTokensFromEnv(value: string | undefined): number {
   if (!value?.trim()) return DEFAULT_CONTEXT_MAX_TOKENS;
@@ -11,12 +13,13 @@ export function contextMaxTokensFromEnv(value: string | undefined): number {
   return tokens;
 }
 
-/** Unset, empty, `off`, or `0` means no limit. */
+/** Unset or empty uses the default; `off` or `0` means no limit. */
 export function maxAgentTurnsFromEnv(
   value: string | undefined,
 ): number | undefined {
   const raw = value?.trim().toLowerCase();
-  if (!raw || raw === 'off' || raw === '0') return undefined;
+  if (!raw) return DEFAULT_MAX_AGENT_TURNS;
+  if (raw === 'off' || raw === '0') return undefined;
   const turns = Number(raw);
   if (!Number.isInteger(turns) || turns < 2 || turns > 100)
     throw new Error(
@@ -134,7 +137,6 @@ export function voiceResultDeliveryFromEnv(
 }
 
 export const DEFAULT_VOICE_QUIET_MS = 1000;
-export const DEFAULT_VOICE_TASK_AFTER_CALL_MS = 10 * 60_000;
 
 /** A whole number of milliseconds from `min` to `max`, or `fallback` when unset. */
 export function millisecondsFromEnv(
@@ -221,8 +223,6 @@ export interface PlatformConfig extends WebConfig {
   voiceResultDelivery?: VoiceResultDelivery;
   /** Silence on the line before a result is sent; defaults to 1000. */
   voiceQuietMs?: number;
-  /** How long call tasks may keep running after hangup; defaults to 10 minutes. */
-  voiceTaskAfterCallMs?: number;
   /** Model that transcribes voice notes; defaults to `gpt-4o-mini-transcribe`. */
   voiceTranscribeModel?: string;
   /** Model that speaks replies to voice notes; defaults to `gpt-4o-mini-tts`. */

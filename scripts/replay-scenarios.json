@@ -1,0 +1,9 @@
+[
+  { "name": "main thread, plain reply", "thread": "0bbed0f1-9c43-4cf9-adea-6a19393868a6", "prompt": "ok" },
+  { "name": "zoho: try again (hit 90s)", "run": "869d236c-9ff2-416f-92f7-539d96bb1e75" },
+  { "name": "zoho: please continue (681k)", "run": "9ea6c295-432e-4437-9038-a13145e7a00f" },
+  { "name": "zoho: ticket link + #P112 (hit 90s)", "run": "ac2861f1-900e-4ee9-8207-c26063a9834b" },
+  { "name": "zoho: continue to create (778k)", "run": "096f0958-3fc6-44e0-b893-1ae57a193d33" },
+  { "name": "zoho: sprints item (761k)", "run": "162f97b3-7545-445a-9d91-2957fc28f4ca" },
+  { "name": "cliq summary job", "run": "4fc011df-3106-44e3-ba3d-099b58e9ad7b" }
+]
