@@ -25,6 +25,14 @@ const wrappers = new Set([
 const acronyms = new Set(['id', 'ids', 'url', 'api', 'cc', 'bcc', 'html']);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_FIELDS = 12;
+// Schedule cards: plain labels for what the owner decides, the rest tucked away.
+const LABELS: Record<string, string> = {
+  allowTools: 'May use without asking',
+  runs: 'Runs',
+  nextRunAt: 'First run',
+};
+const TECHNICAL = new Set(['spec', 'kind', 'anchor', 'dotCanManage']);
+const SCHEDULE_TOOLS = new Set(['arm_trigger', 'update_schedule']);
 const MAX_VALUE = 600;
 
 function words(name: string) {
@@ -75,7 +83,11 @@ function display(value: unknown, key: string) {
   return text.length > MAX_VALUE ? `${text.slice(0, MAX_VALUE)}…` : text;
 }
 
-export function actionFields(argumentsJson: string): ActionField[] {
+export function actionFields(
+  argumentsJson: string,
+  toolName = '',
+): ActionField[] {
+  const schedule = SCHEDULE_TOOLS.has(toolName);
   let args: unknown;
   try {
     args = JSON.parse(argumentsJson);
@@ -94,7 +106,18 @@ export function actionFields(argumentsJson: string): ActionField[] {
     if (value === null || value === undefined || value === '') return;
     const label = labels.join(' · ') || 'Details';
     if (Array.isArray(value)) {
-      if (value.every((item) => item === null || typeof item !== 'object'))
+      if (schedule && key === 'allowTools')
+        fields.push({
+          label,
+          value: value
+            .map((item) => {
+              const { title, source } = actionTitle(String(item));
+              return source ? `${title} (${source})` : title;
+            })
+            .join(', '),
+          technical,
+        });
+      else if (value.every((item) => item === null || typeof item !== 'object'))
         fields.push({
           label,
           value: value.map((item) => display(item, key)).join(', '),
@@ -115,9 +138,13 @@ export function actionFields(argumentsJson: string): ActionField[] {
       for (const [child, inner] of Object.entries(value))
         visit(
           inner,
-          wrappers.has(child) ? labels : [...labels, readableName(child)],
+          wrappers.has(child)
+            ? labels
+            : [...labels, (schedule && LABELS[child]) || readableName(child)],
           child,
-          technical || technicalKey(child),
+          technical ||
+            technicalKey(child) ||
+            (schedule && TECHNICAL.has(child)),
         );
       return;
     }
@@ -158,13 +185,18 @@ export function PendingActionCard({
   onDecline?: (id: string) => void;
 }) {
   const { title, source } = actionTitle(action.toolName, plugins);
-  const fields = actionFields(action.argumentsJson);
+  const fields = actionFields(action.argumentsJson, action.toolName);
   const main = fields.filter((field) => !field.technical);
   const technical = fields.filter((field) => field.technical);
   return (
     <article className="task-detail-card pending-action-card">
       <small>Waiting for you{source ? ` · ${source}` : ''}</small>
       <h2>{title}</h2>
+      {action.notBefore != null && (
+        <p className="muted">
+          Runs at {new Date(action.notBefore).toLocaleString()} once approved.
+        </p>
+      )}
       {!!main.length && <FieldList fields={main.slice(0, MAX_FIELDS)} />}
       {main.length > MAX_FIELDS && (
         <p className="muted">

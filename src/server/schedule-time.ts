@@ -12,7 +12,12 @@ export interface CalendarSpec {
   minuteOfDay: number;
   endAt?: number;
 }
-export type ScheduleSpec = IntervalSpec | CalendarSpec;
+/** Runs once, at `at` (UTC milliseconds). */
+export interface OnceSpec {
+  kind: 'once';
+  at: number;
+}
+export type ScheduleSpec = IntervalSpec | CalendarSpec | OnceSpec;
 
 /** Shape sent to the model. `parseSchedule` remains the check at execution. */
 export const scheduleInput = z.discriminatedUnion('kind', [
@@ -160,6 +165,11 @@ export function parseSchedule(input: unknown): ScheduleSpec {
   if (!input || typeof input !== 'object')
     throw new Error('Schedule is invalid.');
   const spec = input as Record<string, unknown>;
+  if (spec.kind === 'once') {
+    const at = Number(spec.at);
+    if (!Number.isFinite(at)) throw new Error('Schedule time is invalid.');
+    return { kind: 'once', at };
+  }
   if (spec.kind === 'interval') {
     const seconds = Number(spec.seconds);
     if (!Number.isInteger(seconds) || seconds < 60 || seconds > 31_536_000)
@@ -173,7 +183,9 @@ export function parseSchedule(input: unknown): ScheduleSpec {
   } catch {
     throw new Error('Schedule timezone is invalid.');
   }
-  const weekdays = Array.isArray(spec.weekdays) ? spec.weekdays.map(Number) : [];
+  const weekdays = Array.isArray(spec.weekdays)
+    ? spec.weekdays.map(Number)
+    : [];
   if (weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6))
     throw new Error('Weekdays must be 0 (Sunday) through 6 (Saturday).');
   const minuteOfDay = Number(spec.minuteOfDay);
@@ -192,6 +204,7 @@ export function parseSchedule(input: unknown): ScheduleSpec {
 }
 
 export function initialRunAt(spec: ScheduleSpec, now: number) {
+  if (spec.kind === 'once') return spec.at;
   if (spec.kind === 'interval') return now + spec.seconds * 1000;
   return nextCalendarRun(spec, now);
 }
@@ -217,6 +230,7 @@ export function nextRunAt(
   after: number,
   anchor: 'clock' | 'after_success',
 ) {
+  if (spec.kind === 'once') return null;
   if (spec.kind === 'interval') {
     const instant = after + spec.seconds * 1000;
     return instant;

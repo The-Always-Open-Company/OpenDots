@@ -6,6 +6,7 @@ import { assertWake, parseSchedule } from './schedule-time.js';
 import type { Store } from './store.js';
 import type { WorkspaceStore } from './workspace.js';
 import { effectAccess, snapshotFor } from './work-tools.js';
+import { cancelScheduled, changeScheduled } from './schedule-tools.js';
 import { decide, type ExecutionContext } from './authorize.js';
 
 const MASCOTS = ['blue', 'mint', 'orange', 'purple'];
@@ -302,11 +303,18 @@ function arm(
   if (args.kind === 'wake')
     assertWake(engine.policy(actorId), nextRunAt, Date.now());
   const workItemId = String(args.workItemId);
+  // Tools approved with the schedule; its runs use them without asking.
+  if (Array.isArray(args.allowTools))
+    engine.setAllowedTools(workItemId, args.allowTools.map(String));
+  const action =
+    args.action && typeof args.action === 'object'
+      ? { action: args.action }
+      : {};
   const triggerId = engine.addTrigger({
     workItemId,
     actorId,
     kind: args.kind === 'wake' ? 'wake' : 'schedule',
-    spec: { ...spec, operationId },
+    spec: { ...spec, ...action, operationId },
     anchor: args.anchor === 'after_success' ? 'after_success' : 'clock',
     nextRunAt,
     enabled: true,
@@ -328,18 +336,18 @@ function updateSchedule(
   args: Record<string, unknown>,
 ) {
   const trigger = deps.engine.trigger(String(args.triggerId));
-  if (
-    !trigger ||
-    !Number(trigger.dotCanManage) ||
-    String(trigger.actorId) !== actorId
-  )
-    throw new Error('This schedule is managed by the owner.');
-  const spec = parseSchedule(args.spec);
-  deps.engine.updateTrigger(String(trigger.id), {
-    spec,
-    nextRunAt: Number(args.nextRunAt),
+  if (!trigger || String(trigger.actorId) !== actorId)
+    throw new Error('Schedule not found.');
+  return changeScheduled(deps.engine, {
+    triggerId: String(trigger.id),
+    ...(args.spec
+      ? { spec: parseSchedule(args.spec), nextRunAt: Number(args.nextRunAt) }
+      : {}),
+    ...(typeof args.title === 'string' ? { title: args.title } : {}),
+    ...(typeof args.instructions === 'string'
+      ? { instructions: args.instructions }
+      : {}),
   });
-  return { triggerId: trigger.id, updated: true };
 }
 
 function cancelSchedule(
@@ -348,14 +356,9 @@ function cancelSchedule(
   args: Record<string, unknown>,
 ) {
   const trigger = deps.engine.trigger(String(args.triggerId));
-  if (
-    !trigger ||
-    !Number(trigger.dotCanManage) ||
-    String(trigger.actorId) !== actorId
-  )
-    throw new Error('This schedule is managed by the owner.');
-  deps.engine.updateTrigger(String(trigger.id), { enabled: false });
-  return { triggerId: trigger.id, enabled: false };
+  if (!trigger || String(trigger.actorId) !== actorId)
+    throw new Error('Schedule not found.');
+  return cancelScheduled(deps.engine, String(trigger.id));
 }
 
 function applyProfile(

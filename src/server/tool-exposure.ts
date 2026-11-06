@@ -22,6 +22,8 @@ export const EAGER_TOOLS: ReadonlySet<string> = new Set([
   'read_passage',
   'load_skill',
   'start_objective',
+  'schedule',
+  'list_schedules',
   'complete_work',
   'declare_requirements',
   'fail_work',

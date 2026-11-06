@@ -17,7 +17,6 @@ import {
 import { Runner } from '../src/server/runner.js';
 import {
   capabilityPrompt,
-  proposeSchedule,
   workTools,
   type WorkDeps,
 } from '../src/server/work-tools.js';
@@ -539,11 +538,11 @@ describe('objectives', () => {
 
     const scheduled = (await call(
       workTools({ ...deps(), threadId: task.childThreadId }),
-      'propose_schedule',
+      'schedule',
       {
         title: 'Morning',
-        objective: 'Check the news',
-        spec: { kind: 'interval', seconds: 86_400 },
+        instructions: 'Check the news',
+        when: { kind: 'every', every: 1, unit: 'days' },
       },
     )) as { actionId: string; workItemId: string };
     expect(engine.workItem(scheduled.workItemId)).toMatchObject({
@@ -562,10 +561,10 @@ describe('objectives', () => {
         mode: 'background',
       }),
     });
-    const proposal = (await call(duringWork, 'propose_schedule', {
+    const proposal = (await call(duringWork, 'schedule', {
       title: 'Evening',
-      objective: 'Check again',
-      spec: { kind: 'interval', seconds: 86_400 },
+      instructions: 'Check again',
+      when: { kind: 'every', every: 1, unit: 'days' },
     })) as { actionId: string };
     expect(engine.action(proposal.actionId)?.threadId).toBe(chat.id);
     const delegation = (await call(duringWork, 'start_delegation', {
@@ -617,14 +616,14 @@ describe('notes, profile, schedules, and wakes', () => {
     const gated = [
       'complete_work',
       'fail_work',
-      'update_schedule',
+      'change_schedule',
       'cancel_schedule',
       'list_responsibilities',
       'close_responsibility',
     ];
     for (const name of gated) expect(names()).not.toContain(name);
     expect(names()).toEqual(
-      expect.arrayContaining(['propose_schedule', 'upsert_responsibility']),
+      expect.arrayContaining(['schedule', 'upsert_responsibility']),
     );
 
     const item = engine.createWorkItem({
@@ -656,77 +655,30 @@ describe('notes, profile, schedules, and wakes', () => {
     );
   });
 
-  it('gives the model the interval and calendar schedule shapes', () => {
-    const { engine, dot, deps } = world();
-    const item = engine.createWorkItem({
-      actorId: dot.id,
-      title: 'Digest',
-      objective: 'Send the digest',
-      source: 'schedule',
-      recurring: true,
-    });
-    engine.addTrigger({
-      workItemId: String(item.id),
-      actorId: dot.id,
-      kind: 'schedule',
-      spec: { kind: 'interval', seconds: 3600 },
-      anchor: 'clock',
-      nextRunAt: Date.now() + 3_600_000,
-      enabled: true,
-      dotCanManage: true,
-    });
+  it('gives the model once, interval and calendar schedule shapes', () => {
+    const { deps } = world();
     const tools = workTools(deps());
-    const propose = tools.find((tool) => tool.name === 'propose_schedule');
-    const update = tools.find((tool) => tool.name === 'update_schedule');
-    const proposeSchema = propose?.parameters as ZodType;
-    const updateSchema = update?.parameters as ZodType;
-    const minute = { kind: 'interval', seconds: 60 };
-    const clock = {
-      kind: 'calendar',
-      timezone: 'America/New_York',
-      weekdays: [1, 2, 3, 4, 5],
-      minuteOfDay: 9 * 60,
-    };
+    const schedule = tools.find((tool) => tool.name === 'schedule');
+    const schema = schedule?.parameters as ZodType;
+    const ok = (when: unknown) =>
+      schema.safeParse({ title: 'Hello', instructions: 'Say hello', when })
+        .success;
+    expect(ok({ kind: 'once', inMinutes: 60 })).toBe(true);
+    expect(ok({ kind: 'once', at: '2026-11-06T13:43:00-05:00' })).toBe(true);
+    expect(ok({ kind: 'every', every: 2, unit: 'hours' })).toBe(true);
     expect(
-      proposeSchema.safeParse({
-        title: 'Hello',
-        objective: 'Say hello',
-        spec: minute,
-      }).success,
+      ok({
+        kind: 'calendar',
+        time: '09:00',
+        weekdays: [1, 2, 3, 4, 5],
+        timezone: 'America/Jamaica',
+      }),
     ).toBe(true);
-    expect(
-      proposeSchema.safeParse({
-        title: 'Hello',
-        objective: 'Say hello',
-        spec: clock,
-      }).success,
-    ).toBe(true);
-    expect(
-      proposeSchema.safeParse({
-        title: 'Hello',
-        objective: 'Say hello',
-        spec: { every: '1 minute' },
-      }).success,
-    ).toBe(false);
-    expect(
-      proposeSchema.safeParse({
-        title: 'Hello',
-        objective: 'Say hello',
-        spec: { kind: 'interval', seconds: 30 },
-      }).success,
-    ).toBe(false);
-    expect(
-      updateSchema.safeParse({ triggerId: 't', spec: minute }).success,
-    ).toBe(true);
-    const published = JSON.stringify(toJSONSchema(proposeSchema));
-    for (const field of [
-      'interval',
-      'calendar',
-      'seconds',
-      'timezone',
-      'weekdays',
-      'minuteOfDay',
-    ])
+    expect(ok({ every: '1 minute' })).toBe(false);
+    expect(ok({ kind: 'every', every: 2, unit: 'fortnights' })).toBe(false);
+    expect(ok({ kind: 'calendar', time: '9am', timezone: 'UTC' })).toBe(false);
+    const published = JSON.stringify(toJSONSchema(schema));
+    for (const field of ['once', 'every', 'calendar', 'inMinutes', 'timezone'])
       expect(published).toContain(field);
   });
 
@@ -742,11 +694,11 @@ describe('notes, profile, schedules, and wakes', () => {
         (scope) => scope.userId === 'owner' && scope.dotId === dot.id,
       ),
     ).toBe(true);
-    const pending = await proposeSchedule(deps(), {
+    const pending = (await call(tools, 'schedule', {
       title: 'Digest',
-      objective: 'Send the morning digest',
-      spec: { kind: 'interval', seconds: 3600 },
-    });
+      instructions: 'Send the morning digest',
+      when: { kind: 'every', every: 1, unit: 'hours' },
+    })) as { actionId: string; workItemId: string };
     expect(engine.detail(pending.workItemId)?.triggers).toHaveLength(0);
     const runner = new Runner(store, { mode: 'sample', baseUrl: '' });
     const app = createApp({

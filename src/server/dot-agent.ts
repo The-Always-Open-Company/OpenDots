@@ -140,6 +140,27 @@ export function turnContextMiddleware(context: string): ChatMiddleware {
   };
 }
 
+/**
+ * Whether this turn answers the owner directly: not background work, a
+ * consultation, a channel, or a turn the app started, such as an approval
+ * outcome.
+ */
+export function ownerSpeaking(
+  work: unknown,
+  consultation: boolean,
+  channel: unknown,
+  additions: Message[],
+) {
+  if (work || consultation || channel) return false;
+  const latest = [...additions]
+    .reverse()
+    .find((message) => message.role === 'user') as
+    { metadata?: { opendotsSource?: unknown } } | undefined;
+  if (!latest) return false;
+  const source = latest.metadata?.opendotsSource;
+  return source !== 'work' && source !== 'consultation';
+}
+
 /** Optional services; each is absent when its setup is missing. */
 export interface DotServices {
   memory?: MemoryProvider;
@@ -870,6 +891,12 @@ export class DotAgent extends AbstractAgent {
                 check,
                 context: turnContext,
                 actionItems: !!actionItems,
+                ownerPresent: ownerSpeaking(
+                  work,
+                  consultation,
+                  this.channel,
+                  additions,
+                ),
               }),
               ...plugins.definitions(dot.id),
             );

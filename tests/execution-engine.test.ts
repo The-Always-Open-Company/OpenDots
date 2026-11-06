@@ -152,9 +152,7 @@ describe('execution engine', () => {
     const prompt = engine.continuationPrompt(scheduleId);
     expect(prompt).toContain('This run is the schedule firing');
     expect(prompt).toContain('The owner already approved it');
-    expect(prompt).toContain(
-      'Do not call propose_schedule or arm_trigger again',
-    );
+    expect(prompt).toContain('Do not schedule it again');
     expect(prompt).toContain('not still waiting');
     expect(prompt).toContain('Send a brief hello');
     engine.finishExecution(executionId, 'completed');
@@ -179,7 +177,7 @@ describe('execution engine', () => {
     const wakePrompt = engine.continuationPrompt(wakeId);
     expect(wakePrompt).toContain('This run is a wake');
     expect(wakePrompt).toContain('not still waiting');
-    expect(wakePrompt).not.toContain('propose_schedule');
+    expect(wakePrompt).not.toContain('Do not schedule it again');
   });
 
   it('lets only one claim win and only one active execution exist', () => {

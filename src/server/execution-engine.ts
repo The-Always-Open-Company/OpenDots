@@ -51,7 +51,7 @@ export const PROCESS_CONCURRENCY = 3;
 
 function continuationCue(kind: string) {
   if (kind === 'schedule')
-    return 'This run is the schedule firing. The owner already approved it. Carry out the objective in your reply. Do not call propose_schedule or arm_trigger again. A tool result from an earlier turn that says status pending is not still waiting.';
+    return 'This run is the schedule firing. The owner already approved it. Carry out the objective in your reply. Do not schedule it again. A tool result from an earlier turn that says status pending is not still waiting.';
   if (kind === 'wake')
     return 'This run is a wake. The owner already approved it. Do the work in your reply. A tool result from an earlier turn that says status pending is not still waiting. Set a legal next wake or close the objective when the work is finished.';
   if (kind === 'watch')
@@ -194,6 +194,10 @@ export class ExecutionEngine {
     };
     add('inbound_events', 'nextAttemptAt', 'INTEGER');
     add('executions', 'notBefore', 'INTEGER');
+    // Tools a scheduled objective's runs may use without asking (JSON list).
+    add('work_items', 'allowedTools', 'TEXT');
+    // An approved action that waits until this time before it runs.
+    add('pending_actions', 'notBefore', 'INTEGER');
     add('inbound_events', 'executionId', 'TEXT');
     add('work_items', 'closeRequested', 'INTEGER NOT NULL DEFAULT 0');
     add('plugins', 'kind', "TEXT NOT NULL DEFAULT 'mcp'");
@@ -1131,14 +1135,17 @@ export class ExecutionEngine {
     }
     const spec = JSON.parse(String(current.specJson)) as ScheduleSpec;
     const anchor = String(current.anchor) as 'clock' | 'after_success';
+    // A one-off schedule fires once and is done.
     let following =
-      spec.kind === 'calendar'
-        ? nextCalendarRun(spec, now)
-        : nextRunAt(
-            spec,
-            anchor === 'after_success' ? now : Number(current.nextRunAt),
-            anchor,
-          );
+      spec.kind === 'once'
+        ? null
+        : spec.kind === 'calendar'
+          ? nextCalendarRun(spec, now)
+          : nextRunAt(
+              spec,
+              anchor === 'after_success' ? now : Number(current.nextRunAt),
+              anchor,
+            );
     // After downtime a clock interval runs once, not once per missed slot.
     let skipped = 0;
     if (spec.kind === 'interval' && following != null && following <= now) {
@@ -1146,7 +1153,10 @@ export class ExecutionEngine {
       skipped = Math.floor((now - following) / step) + 1;
       following += skipped * step;
     }
+    // A one-off that cannot run yet tries again in a minute instead of being lost.
+    const retry = now + 60_000;
     if (item.status === 'paused') {
+      if (spec.kind === 'once') following = retry;
       this.db
         .prepare(
           'UPDATE triggers SET nextRunAt=?, enabled=?, updatedAt=? WHERE id=?',
@@ -1170,6 +1180,43 @@ export class ExecutionEngine {
       });
       return null;
     }
+    // A scheduled action runs its approved call directly, without the agent.
+    const action = (
+      JSON.parse(String(current.specJson)) as {
+        action?: { tool: string; arguments: unknown };
+      }
+    ).action;
+    if (action) {
+      const actionId = this.insertAction(
+        {
+          executionId: null,
+          workItemId: null,
+          actorId: String(item.actorId),
+          threadId: String(item.originThreadId ?? ''),
+          toolName: action.tool,
+          arguments: action.arguments,
+        },
+        'approved',
+      );
+      this.db
+        .prepare(
+          'UPDATE triggers SET nextRunAt=?, enabled=?, updatedAt=? WHERE id=?',
+        )
+        .run(following, following == null ? 0 : 1, now, current.id);
+      if (following == null)
+        this.db
+          .prepare(
+            "UPDATE work_items SET status='completed', updatedAt=? WHERE id=?",
+          )
+          .run(now, item.id);
+      this.event('trigger_fired', {
+        triggerId: String(current.id),
+        workItemId: String(item.id),
+        actorId: String(item.actorId),
+        payload: { reason: 'fired', actionId },
+      });
+      return actionId;
+    }
     const busy = !!this.activeExecution(String(item.id));
     if (!busy && Number(item.recurring))
       this.db
@@ -1178,9 +1225,12 @@ export class ExecutionEngine {
     const executionId = busy
       ? null
       : this.enqueueLocked(String(item.id), { triggerId: String(current.id) });
+    if (spec.kind === 'once' && !executionId) following = retry;
     this.db
-      .prepare('UPDATE triggers SET nextRunAt=?, updatedAt=? WHERE id=?')
-      .run(following, now, current.id);
+      .prepare(
+        'UPDATE triggers SET nextRunAt=?, enabled=?, updatedAt=? WHERE id=?',
+      )
+      .run(following, following == null ? 0 : 1, now, current.id);
     this.event(executionId ? 'trigger_fired' : 'trigger_skipped', {
       executionId,
       triggerId: String(current.id),
@@ -1422,35 +1472,61 @@ export class ExecutionEngine {
     arguments: unknown;
     resource?: unknown;
     ruleId?: string | null;
+    /** Once approved, the action waits until this time to run. */
+    notBefore?: number | null;
   }) {
+    const id = this.transaction(() => this.insertAction(input, 'pending'));
+    return { pendingActionId: id, status: 'pending' as const };
+  }
+  /** Stores an action; `approved` is for one the owner already approved, such as a scheduled call. */
+  private insertAction(
+    input: Parameters<ExecutionEngine['proposeAction']>[0],
+    status: 'pending' | 'approved',
+  ) {
     const id = randomUUID();
     const now = this.now();
-    this.transaction(() => {
-      this.db
-        .prepare(
-          'INSERT INTO pending_actions (id, executionId, workItemId, actorId, threadId, toolName, argumentsJson, resourceJson, ruleId, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        )
-        .run(
-          id,
-          input.executionId,
-          input.workItemId,
-          input.actorId,
-          input.threadId,
-          input.toolName,
-          JSON.stringify(input.arguments),
-          JSON.stringify(input.resource ?? {}),
-          input.ruleId ?? null,
-          'pending',
-          now,
-        );
-      this.event('action_proposed', {
-        executionId: input.executionId,
-        workItemId: input.workItemId,
-        actorId: input.actorId,
-        payload: { actionId: id, toolName: input.toolName },
-      });
+    this.db
+      .prepare(
+        'INSERT INTO pending_actions (id, executionId, workItemId, actorId, threadId, toolName, argumentsJson, resourceJson, ruleId, status, createdAt, notBefore, resolvedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        id,
+        input.executionId,
+        input.workItemId,
+        input.actorId,
+        input.threadId,
+        input.toolName,
+        JSON.stringify(input.arguments),
+        JSON.stringify(input.resource ?? {}),
+        input.ruleId ?? null,
+        status,
+        now,
+        input.notBefore ?? null,
+        status === 'approved' ? now : null,
+      );
+    this.event('action_proposed', {
+      executionId: input.executionId,
+      workItemId: input.workItemId,
+      actorId: input.actorId,
+      payload: { actionId: id, toolName: input.toolName, status },
     });
-    return { pendingActionId: id, status: 'pending' as const };
+    return id;
+  }
+  /** Tools a scheduled objective's runs may use without asking. */
+  allowedTools(workItemId: string): string[] {
+    const row = this.db
+      .prepare('SELECT allowedTools FROM work_items WHERE id=?')
+      .get(workItemId) as { allowedTools: string | null } | undefined;
+    try {
+      return row?.allowedTools ? JSON.parse(row.allowedTools) : [];
+    } catch {
+      return [];
+    }
+  }
+  setAllowedTools(workItemId: string, tools: string[]) {
+    this.db
+      .prepare('UPDATE work_items SET allowedTools=? WHERE id=?')
+      .run(tools.length ? JSON.stringify(tools) : null, workItemId);
   }
   action(id: string) {
     return this.db
@@ -1496,7 +1572,22 @@ export class ExecutionEngine {
       actorId: String(action.actorId),
       payload: { actionId: action.id, status: 'declined' },
     });
-    if (action.workItemId) this.reopenAndEnqueue(String(action.workItemId));
+    // A declined schedule is not wanted at all; anything else carries on without it.
+    const item = action.workItemId
+      ? this.workItem(String(action.workItemId))
+      : undefined;
+    if (
+      item &&
+      action.toolName === 'arm_trigger' &&
+      String(item.source) === 'schedule'
+    )
+      this.db
+        .prepare(
+          "UPDATE work_items SET status='cancelled', updatedAt=? WHERE id=?",
+        )
+        .run(now, item.id);
+    else if (action.workItemId)
+      this.reopenAndEnqueue(String(action.workItemId));
     return this.action(String(action.id));
   }
   declineAction(id: string, reason: string) {
@@ -1533,10 +1624,11 @@ export class ExecutionEngine {
       }
       const row = this.db
         .prepare(
-          `SELECT * FROM pending_actions WHERE status='approved' AND (workItemId IS NULL OR workItemId NOT IN
+          `SELECT * FROM pending_actions WHERE status='approved' AND (notBefore IS NULL OR notBefore<=?)
+             AND (workItemId IS NULL OR workItemId NOT IN
              (SELECT id FROM work_items WHERE status='paused')) ORDER BY createdAt LIMIT 1`,
         )
-        .get() as Row | undefined;
+        .get(now) as Row | undefined;
       if (!row) return null;
       const lease = randomUUID();
       const operationId = String(row.operationId ?? randomUUID());
@@ -1783,6 +1875,7 @@ export class ExecutionEngine {
       paused: boolean;
       cancelled?: boolean;
     },
+    options: { notBefore?: number } = {},
   ) {
     const decision = decide(ctx, toolName, args, {
       ...snapshot,
@@ -1807,6 +1900,7 @@ export class ExecutionEngine {
         toolName,
         arguments: args,
         ruleId: decision.ruleId,
+        notBefore: options.notBefore,
       });
     return null;
   }
@@ -2364,6 +2458,17 @@ export class ExecutionEngine {
   trigger(id: string) {
     return this.db.prepare('SELECT * FROM triggers WHERE id=?').get(id) as
       Row | undefined;
+  }
+  /** A Pod's active schedules and wakes, with the objective each one runs. */
+  schedulesFor(actorId: string) {
+    return this.db
+      .prepare(
+        `SELECT t.id, t.kind, t.specJson, t.nextRunAt, t.dotCanManage, w.id workItemId, w.title, w.objective, w.status
+         FROM triggers t JOIN work_items w ON w.id = t.workItemId
+         WHERE t.actorId=? AND t.enabled=1 AND t.kind IN ('schedule','wake')
+         ORDER BY t.nextRunAt`,
+      )
+      .all(actorId) as Row[];
   }
   triggersOf(kind: string) {
     return this.db

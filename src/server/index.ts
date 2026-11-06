@@ -313,7 +313,7 @@ const work = new WorkRunner(
         {
           isRunning: (threadId) => platform.runner.isRunning({ threadId }),
           turn: (threadId, prompt) =>
-            platform.turn(threadId, prompt, AbortSignal.timeout(300_000), {
+            platform.turn(threadId, prompt, new AbortController().signal, {
               opendotsSource: 'work',
               triggerKind: 'approval',
             }),

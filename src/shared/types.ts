@@ -79,6 +79,8 @@ export interface PendingAction {
   workItemId: string | null;
   threadId?: string;
   createdAt: number;
+  /** Once approved, it waits until this time to run. */
+  notBefore?: number | null;
 }
 export interface Skill {
   name: string;

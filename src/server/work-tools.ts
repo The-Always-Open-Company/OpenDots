@@ -20,12 +20,8 @@ import { EvidenceLedger, type SourceInput } from './evidence.js';
 import type { MemoryProvider } from './memory.js';
 import type { PluginService } from './plugins.js';
 import { PluginToolError } from './plugin-schema.js';
-import {
-  assertWake,
-  initialRunAt,
-  parseSchedule,
-  scheduleInput,
-} from './schedule-time.js';
+import { assertWake } from './schedule-time.js';
+import { scheduleTools } from './schedule-tools.js';
 import {
   loadSkills,
   mentionedSkills,
@@ -64,6 +60,11 @@ export interface WorkDeps {
   context: () => ExecutionContext;
   /** Action items are configured, so the built-in skill can be loaded. */
   actionItems?: boolean;
+  /**
+   * The owner is talking in this turn, so what they ask for here, such as a
+   * schedule, takes effect without a separate approval.
+   */
+  ownerPresent?: boolean;
 }
 
 export function snapshotFor(
@@ -92,6 +93,8 @@ export function snapshotFor(
       name === ACTION_ITEM_SKILL_NAME ||
       deps.engine.skillGranted(actor.id, name),
     blockedOnConsultation: CONSULTATION_BLOCKED_TOOLS,
+    scheduleAllows: (toolName) =>
+      !!workItemId && deps.engine.allowedTools(workItemId).includes(toolName),
   };
 }
 
@@ -309,46 +312,6 @@ const stored = (actionId: string, workItemId: string) => ({
   note: 'This action is stored for the owner. Do not call it again.',
 });
 
-export async function proposeSchedule(
-  deps: WorkDeps,
-  args: {
-    title: string;
-    objective: string;
-    spec: unknown;
-    anchor?: 'clock' | 'after_success';
-  },
-) {
-  deps.check();
-  const spec = parseSchedule(args.spec);
-  const nextRunAt = initialRunAt(spec, Date.now());
-  if (nextRunAt == null) throw new Error('That schedule has no upcoming run.');
-  const item = deps.engine.createWorkItem({
-    actorId: deps.dot.id,
-    title: args.title,
-    objective: args.objective,
-    source: 'schedule',
-    recurring: true,
-    autoResume: false,
-    originThreadId: ownerChat(deps),
-  });
-  const pending = deps.engine.proposeAction({
-    executionId: deps.context().executionId || null,
-    workItemId: String(item.id),
-    actorId: deps.dot.id,
-    threadId: ownerChat(deps),
-    toolName: 'arm_trigger',
-    arguments: {
-      workItemId: String(item.id),
-      kind: 'schedule',
-      spec,
-      anchor: args.anchor ?? 'clock',
-      nextRunAt,
-      dotCanManage: true,
-    },
-  });
-  return stored(pending.pendingActionId, String(item.id));
-}
-
 type CapabilityInput = {
   engine: ExecutionEngine;
   dot: Dot;
@@ -429,6 +392,7 @@ export function capabilityContext(input: CapabilityInput) {
     input.inWork
       ? `Early on, call declare_requirements with the sources the objective needs (an empty list when it needs none). End with a written summary of what you found, and call complete_work or fail_work when the objective is settled. If a source could not be read or a write could not be confirmed, say so plainly in the summary. If it cannot all be done in this attempt, end with what is done and what remains; the next attempt continues in this thread.`
       : 'When a request needs broad research or many pages, tell the owner the plan in a sentence and call start_objective instead of doing it all in this reply. Always end a reply with an answer, even a partial one.',
+    'To have something happen later or on a schedule, use schedule: once at a time, every so often, or at times of day. A task with instructions runs in the background and posts its result in this chat; list in allowTools the tools it must use to make changes each time, such as sending messages, so the owner approves them once with the schedule. An action is one exact plugin call, such as a set message, approved now and made at its time. Manage schedules with list_schedules, change_schedule and cancel_schedule. Use an action-item reminder only when the owner asked to be reminded.',
     `Wake window: at least ${Math.round(policy.minWakeIntervalMs / 60_000)} minutes and at most ${Math.round(policy.maxWakeHorizonMs / 86_400_000)} days. An earlier wake is rejected.`,
     'If a tool returns status pending, that action is stored for the owner. Do not call it again. A pending result from an earlier turn is not still waiting when a later message says the owner already approved it.',
     'To retry an effect that already started, pass its operationId. A new call without that id is a new operation.',
@@ -769,78 +733,6 @@ export function workTools(deps: WorkDeps): ToolDefinition[] {
       },
     }),
     defineTool({
-      name: 'propose_schedule',
-      description:
-        'Ask the owner to confirm a schedule. Nothing runs until they approve. spec.kind "interval" repeats every spec.seconds (60 is one minute). spec.kind "calendar" runs at minuteOfDay in a timezone, on weekdays 0 (Sunday) through 6.',
-      parameters: z.object({
-        title: z.string().trim().min(1).max(160),
-        objective: z.string().trim().min(1).max(4000),
-        spec: scheduleInput,
-        anchor: z
-          .enum(['clock', 'after_success'])
-          .optional()
-          .describe(
-            'clock repeats from the clock. after_success waits until the previous run succeeds. Defaults to clock.',
-          ),
-      }),
-      execute: (args) => proposeSchedule(deps, args),
-    }),
-    defineTool({
-      name: 'update_schedule',
-      description:
-        'Ask the owner to change a schedule this Pod is allowed to manage. spec uses the same interval or calendar shape as propose_schedule.',
-      parameters: z.object({
-        triggerId: z.string(),
-        spec: scheduleInput,
-      }),
-      execute: async ({ triggerId, spec }) => {
-        deps.check();
-        const trigger = deps.engine.trigger(triggerId);
-        if (
-          !trigger ||
-          !Number(trigger.dotCanManage) ||
-          String(trigger.actorId) !== deps.dot.id
-        )
-          throw new Error('This schedule is managed by the owner.');
-        const parsed = parseSchedule(spec);
-        const nextRunAt = initialRunAt(parsed, Date.now());
-        const pending = deps.engine.proposeAction({
-          executionId: deps.context().executionId || null,
-          workItemId: String(trigger.workItemId),
-          actorId: deps.dot.id,
-          threadId: ownerChat(deps),
-          toolName: 'update_schedule',
-          arguments: { triggerId, spec: parsed, nextRunAt },
-        });
-        return stored(pending.pendingActionId, String(trigger.workItemId));
-      },
-    }),
-    defineTool({
-      name: 'cancel_schedule',
-      description:
-        'Ask the owner to disable a schedule. This does not cancel the objective.',
-      parameters: z.object({ triggerId: z.string() }),
-      execute: async ({ triggerId }) => {
-        deps.check();
-        const trigger = deps.engine.trigger(triggerId);
-        if (
-          !trigger ||
-          !Number(trigger.dotCanManage) ||
-          String(trigger.actorId) !== deps.dot.id
-        )
-          throw new Error('This schedule is managed by the owner.');
-        const pending = deps.engine.proposeAction({
-          executionId: deps.context().executionId || null,
-          workItemId: String(trigger.workItemId),
-          actorId: deps.dot.id,
-          threadId: ownerChat(deps),
-          toolName: 'cancel_schedule',
-          arguments: { triggerId },
-        });
-        return stored(pending.pendingActionId, String(trigger.workItemId));
-      },
-    }),
-    defineTool({
       name: 'propose_profile',
       description:
         'Ask the owner to confirm a new name or mascot. Instructions and permissions stay as they are.',
@@ -1049,6 +941,7 @@ export function workTools(deps: WorkDeps): ToolDefinition[] {
         },
       }),
     );
+  tools.push(...scheduleTools(deps));
   const unavailable = unavailableTools(deps);
   return tools.filter((tool) => !unavailable.has(tool.name));
 }
@@ -1058,9 +951,6 @@ function unavailableTools(deps: WorkDeps) {
   const unavailable = new Set<string>();
   if (!deps.context().executionId)
     for (const name of ['complete_work', 'fail_work', 'declare_requirements'])
-      unavailable.add(name);
-  if (!deps.engine.hasManageableSchedule(deps.dot.id))
-    for (const name of ['update_schedule', 'cancel_schedule'])
       unavailable.add(name);
   if (!deps.engine.hasResponsibility(deps.dot.id))
     for (const name of ['list_responsibilities', 'close_responsibility'])

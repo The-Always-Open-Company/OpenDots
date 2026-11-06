@@ -17,6 +17,8 @@ it('sends tools the prompts rely on eagerly and defers the rest', () => {
     // Capability prompt
     'load_skill',
     'start_objective',
+    'schedule',
+    'list_schedules',
     'complete_work',
     'fail_work',
     // Action item tools the skill and handoffs rely on
@@ -31,13 +33,13 @@ it('sends tools the prompts rely on eagerly and defers the rest', () => {
     'plugin_linear_list_issues',
     'computer_snapshot',
     'list_work',
-    'propose_schedule',
+    'change_schedule',
     'record_reconciliation',
     'merge_entities',
     'list_notes',
   ])
     expect(isLazy(name), name).toBe(true);
-  expect(EAGER_TOOLS.size).toBeLessThan(25);
+  expect(EAGER_TOOLS.size).toBeLessThan(28);
 });
 
 it('tells the model how to load deferred tools', () => {

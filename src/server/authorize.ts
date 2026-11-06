@@ -46,6 +46,8 @@ export interface AuthSnapshot {
   blockedOnConsultation: ReadonlySet<string>;
   /** A hidden task thread, where an approval card would never be seen. */
   taskThread?: boolean;
+  /** Tools the owner approved for this scheduled objective's runs. */
+  scheduleAllows?: (toolName: string) => boolean;
 }
 
 /** Why a task thread cannot ask for approval, and what the Dot should do instead. */
@@ -78,9 +80,10 @@ export const CONSULTATION_BLOCKED_TOOLS = new Set([
   'complete_work',
   'declare_requirements',
   'fail_work',
-  'propose_schedule',
-  'update_schedule',
+  'schedule',
+  'change_schedule',
   'cancel_schedule',
+  'update_schedule',
   'propose_profile',
   'upsert_responsibility',
   'close_responsibility',
@@ -197,6 +200,13 @@ export function decide(
             ruleId: `grant:${plugin.pluginId}/${plugin.toolName}`,
           }
         : null;
+  // A schedule the owner approved may use the tools approved with it.
+  if (
+    pending &&
+    ctx.mode === 'background' &&
+    snapshot.scheduleAllows?.(toolName)
+  )
+    return { effect: 'allow' };
   if (pending && snapshot.taskThread)
     return { effect: 'block', reason: TASK_APPROVAL_BLOCKED };
   return pending ?? { effect: 'allow' };

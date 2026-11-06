@@ -90,3 +90,35 @@ it('flattens nested arguments and formats values for people', () => {
     { label: 'Details', value: 'not json', technical: false },
   ]);
 });
+
+it('labels a schedule card for the owner and tucks away its internals', () => {
+  const fields = actionFields(
+    JSON.stringify({
+      title: 'Morning follow-ups',
+      runs: 'at 08:00 on Mon, Tue, Wed, Thu, Fri (America/Jamaica)',
+      instructions: 'Message each owner about open items.',
+      allowTools: ['plugin_zoho_ZohoCliq_send_message_to_chat'],
+      spec: { kind: 'calendar', minuteOfDay: 480 },
+      dotCanManage: true,
+    }),
+    'arm_trigger',
+  );
+  expect(fields.filter((field) => !field.technical)).toEqual([
+    { label: 'Title', value: 'Morning follow-ups', technical: false },
+    {
+      label: 'Runs',
+      value: 'at 08:00 on Mon, Tue, Wed, Thu, Fri (America/Jamaica)',
+      technical: false,
+    },
+    {
+      label: 'Instructions',
+      value: 'Message each owner about open items.',
+      technical: false,
+    },
+    {
+      label: 'May use without asking',
+      value: 'Send message to chat (Zoho Cliq)',
+      technical: false,
+    },
+  ]);
+});
