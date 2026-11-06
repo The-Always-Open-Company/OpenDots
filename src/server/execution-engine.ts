@@ -2488,6 +2488,14 @@ export class ExecutionEngine {
         .run(this.now() + LEASE_MS, id, lease).changes === 1
     );
   }
+  /** A chat's approval requests in every state, newest first, for its cards. */
+  actionsForThread(threadId: string, limit = 200) {
+    return this.db
+      .prepare(
+        'SELECT * FROM pending_actions WHERE threadId=? ORDER BY createdAt DESC LIMIT ?',
+      )
+      .all(threadId, limit) as Row[];
+  }
   pendingActions() {
     return this.db
       .prepare(

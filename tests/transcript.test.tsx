@@ -300,3 +300,28 @@ it('leaves a single tool step as its own line', () => {
   expect(html).toContain('Searched once');
   expect(html).not.toContain('agent-trace');
 });
+
+it('draws an approval request where its marker sits in the conversation', () => {
+  const html = renderToStaticMarkup(
+    <ChatTranscript
+      messages={[
+        { id: 'ask', role: 'user', content: 'Send Kimone the update.' },
+        { id: 'reply', role: 'assistant', content: 'It needs your approval.' },
+        {
+          id: 'opendots-approval:a1',
+          role: 'user',
+          content: 'Approval requested: plugin_cliq_send',
+          metadata: { opendotsSource: 'approval_request', actionId: 'a1' },
+        } as Message,
+        { id: 'later', role: 'user', content: 'Thanks.' },
+      ]}
+      calls={[]}
+      renderApproval={(id) => <div>CARD {id}</div>}
+    />,
+  );
+  expect(html).not.toContain('Approval requested');
+  expect(html.indexOf('It needs your approval.')).toBeLessThan(
+    html.indexOf('CARD a1'),
+  );
+  expect(html.indexOf('CARD a1')).toBeLessThan(html.indexOf('Thanks.'));
+});

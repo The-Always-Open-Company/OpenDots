@@ -171,6 +171,39 @@ function FieldList({ fields }: { fields: ActionField[] }) {
   );
 }
 
+/** How a request ended, in a few words, once it was answered. */
+export function actionOutcome(action: PendingAction, now = Date.now()) {
+  let result: { error?: unknown; reason?: unknown } = {};
+  try {
+    result = action.resultJson ? JSON.parse(action.resultJson) : {};
+  } catch {
+    // An unreadable outcome still shows its status.
+  }
+  const why = String(result.error ?? result.reason ?? '').slice(0, 200);
+  switch (action.status) {
+    case 'pending':
+      return null;
+    case 'approved':
+      return action.notBefore != null && action.notBefore > now
+        ? `Approved · runs at ${new Date(action.notBefore).toLocaleString()}`
+        : 'Approved · running';
+    case 'executing':
+      return 'Approved · running';
+    case 'executed':
+      return 'Approved · done';
+    case 'failed':
+      return `Approved · failed${why ? `: ${why}` : ''}`;
+    case 'uncertain':
+      return 'Approved · outcome unknown, check before trying again';
+    case 'declined':
+      return why && why !== 'Declined by the owner.'
+        ? `Not run: ${why}`
+        : 'Declined';
+    default:
+      return action.status;
+  }
+}
+
 export function PendingActionCard({
   action,
   plugins,
@@ -188,11 +221,19 @@ export function PendingActionCard({
   const fields = actionFields(action.argumentsJson, action.toolName);
   const main = fields.filter((field) => !field.technical);
   const technical = fields.filter((field) => field.technical);
+  const outcome = actionOutcome(action);
+  const waiting = action.status === 'pending';
   return (
-    <article className="task-detail-card pending-action-card">
-      <small>Waiting for you{source ? ` · ${source}` : ''}</small>
+    <article
+      className={`task-detail-card pending-action-card${waiting ? '' : ' answered'}`}
+      data-action-id={action.id}
+    >
+      <small>
+        {waiting ? 'Waiting for you' : 'Approval request'}
+        {source ? ` · ${source}` : ''}
+      </small>
       <h2>{title}</h2>
-      {action.notBefore != null && (
+      {waiting && action.notBefore != null && (
         <p className="muted">
           Runs at {new Date(action.notBefore).toLocaleString()} once approved.
         </p>
@@ -210,22 +251,30 @@ export function PendingActionCard({
           <FieldList fields={technical} />
         </details>
       )}
-      <div className="task-controls">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => onApprove?.(action.id)}
+      {waiting ? (
+        <div className="task-controls">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onApprove?.(action.id)}
+          >
+            Approve
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onDecline?.(action.id)}
+          >
+            Decline
+          </button>
+        </div>
+      ) : (
+        <p
+          className={`action-outcome ${action.status === 'declined' ? 'declined' : action.status === 'failed' || action.status === 'uncertain' ? 'problem' : 'approved'}`}
         >
-          Approve
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => onDecline?.(action.id)}
-        >
-          Decline
-        </button>
-      </div>
+          {outcome}
+        </p>
+      )}
     </article>
   );
 }

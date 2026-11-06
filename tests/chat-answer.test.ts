@@ -52,3 +52,12 @@ it('labels known tools and humanizes the rest', () => {
   expect(toolActivityLabel('search_web')).toBe('Searching the web');
   expect(toolActivityLabel('plugin_fetch_issue')).toBe('Fetch issue');
 });
+
+it('does not treat an approval card the app added as the owner speaking', () => {
+  const marker = {
+    id: 'opendots-approval:a1',
+    role: 'user',
+    content: 'Approval requested: plugin_cliq_send',
+  } as Message;
+  expect(endedWithoutAnswer([...research, marker])).toBe(true);
+});

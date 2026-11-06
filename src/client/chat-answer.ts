@@ -1,6 +1,7 @@
 import type { Message } from '@ag-ui/core';
 import { pageReviewTool } from '../shared/page-review';
 import { workPromptKind } from '../shared/work-marker';
+import { isApprovalMarker } from '../shared/approval-marker';
 
 const hasText = (message: Message) =>
   typeof message.content === 'string' && !!message.content.trim();
@@ -13,6 +14,8 @@ export function endedWithoutAnswer(messages: Message[]) {
   let sawTool = false;
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];
+    // An approval card the app added is not the owner's request.
+    if (isApprovalMarker(message)) continue;
     if (message.role === 'assistant') {
       if (hasText(message)) return false;
       const calls = message.toolCalls ?? [];

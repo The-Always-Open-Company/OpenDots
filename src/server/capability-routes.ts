@@ -95,6 +95,11 @@ export function capabilityRoutes(
       ? c.json(engine.workItem(id))
       : c.json({ error: 'Objective not found.' }, 404);
   });
+  app.get('/api/actions', (c) => {
+    const threadId = c.req.query('threadId');
+    if (!threadId) return c.json({ error: 'threadId is required.' }, 400);
+    return c.json(engine.actionsForThread(threadId));
+  });
   app.post('/api/actions/:id/approve', (c) => {
     const id = c.req.param('id');
     const proposed = engine.action(id);

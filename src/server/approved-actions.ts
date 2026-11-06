@@ -1,3 +1,5 @@
+import type { Message } from '@ag-ui/core';
+import { approvalMarkerPrefix } from '../shared/approval-marker.js';
 import type { ExecutionEngine } from './execution-engine.js';
 import type { MemoryProvider } from './memory.js';
 import type { PluginService } from './plugins.js';
@@ -165,6 +167,37 @@ export function approvalReport(action: ActionRow, outcome: ApprovalOutcome) {
   if (outcome.status === 'failed')
     return `${call} It failed: ${clip(error ?? outcome.result, 2000)}\nTell the owner briefly what went wrong. If you can correct the call, make the corrected call; it comes back for approval when it needs one.`;
   return `${call} Its outcome is unknown: ${clip(error ?? outcome.result, 2000)}\nTell the owner, and do not call it again until they confirm what happened.`;
+}
+
+/**
+ * Puts an approval request's card into its chat as a message, so it sits in
+ * the conversation and stays there as history once answered. It waits for a
+ * reply in progress to finish, so the card follows the reply that asked.
+ */
+export async function postApprovalRequest(
+  deps: {
+    isRunning: (threadId: string) => Promise<boolean>;
+    post: (threadId: string, marker: Message) => void;
+    sleep?: (ms: number) => Promise<void>;
+  },
+  action: { id: string; threadId: string; toolName: string },
+) {
+  if (!action.threadId) return;
+  const sleep =
+    deps.sleep ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const marker = {
+    id: `${approvalMarkerPrefix}${action.id}`,
+    role: 'user',
+    content: `Approval requested: ${action.toolName}`,
+    metadata: { opendotsSource: 'approval_request', actionId: action.id },
+  } as Message;
+  // Post anyway after about ten minutes, so a long reply never hides the card.
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    if (!(await deps.isRunning(action.threadId))) break;
+    await sleep(2000);
+  }
+  deps.post(action.threadId, marker);
 }
 
 /**

@@ -33,6 +33,7 @@ import {
 import { browserResponse } from './research.js';
 import { compactionMiddleware, modelSummarizer } from './compaction.js';
 import { stallGuard, turnLimit } from './turn-limit.js';
+import { isApprovalMarker } from '../shared/approval-marker.js';
 import {
   TurnUsageLog,
   TurnUsageMeter,
@@ -536,7 +537,10 @@ export class DotAgent extends AbstractAgent {
             : [];
           const latestUser = messageText(
             [...stored, ...additions]
-              .filter((message) => message.role === 'user')
+              .filter(
+                (message) =>
+                  message.role === 'user' && !isApprovalMarker(message),
+              )
               .at(-1),
           ).trim();
           const library = this.services.documents;
@@ -547,7 +551,8 @@ export class DotAgent extends AbstractAgent {
           const turns: RetrievalTurn[] = [...stored, ...additions]
             .filter(
               (message) =>
-                message.role === 'user' || message.role === 'assistant',
+                (message.role === 'user' || message.role === 'assistant') &&
+                !isApprovalMarker(message),
             )
             .map((message) => ({
               role: message.role as RetrievalTurn['role'],
@@ -1025,9 +1030,12 @@ export class DotAgent extends AbstractAgent {
               const converted = convertInputToTanStackAI({
                 ...ctx.input,
                 // Match BuiltInAgent's default trust boundary for client messages.
+                // Approval cards are for the owner; the model hears outcomes in their own turn.
                 messages: ctx.input.messages.filter(
                   (message) =>
-                    message.role !== 'system' && message.role !== 'developer',
+                    message.role !== 'system' &&
+                    message.role !== 'developer' &&
+                    !isApprovalMarker(message),
                 ),
               });
               const turns = turnLimit(this.config.maxAgentTurns);

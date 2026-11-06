@@ -6,6 +6,7 @@ import type { AssistantMessage, Message } from '@ag-ui/core';
 import { AgentTrace, buildTranscriptItems } from './agent-trace';
 import type { CallReceipt } from '../shared/types';
 import { voiceReceiptMessagePrefix } from '../shared/voice-receipt';
+import { approvalMarkerId } from '../shared/approval-marker';
 import { isVoiceNote, voiceNoteReplyIds } from '../shared/voice-note';
 import {
   workPromptKind,
@@ -120,6 +121,7 @@ export function ChatTranscript({
   working = false,
   renderTools,
   renderSpeech,
+  renderApproval,
 }: {
   messages: Message[];
   calls: CallReceipt[];
@@ -128,6 +130,8 @@ export function ChatTranscript({
   renderTools?: (message: AssistantMessage) => ReactNode;
   /** Shown under the written reply to each voice note. */
   renderSpeech?: (message: AssistantMessage) => ReactNode;
+  /** The card for an approval request, drawn where its marker sits. */
+  renderApproval?: (actionId: string) => ReactNode;
 }) {
   const ids = new Set(messages.map((message) => message.id));
   const spoken = renderSpeech ? voiceNoteReplyIds(messages) : new Set<string>();
@@ -173,6 +177,13 @@ export function ChatTranscript({
             </Fragment>
           );
         const { message } = item;
+        const approval = approvalMarkerId(message);
+        if (approval)
+          return (
+            <Fragment key={message.id}>
+              {renderApproval?.(approval) ?? null}
+            </Fragment>
+          );
         return (
           <Fragment key={message.id}>
             {messageBody(message)}

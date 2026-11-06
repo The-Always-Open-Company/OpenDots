@@ -122,3 +122,29 @@ it('labels a schedule card for the owner and tucks away its internals', () => {
     },
   ]);
 });
+
+it('keeps an answered request as history, with how it was answered and no buttons', () => {
+  const sent = { ...pending('plugin_zoho_ZohoCliq_send', { text: 'Hi' }) };
+  const card = (patch: Partial<PendingAction>) =>
+    renderToStaticMarkup(
+      <PendingActionCard action={{ ...sent, ...patch }} plugins={plugins} />,
+    );
+  const waiting = card({});
+  expect(waiting).toContain('Waiting for you');
+  expect(waiting).toContain('Approve');
+  const done = card({ status: 'executed' });
+  expect(done).toContain('Approved · done');
+  expect(done).not.toContain('<button');
+  expect(done).toContain('answered');
+  expect(card({ status: 'declined' })).toContain('Declined');
+  expect(
+    card({
+      status: 'failed',
+      resultJson: JSON.stringify({ error: 'Chat not found.' }),
+    }),
+  ).toContain('Approved · failed: Chat not found.');
+  expect(
+    card({ status: 'approved', notBefore: Date.now() + 3_600_000 }),
+  ).toMatch(/Approved · runs at/);
+  expect(card({ status: 'uncertain' })).toContain('outcome unknown');
+});

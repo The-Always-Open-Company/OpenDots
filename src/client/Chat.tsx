@@ -31,6 +31,7 @@ import {
   type ComputerToolRenderProps,
 } from './ComputerToolCard';
 import { ChatTranscript, isInternalVoiceReceipt } from './ChatTranscript';
+import { approvalMarkerId } from '../shared/approval-marker';
 import { decideFollow } from './follow-server-run';
 import type {
   CallReceipt,
@@ -217,6 +218,33 @@ export function Chat({
   const [source, setSource] = useState('');
   const [sourceOpen, setSourceOpen] = useState(false);
   const [error, setError] = useState('');
+  // A reply this window started that ended in an error, shown as a quiet line.
+  const [runError, setRunError] = useState('');
+  // True while history is replayed; its old errors are not news.
+  const replaying = useRef(false);
+  const [threadActions, setThreadActions] = useState<PendingAction[]>([]);
+  const actionKey = actions
+    .map((action) => `${action.id}:${action.status}`)
+    .join();
+  const markerCount = agent.messages.filter((message) =>
+    approvalMarkerId(message),
+  ).length;
+  // Answered requests leave App's pending list, so fetch this chat's history of them.
+  useEffect(() => {
+    let active = true;
+    void api<PendingAction[]>(
+      `/actions?threadId=${encodeURIComponent(thread.id)}`,
+    )
+      .then((rows) => {
+        if (active) setThreadActions(rows);
+      })
+      .catch(() => {
+        // Cards fall back to the pending list until the next refresh.
+      });
+    return () => {
+      active = false;
+    };
+  }, [thread.id, actionKey, markerCount]);
   const [loaded, setLoaded] = useState(false);
   const [running, setRunning] = useState(false);
   const [following, setFollowing] = useState(false);
@@ -248,12 +276,49 @@ export function Chat({
   });
   const sent = useRef(false);
   const bottom = useRef<HTMLDivElement>(null);
+  const transcript = useRef<HTMLDivElement>(null);
+  const pinned = useRef(true);
+  const [unseen, setUnseen] = useState(false);
+  const [hiddenApprovals, setHiddenApprovals] = useState<string[]>([]);
+  /** Waiting approval cards scrolled out of view, for the pill. */
+  const checkApprovals = () => {
+    const box = transcript.current?.getBoundingClientRect();
+    if (!box) return;
+    const hidden = [
+      ...(transcript.current?.querySelectorAll<HTMLElement>(
+        '.pending-action-card:not(.answered)',
+      ) ?? []),
+    ]
+      .filter((card) => {
+        const rect = card.getBoundingClientRect();
+        return rect.bottom < box.top + 8 || rect.top > box.bottom - 8;
+      })
+      .map((card) => card.dataset.actionId ?? '');
+    setHiddenApprovals((current) =>
+      current.join() === hidden.join() ? current : hidden,
+    );
+  };
+  const onTranscriptScroll = () => {
+    const box = transcript.current;
+    if (!box) return;
+    pinned.current = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+    if (pinned.current) setUnseen(false);
+    checkApprovals();
+  };
   useEffect(() => {
     const subscription = copilotkit.subscribe({
-      onError: ({ error }) => setError(error.message),
+      onError: ({ error }) => {
+        if (replaying.current) return;
+        if (runningRef.current) setRunError(error.message);
+        else setError(error.message);
+      },
     });
     const events = agent.subscribe({
-      onRunErrorEvent: ({ event }) => setError(event.message),
+      // Only a reply running in this window reports its error.
+      onRunErrorEvent: ({ event }) => {
+        if (!replaying.current && runningRef.current)
+          setRunError(event.message);
+      },
     });
     return () => {
       subscription.unsubscribe();
@@ -263,6 +328,7 @@ export function Chat({
   useEffect(() => {
     if (!isReady) return;
     let active = true;
+    replaying.current = true;
     void copilotkit
       .connectAgent({ agent })
       .then(() => {
@@ -273,6 +339,9 @@ export function Chat({
           setError(
             e instanceof Error ? e.message : 'Conversation could not connect.',
           );
+      })
+      .finally(() => {
+        replaying.current = false;
       });
     return () => {
       active = false;
@@ -315,7 +384,12 @@ export function Chat({
       try {
         // Replaying onto messages already on screen appends their text again.
         agent.setMessages([]);
-        await copilotkit.connectAgent({ agent });
+        replaying.current = true;
+        try {
+          await copilotkit.connectAgent({ agent });
+        } finally {
+          replaying.current = false;
+        }
         if (stopped) return;
         const after = await api<{
           running: boolean;
@@ -350,6 +424,9 @@ export function Chat({
     );
     if ((!text.trim() && !documents.length) || !canSend || paused) return;
     setError('');
+    setRunError('');
+    pinned.current = true;
+    setUnseen(false);
     setDraftFromVoice(false);
     const content = attachedDocuments(
       text.trim() ? text : 'Please look at the attached document.',
@@ -392,7 +469,7 @@ export function Chat({
       const reply = voiceNote ? voiceNoteReply(agent.messages) : undefined;
       if (reply && dot.replyMode === 'voice') void spoken.play(reply);
     } catch (e) {
-      setError(
+      setRunError(
         e instanceof Error
           ? e.message
           : 'The turn failed. Your conversation remains saved.',
@@ -418,9 +495,23 @@ export function Chat({
   );
   const thinking =
     running || following || (buffer.holding && !paused && !draft.trim());
+  // Follow new content only while the owner is at the bottom; scrolling up stops it.
+  const lastLength = String(agent.messages.at(-1)?.content ?? '').length;
+  const seenCount = useRef(0);
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
-  }, [agent.messages.length, thinking, buffer.nudging]);
+    const grew = agent.messages.length > seenCount.current;
+    seenCount.current = agent.messages.length;
+    if (pinned.current)
+      bottom.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
+    else if (grew) setUnseen(true);
+    checkApprovals();
+  }, [agent.messages.length, lastLength, thinking, buffer.nudging, runError]);
+  useEffect(() => checkApprovals(), [actionKey, threadActions]);
+  const toBottom = () => {
+    pinned.current = true;
+    setUnseen(false);
+    bottom.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  };
   useEffect(() => {
     if (paused && voice.status !== 'idle') void voice.end();
     if (paused) note.stop();
@@ -483,6 +574,32 @@ export function Chat({
   });
   const unanswered =
     !running && !following && endedWithoutAnswer(agent.messages);
+  // Approval cards: the chat's requests in every state, newest status from App.
+  const markers = new Set(
+    visible.flatMap((message) => {
+      const id = approvalMarkerId(message);
+      return id ? [id] : [];
+    }),
+  );
+  const approvals = new Map(
+    [...threadActions, ...actions].map((action) => [action.id, action]),
+  );
+  const renderApproval = (id: string) => {
+    const action = approvals.get(id);
+    return action ? (
+      <PendingActionCard
+        key={id}
+        action={action}
+        plugins={plugins}
+        onApprove={onApprove}
+        onDecline={onDecline}
+      />
+    ) : null;
+  };
+  // Requests made before cards joined the conversation have no marker.
+  const unplaced = actions.filter(
+    (action) => action.status === 'pending' && !markers.has(action.id),
+  );
   return (
     <div className="live-chat">
       <header className="chat-persona">
@@ -575,7 +692,11 @@ export function Chat({
           </a>
         </div>
       )}
-      <div className="chat-transcript">
+      <div
+        className="chat-transcript"
+        ref={transcript}
+        onScroll={onTranscriptScroll}
+      >
         {!visible.length && (
           <div className="chat-welcome">
             <span className="eyebrow">A LITTLE SPACE TO THINK</span>
@@ -596,6 +717,7 @@ export function Chat({
               messages={agent.messages}
             />
           )}
+          renderApproval={renderApproval}
           renderSpeech={
             voiceNotesReady && dot.replyMode === 'voice'
               ? (message) => (
@@ -604,6 +726,10 @@ export function Chat({
               : undefined
           }
         />
+        {unplaced.map((action) => renderApproval(action.id))}
+        {runError && !running && (
+          <p className="run-error-note">This reply stopped: {runError}</p>
+        )}
         {unanswered && (
           <div className="work-marker">
             <TriangleAlert size={13} />
@@ -661,17 +787,31 @@ export function Chat({
         dot={dot}
         voice={voice}
       />
-      {actions
-        .filter((action) => action.status === 'pending')
-        .map((action) => (
-          <PendingActionCard
-            key={action.id}
-            action={action}
-            plugins={plugins}
-            onApprove={onApprove}
-            onDecline={onDecline}
-          />
-        ))}
+      {(!!hiddenApprovals.length || unseen) && (
+        <div className="chat-jumps">
+          {!!hiddenApprovals.length && (
+            <button
+              type="button"
+              className="chat-jump approvals"
+              onClick={() =>
+                transcript.current
+                  ?.querySelector(
+                    `[data-action-id="${CSS.escape(hiddenApprovals[0])}"]`,
+                  )
+                  ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              }
+            >
+              {hiddenApprovals.length} approval
+              {hiddenApprovals.length === 1 ? '' : 's'} waiting
+            </button>
+          )}
+          {unseen && (
+            <button type="button" className="chat-jump" onClick={toBottom}>
+              New messages ↓
+            </button>
+          )}
+        </div>
+      )}
       <form
         className="chat-composer"
         onDragOver={(e) => {

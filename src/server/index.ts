@@ -43,7 +43,11 @@ import { modelJson } from './model-json.js';
 import { ExecutionEngine } from './execution-engine.js';
 import { PluginService } from './plugins.js';
 import { ensureWorkThread, WorkRunner } from './work-runner.js';
-import { applyApprovedAction, reportApproval } from './approved-actions.js';
+import {
+  applyApprovedAction,
+  postApprovalRequest,
+  reportApproval,
+} from './approved-actions.js';
 import { deliverInternal } from './watches.js';
 import { ActionItemStore } from './action-item-store.js';
 import { PgActionItemIndex } from './action-item-index.js';
@@ -328,6 +332,37 @@ const work = new WorkRunner(
 runner.attachWork(work);
 // Work queued or approved between ticks starts now, not at the next minute.
 engine.onQueued = () => runner.kick();
+// Each approval request appears in its chat as a card, in the conversation.
+engine.listen((type, fields) => {
+  const payload = (fields.payload ?? {}) as {
+    actionId?: unknown;
+    status?: unknown;
+  };
+  if (type !== 'action_proposed' || payload.status !== 'pending') return;
+  // Events fire inside the engine's transaction; read the action after it.
+  queueMicrotask(() => {
+    const action = engine.action(String(payload.actionId));
+    if (!action) return;
+    void postApprovalRequest(
+      {
+        isRunning: (threadId) => platform.runner.isRunning({ threadId }),
+        post: (threadId, marker) =>
+          platform.runner.appendNotice(
+            threadId,
+            String(action.actorId),
+            marker,
+          ),
+      },
+      {
+        id: String(action.id),
+        threadId: String(action.threadId ?? ''),
+        toolName: String(action.toolName),
+      },
+    ).catch(() =>
+      console.error('Could not show an approval request in its chat.'),
+    );
+  });
+});
 if (config.slackChannel)
   console.warn(
     'Slack settings are ignored: Slack ran on CopilotKit Intelligence Channels, which Pods no longer uses.',

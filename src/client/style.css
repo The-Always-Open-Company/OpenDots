@@ -3359,6 +3359,65 @@ h3 {
 .pending-action-card .task-controls {
   margin-bottom: 0;
 }
+/* A reply that stopped with an error: a quiet line, not a banner. */
+.run-error-note {
+  align-self: flex-start;
+  margin: -10px 0 0;
+  font-size: 11px;
+  color: #9a8f8a;
+}
+/* Jump back to waiting approvals or new messages without losing your place. */
+.chat-jumps {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin: -44px 0 12px;
+  position: relative;
+  z-index: 2;
+  pointer-events: none;
+}
+.chat-jump {
+  pointer-events: auto;
+  border: 1px solid var(--line);
+  background: white;
+  color: #4d5466;
+  font-size: 11px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(30, 35, 50, 0.08);
+  cursor: pointer;
+}
+.chat-jump.approvals {
+  background: #fff7e8;
+  border-color: #f0dcb4;
+  color: #8a6420;
+}
+/* Approval cards sit in the conversation; answered ones stay as history. */
+.chat-transcript .pending-action-card {
+  margin-top: 0;
+  align-self: stretch;
+  padding: 16px 18px;
+}
+.pending-action-card.answered {
+  background: #fafbfc;
+}
+.pending-action-card.answered h2 {
+  font-size: 15px;
+}
+.action-outcome {
+  margin: 12px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.action-outcome.approved {
+  color: #4f7a52;
+}
+.action-outcome.declined {
+  color: #82899e;
+}
+.action-outcome.problem {
+  color: #b06a52;
+}
 @media (max-width: 1100px) {
   .new-conversation {
     padding: 30px;

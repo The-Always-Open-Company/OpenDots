@@ -173,6 +173,42 @@ export class SqliteThreadRunner extends AgentRunner {
   }
 
   /**
+   * Adds one message the app wrote, such as an approval request marker, as a
+   * run of its own so history replay shows it.
+   */
+  appendNotice(threadId: string, agentId: string, message: Message) {
+    const runId = randomUUID();
+    this.history.appendRun(
+      {
+        runId,
+        threadId,
+        agentId,
+        parentRunId: this.history.lastRunId(threadId),
+        events: [
+          {
+            type: EventType.RUN_STARTED,
+            threadId,
+            runId,
+            input: {
+              threadId,
+              runId,
+              messages: [message],
+              tools: [],
+              context: [],
+              state: {},
+              forwardedProps: {},
+            },
+          } as BaseEvent,
+          { type: EventType.RUN_FINISHED, threadId, runId } as BaseEvent,
+        ],
+        createdAt: Date.now(),
+      },
+      [message],
+      new Set(),
+    );
+  }
+
+  /**
    * Records a finished exchange that no model run produced, such as a call
    * task's result. It is stored like a run so history replay shows it, and it
    * is safe while another run on the thread is active.

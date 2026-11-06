@@ -81,6 +81,9 @@ export interface PendingAction {
   createdAt: number;
   /** Once approved, it waits until this time to run. */
   notBefore?: number | null;
+  resolvedAt?: number | null;
+  /** The outcome once it ran or was declined, as JSON. */
+  resultJson?: string | null;
 }
 export interface Skill {
   name: string;
