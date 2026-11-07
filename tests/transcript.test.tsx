@@ -325,3 +325,23 @@ it('draws an approval request where its marker sits in the conversation', () => 
   );
   expect(html.indexOf('CARD a1')).toBeLessThan(html.indexOf('Thanks.'));
 });
+
+it('renders a Markdown table the model writes as a table', () => {
+  const html = renderToStaticMarkup(
+    <ChatTranscript
+      messages={[
+        {
+          id: 'reply',
+          role: 'assistant',
+          content:
+            '| Product | Projects |\n|---|---|\n| **One LMS** | To be assigned |\n| One for Governments | Project Unification; Bahamas |',
+        },
+      ]}
+      calls={[]}
+    />,
+  );
+  expect(html).toContain('<div class="chat-table"><table>');
+  expect(html).toContain('<th>Product</th>');
+  expect(html).toContain('<td><strong>One LMS</strong></td>');
+  expect(html).not.toContain('|---|');
+});

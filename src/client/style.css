@@ -2937,6 +2937,39 @@ h3 {
 .chat-bubble p:last-child {
   margin: 0;
 }
+.chat-table {
+  overflow-x: auto;
+  margin: 4px 0 12px;
+  max-width: 100%;
+}
+.chat-table:last-child {
+  margin-bottom: 0;
+}
+.chat-table table {
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.5;
+  min-width: 60%;
+}
+.chat-table th,
+.chat-table td {
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: normal;
+}
+.chat-table th {
+  background: #f5f6f8;
+  font-weight: 600;
+}
+.chat-bubble.user .chat-table th {
+  background: rgba(255, 255, 255, 0.12);
+}
+.chat-bubble.user .chat-table th,
+.chat-bubble.user .chat-table td {
+  border-color: rgba(255, 255, 255, 0.3);
+}
 .chat-bubble.user {
   align-self: flex-end;
   max-width: 79%;

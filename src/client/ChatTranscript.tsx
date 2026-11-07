@@ -2,6 +2,7 @@ import { openPageLink } from './page-navigation';
 import { Fragment, type ReactNode } from 'react';
 import { Clock3, ListChecks, Mic, Phone, PhoneOff } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { AssistantMessage, Message } from '@ag-ui/core';
 import { AgentTrace, buildTranscriptItems } from './agent-trace';
 import type { CallReceipt } from '../shared/types';
@@ -90,8 +91,16 @@ function messageBody(message: Message) {
         </span>
       )}
       <ReactMarkdown
+        // Tables, strikethrough and task lists, as the model writes them.
+        remarkPlugins={[remarkGfm]}
         components={{
           img: ({ alt }) => <span>{alt}</span>,
+          // A wide table scrolls sideways inside the bubble.
+          table: ({ children }) => (
+            <div className="chat-table">
+              <table>{children}</table>
+            </div>
+          ),
           a: ({ href, children }) => (
             <a
               onClick={(event) => {
